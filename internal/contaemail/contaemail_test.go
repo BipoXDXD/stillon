@@ -407,3 +407,22 @@ func TestVerificacaoComBaldeOuTetoComErroDevolveOErro(t *testing.T) {
 		})
 	}
 }
+
+// Depois de Rodar voltar, ninguém consome a fila: um e-mail enfileirado ali
+// sumiria sem rastro. Ele é recusado e registrado no log, sem o endereço.
+func TestEnvioDepoisDoEncerramentoVaiParaOLog(t *testing.T) {
+	c := novoCenario(true, true)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	c.enviador.Rodar(ctx)
+
+	enfileirar(t, c.enviador, "tarde@exemplo.com")
+
+	log := c.log.String()
+	if !strings.Contains(log, "motivo=encerrado") {
+		t.Errorf("log sem motivo=encerrado: %s", log)
+	}
+	if strings.Contains(log, "tarde@exemplo.com") {
+		t.Errorf("o log traz o endereço: %s", log)
+	}
+}

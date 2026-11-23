@@ -2480,13 +2480,14 @@ vc exec app /stillon user create --email voce@exemplo.com
 
 Ele pede `Senha:` e `Confirme a senha:`, sem eco. Cole a senha da entrada nas duas perguntas.
 
-**Por quê:** o sistema é de um dono só, e não há cadastro pela web: o primeiro usuário nasce pelo
-CLI, dentro do contêiner que já tem a `DATABASE_URL`. A senha vem do terminal, nunca de argumento
+**Por quê:** o cadastro pela web sai desligado (só liga com o Turnstile e o e-mail, na seção
+"Cadastro público" mais adiante): a conta do operador nasce pelo CLI, dentro do contêiner que já
+tem a `DATABASE_URL`. A senha vem do terminal, nunca de argumento
 (argumento aparece no `ps` e no histórico). O `docker compose exec` já abre um terminal, por isso
 não ecoa.
 
 **Deve aparecer:** `usuário criado: voce@exemplo.com (id …)`. Se disser
-`já existe um usuário; nada foi alterado` (código 3), alguém já criou: use
+`já existe uma conta com esse e-mail; nada foi alterado` (código 3), a conta já existe: use
 `vc exec app /stillon user set-password --email <e-mail>` para trocar a senha.
 
 ### 5.2 Entrar e ligar o 2FA
@@ -4518,7 +4519,8 @@ Coolify. Um passo por vez; só siga depois do **Confira**.
 5. **Coolify.** No recurso do app, em **Environment Variables**, cadastre
    `TURNSTILE_SITE_KEY` e `TURNSTILE_SECRET_KEY` colando do Bitwarden, e
    `ACCOUNT_EMAIL_FROM` como `StillOn <conta@conta.stillon.tech>`. **Por quê:** com só uma das
-   chaves do Turnstile, ou com o remetente sem o Resend, o app recusa subir. **Confira:** as três
+   chaves do Turnstile, com uma chave de teste da Cloudflare (começa com `1x00000000`,
+   `2x00000000` ou `3x00000000`) ou com o remetente sem o Resend, o app recusa subir. **Confira:** as três
    aparecem na lista, com o secret mascarado.
 6. **Ativação.** Siga a seção "Ativação em produção" do
    [plano do cadastro público](../superpowers/plans/2026-11-23-pr3-cadastro-publico.md)

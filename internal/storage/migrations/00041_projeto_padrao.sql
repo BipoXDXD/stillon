@@ -54,10 +54,11 @@ REVOKE EXECUTE ON FUNCTION backfill_projetos_padrao() FROM PUBLIC;
 
 SELECT backfill_projetos_padrao();
 
--- Uma vez só, e fora da função: até aqui só o CLI criava usuário, e ele
--- recusa o segundo (account.ErrUserExists). O dono atual é o usuário mais
--- antigo (desempate por id): ele vira o operador, e o e-mail dele é
--- confiável. Rerodar a função depois do cadastro público não promove ninguém.
+-- Uma vez só, e fora da função: quando esta migration saiu, só o CLI criava
+-- usuário, e ele recusava o segundo. O dono atual é o usuário mais antigo
+-- (desempate por id): ele vira o operador, e o e-mail dele é confiável.
+-- Rerodar a função depois do cadastro público (00047, desligado por
+-- configuração) não promove ninguém.
 UPDATE users SET is_operator = true, email_verified_at = COALESCE(email_verified_at, now())
  WHERE id = (SELECT id FROM users ORDER BY created_at, id LIMIT 1);
 

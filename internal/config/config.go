@@ -215,6 +215,7 @@ func Load(getenv func(string) string) (*Config, error) {
 	avisarSeFaltaListaDeProxies(cfg)
 	l.exigirListaDaHospedagem(cfg)
 	l.recusarChavesDeDemo(cfg)
+	l.recusarTurnstileDeTeste(cfg)
 	cfg.LogLevel = l.nivelDeLog()
 
 	if len(l.errs) > 0 {
@@ -520,6 +521,35 @@ func (l *leitor) recusarChavesDeDemo(cfg *Config) {
 			l.falha("%s é uma chave de demonstração do compose.yaml, pública no repositório; "+
 				"ela só é aceita com PUBLIC_BASE_URL http em localhost ou num IP de loopback; "+
 				"gere uma com `openssl rand -base64 32`", k.nome)
+		}
+	}
+}
+
+// prefixosDeTesteDoTurnstile são os das chaves de teste públicas da
+// Cloudflare (site keys e secrets): 1x passa sempre, 2x falha sempre, 3x
+// força o desafio interativo ou responde token já usado.
+var prefixosDeTesteDoTurnstile = []string{"1x00000000", "2x00000000", "3x00000000"}
+
+// recusarTurnstileDeTeste faz as chaves de teste do Turnstile só valerem
+// fora de produção (a mesma regra das chaves de demo). O secret de teste
+// aceita o token fixo que qualquer um conhece: em produção, o cadastro
+// ficaria aberto a robôs. Recusa com o e-mail ligado ou não, porque ligar o
+// e-mail depois não deve abrir o cadastro com a chave errada.
+func (l *leitor) recusarTurnstileDeTeste(cfg *Config) {
+	if !emProducao(cfg.PublicBaseURL) {
+		return
+	}
+	for _, k := range []struct{ nome, valor string }{
+		{"TURNSTILE_SITE_KEY", cfg.TurnstileSiteKey},
+		{"TURNSTILE_SECRET_KEY", cfg.TurnstileSecretKey},
+	} {
+		for _, p := range prefixosDeTesteDoTurnstile {
+			if strings.HasPrefix(k.valor, p) {
+				l.falha("%s é uma chave de teste do Turnstile, pública na documentação da Cloudflare; "+
+					"ela só é aceita com PUBLIC_BASE_URL http em localhost ou num IP de loopback; "+
+					"use as chaves do widget criado no painel da Cloudflare", k.nome)
+				break
+			}
 		}
 	}
 }

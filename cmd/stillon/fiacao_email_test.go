@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"go/ast"
 	"go/format"
 	"go/parser"
@@ -9,8 +10,14 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/google/uuid"
+
+	"github.com/BipoXDXD/stillon/internal/account"
 	"github.com/BipoXDXD/stillon/internal/config"
+	"github.com/BipoXDXD/stillon/internal/contaemail"
+	"github.com/BipoXDXD/stillon/internal/crypto"
 	"github.com/BipoXDXD/stillon/internal/notify"
 )
 
@@ -45,19 +52,103 @@ func TestNotificadoresFollowTheResendKey(t *testing.T) {
 // Um *Resend nil dentro da interface não é nil, e o cadastro acharia que há
 // e-mail: a comparação tem de ser com a interface.
 func TestVerificadorIsARealNilWithoutTheKey(t *testing.T) {
-	if v := verificador(&config.Config{}); v != nil {
+	cfg := &config.Config{}
+	if e := enviadorDeConta(cfg, &tetoFalso{}, &orcamentosFalsos{}); e != nil {
+		t.Fatalf("sem chave: enviadorDeConta = %#v, queria nil", e)
+	}
+	if v := verificador(cfg, nil); v != nil {
 		t.Errorf("sem chave: verificador = %#v, queria a interface nil", v)
+	}
+	if _, ok := mailerDeConta(nil).(contaemail.SemEnvio); !ok {
+		t.Errorf("sem chave: mailerDeConta = %#v, queria contaemail.SemEnvio", mailerDeConta(nil))
 	}
 }
 
-func TestVerificadorIsResendWithTheKey(t *testing.T) {
-	v := verificador(&config.Config{ResendAPIKey: chaveResendDeTeste, EmailFrom: "avisos@exemplo.test"})
-	resend, ok := v.(*notify.Resend)
-	if !ok || resend == nil {
-		t.Fatalf("com chave: verificador = %#v, queria um *notify.Resend", v)
+// cfgComEmail tem os dois remetentes diferentes: o teste vê qual saiu.
+func cfgComEmail() *config.Config {
+	return &config.Config{
+		ResendAPIKey: chaveResendDeTeste, EmailFrom: "avisos@exemplo.test",
+		AccountEmailFrom: "conta@exemplo.test", IPHashKey: chave,
 	}
-	if resend.Kind() != "email" {
-		t.Errorf("Kind = %q, queria email", resend.Kind())
+}
+
+// A verificação de canal por e-mail é e-mail de conta (spec): passa pelo
+// balde do destinatário e pelo teto, e sai pelo remetente de conta.
+func TestVerificadorDeCanalPassaPeloTeto(t *testing.T) {
+	rf := novoResendFalso(t)
+	cfg := cfgComEmail()
+	teto, orc := &tetoFalso{libera: true}, &orcamentosFalsos{libera: false}
+	v := verificador(cfg, enviadorDeConta(cfg, teto, orc))
+	if _, ok := v.(*notify.Resend); ok || v == nil {
+		t.Fatalf("verificador = %#v, queria o decorador do contaemail", v)
+	}
+
+	if err := v.SendVerification(context.Background(), crypto.Secret("dono@exemplo.test"), "https://x/verify/1"); err != nil {
+		t.Fatalf("SendVerification com o balde vazio = %v, queria nil", err)
+	}
+	if n := len(rf.lista()); n != 0 {
+		t.Fatalf("com o balde vazio, o Resend recebeu %d e-mails, queria 0", n)
+	}
+
+	orc.mudar(true)
+	if err := v.SendVerification(context.Background(), crypto.Secret("dono@exemplo.test"), "https://x/verify/2"); err != nil {
+		t.Fatalf("SendVerification = %v", err)
+	}
+	if teto.total() != 1 {
+		t.Errorf("Reservar recebeu %d chamadas, queria 1", teto.total())
+	}
+	got := rf.lista()
+	if len(got) != 1 || got[0].From != cfg.AccountEmailFrom {
+		t.Errorf("Resend recebeu %+v, queria um e-mail de %s", got, cfg.AccountEmailFrom)
+	}
+}
+
+// Os avisos de incidente nunca passam pelo teto dos e-mails de conta e
+// saem pelo remetente dos avisos (EMAIL_FROM).
+func TestNotificadoresNaoPassamPeloTeto(t *testing.T) {
+	rf := novoResendFalso(t)
+	cfg := cfgComEmail()
+	var email notify.Notifier
+	for _, n := range notificadores(cfg) {
+		if n.Kind() == notify.KindEmail {
+			email = n
+		}
+	}
+	resend, ok := email.(*notify.Resend)
+	if !ok || resend == nil {
+		t.Fatalf("notificador de e-mail = %#v, queria um *notify.Resend", email)
+	}
+	ev := notify.Event{NotificationID: uuid.Must(uuid.NewV7()), Kind: "opened", TargetName: "site", StartedAt: time.Now()}
+	if err := resend.Send(context.Background(), crypto.Secret("dono@exemplo.test"), ev); err != nil {
+		t.Fatalf("Send = %v", err)
+	}
+	got := rf.lista()
+	if len(got) != 1 || got[0].From != cfg.EmailFrom {
+		t.Errorf("Resend recebeu %+v, queria um e-mail de %s", got, cfg.EmailFrom)
+	}
+}
+
+// Os e-mails de conta (confirmação, redefinição) saem pela fila do enviador
+// com o remetente de conta (ACCOUNT_EMAIL_FROM).
+func TestRemetenteDeContaNaFiacao(t *testing.T) {
+	rf := novoResendFalso(t)
+	cfg := cfgComEmail()
+	e := enviadorDeConta(cfg, &tetoFalso{libera: true}, &orcamentosFalsos{libera: true})
+	ctx, cancel := context.WithCancel(context.Background())
+	feito := make(chan struct{})
+	go func() { e.Rodar(ctx); close(feito) }()
+	t.Cleanup(func() { cancel(); <-feito })
+
+	mailer := mailerDeConta(e)
+	if mailer != account.AccountMailer(e) {
+		t.Fatalf("mailerDeConta = %#v, queria o enviador", mailer)
+	}
+	if err := mailer.SendAccountEmail(context.Background(), "pessoa@exemplo.test", "Assunto", "Corpo"); err != nil {
+		t.Fatal(err)
+	}
+	got := rf.esperar(t, 1)
+	if got[0].From != cfg.AccountEmailFrom || got[0].To[0] != "pessoa@exemplo.test" {
+		t.Errorf("Resend recebeu %+v, queria um e-mail de %s para pessoa@exemplo.test", got[0], cfg.AccountEmailFrom)
 	}
 }
 
@@ -71,11 +162,12 @@ func TestRunWiresEmailIntoDispatcherAndChannelService(t *testing.T) {
 		quer    string
 	}{
 		{"run", "notify.NewDispatcher(", "notificadores(cfg)...)"},
-		{"run", "notify.NewChannelService(", "verificador(cfg), cfg.PublicBaseURL)"},
+		{"run", "notify.NewChannelService(", "verificador(cfg, enviador), cfg.PublicBaseURL)"},
+		{"run", "account.NewCadastro(", "mailerDeConta(enviador)"},
+		{"run", "account.NewRecuperacao(", "mailerDeConta(enviador)"},
 		// crypto.Secret é []byte e os dois campos são string: a conversão
 		// aceita qualquer um deles, e o compilador não barra a troca.
-		{"notificadores", "notify.NewResend(", "notify.NewResend(crypto.Secret(cfg.ResendAPIKey), cfg.EmailFrom)"},
-		{"verificador", "notify.NewResend(", "notify.NewResend(crypto.Secret(cfg.ResendAPIKey), cfg.EmailFrom)"},
+		{"notificadores", "novoResend(", "novoResend(crypto.Secret(cfg.ResendAPIKey), cfg.EmailFrom)"},
 	}
 	funcoes := funcoesDeMain(t)
 	for _, c := range casos {

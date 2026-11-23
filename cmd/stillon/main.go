@@ -223,6 +223,12 @@ func run(ctx context.Context, cfg *config.Config) error {
 		provas := auth.NewFamilyProofs(pool, clk)
 		reg.MustRegister(provas.Collector())
 		contas := account.NewService(pool, segundoFator, clk, cfg.IPHashKey)
+		limitesIP := storage.NewOrcamentosPorIP(pool, clk)
+		// Os e-mails de conta (confirmação, redefinição, verificação de
+		// canal) passam pelo balde do destinatário e pelo teto diário; os
+		// avisos (notificadores) e o do 2FA bloqueado, nunca.
+		enviador := enviadorDeConta(cfg, storage.NewTetoDeEmailsDeConta(pool, clk, contaemail.TetoDiario), limitesIP)
+		links := account.Links{Base: cfg.PublicBaseURL}
 		deps := httpapi.Deps{
 			Store:    store,
 			Sessions: auth.NewManager(store, clk, cfg.IPHashKey),
@@ -233,29 +239,31 @@ func run(ctx context.Context, cfg *config.Config) error {
 			Proofs:          provas,
 			Targets:         targets.NewService(pool, box, clk, targets.ComTetoDeRegrasPorHost(cfg.ContentRulesPerHost)),
 			Incidents:       history.NewService(pool, clk),
-			Channels:        notify.NewChannelService(pool, box, clk, notify.NewDiscord(), verificador(cfg), cfg.PublicBaseURL),
+			Channels:        notify.NewChannelService(pool, box, clk, notify.NewDiscord(), verificador(cfg, enviador), cfg.PublicBaseURL),
 			StatusPages:     statuspage.NewService(pool, clk),
 			Pings:           heartbeat.NewPingService(pool, clk),
 			Heartbeats:      heartbeat.NewService(pool, clk),
 			Projects:        tenancy.NewService(pgstore.New(pool), clk),
 			Clock:           clk,
-			LimitesIP:       storage.NewOrcamentosPorIP(pool, clk),
+			LimitesIP:       limitesIP,
 			Ready:           pool.Ping,
-
-			// Provisório até a fiação do cadastro (T9): o cadastro público
-			// fica desligado (signup e forgot dão 404) e os e-mails de conta
-			// não saem. A T9 troca o SemEnvio pelo contaemail.Enviador e liga
-			// o CadastroPublico pelo cfg.SignupEnabled().
-			Cadastro:    account.NewCadastro(pool, clk, contaemail.SemEnvio{Log: slog.Default()}, account.Links{Base: cfg.PublicBaseURL}),
-			Recuperacao: account.NewRecuperacao(pool, clk, contaemail.SemEnvio{Log: slog.Default()}, account.Links{Base: cfg.PublicBaseURL}),
-			Turnstile:   turnstile.New(crypto.Secret(cfg.TurnstileSecretKey), cfg.HostDoTurnstile()),
+			Cadastro:        account.NewCadastro(pool, clk, mailerDeConta(enviador), links),
+			Recuperacao:     account.NewRecuperacao(pool, clk, mailerDeConta(enviador), links),
+			Turnstile:       novoTurnstile(crypto.Secret(cfg.TurnstileSecretKey), cfg.HostDoTurnstile()),
+			// Desligado (sem o par do Turnstile ou sem e-mail), signup e
+			// forgot dão 404; a confirmação e a redefinição seguem no ar.
+			CadastroPublico: httpapi.ConfigCadastro{Habilitado: cfg.SignupEnabled(), SiteKey: cfg.TurnstileSiteKey},
 		}
-		servir(gctx, g, httpapi.NewServer(cfg, httpapi.Routes(gctx, cfg, deps)), "api", cfg.ShutdownGrace)
+		apiParou := servir(gctx, g, httpapi.NewServer(cfg, httpapi.Routes(gctx, cfg, deps)), "api", cfg.ShutdownGrace)
+		if enviador != nil {
+			rodarFilaDeConta(gctx, g, enviador, apiParou, cfg.ShutdownGrace)
+		}
+		slog.Info("cadastro público", "ligado", cfg.SignupEnabled())
 		// O aviso do bloqueio do segundo fator sai deste papel, que é quem
 		// lê users. Sem o Resend, os avisos ficam na fila (totp_lock_alert_at)
 		// até o e-mail ser ligado.
 		if cfg.EmailEnabled() {
-			mailer := notify.NewResend(crypto.Secret(cfg.ResendAPIKey), cfg.EmailFrom)
+			mailer := novoResend(crypto.Secret(cfg.ResendAPIKey), cfg.EmailFrom)
 			g.Go(func() error { return auth.RunTOTPLockAlerts(gctx, store, mailer, avisoDeBloqueioACada) })
 		} else {
 			slog.Warn("e-mail desligado: avisos de bloqueio do segundo fator ficam na fila")
@@ -265,25 +273,86 @@ func run(ctx context.Context, cfg *config.Config) error {
 	return g.Wait()
 }
 
+// novoResend e novoTurnstile montam os clientes dos serviços externos, de
+// endpoint fixo. São variáveis só para os testes do pacote rodarem o processo
+// inteiro com imitações em httptest; nada em produção as troca.
+var (
+	novoResend    = notify.NewResend
+	novoTurnstile = turnstile.New
+)
+
 // notificadores são os canais que o dispatcher sabe usar. O e-mail só
 // entra com o Resend configurado; sem ele, uma notificação de e-mail falha
 // de vez e vai para a auditoria.
 func notificadores(cfg *config.Config) []notify.Notifier {
 	ns := []notify.Notifier{notify.NewDiscord()}
 	if cfg.EmailEnabled() {
-		ns = append(ns, notify.NewResend(crypto.Secret(cfg.ResendAPIKey), cfg.EmailFrom))
+		ns = append(ns, novoResend(crypto.Secret(cfg.ResendAPIKey), cfg.EmailFrom))
 	}
 	return ns
 }
 
-// verificador devolve a interface nil, e não um *Resend nil, quando o
-// e-mail está desligado: um *Resend nil numa interface não é nil, e o
-// cadastro acharia que o e-mail está disponível.
-func verificador(cfg *config.Config) notify.VerificationMailer {
+// enviadorDeConta monta a fila dos e-mails de conta, que sai pelo remetente
+// de conta (ACCOUNT_EMAIL_FROM, ou o EMAIL_FROM). Nil sem e-mail.
+func enviadorDeConta(cfg *config.Config, teto contaemail.Teto, orcamentos contaemail.Orcamentos) *contaemail.Enviador {
 	if !cfg.EmailEnabled() {
 		return nil
 	}
-	return notify.NewResend(crypto.Secret(cfg.ResendAPIKey), cfg.EmailFrom)
+	transporte := novoResend(crypto.Secret(cfg.ResendAPIKey), cfg.RemetenteDeConta())
+	return contaemail.New(transporte, teto, orcamentos, cfg.IPHashKey, slog.Default())
+}
+
+// mailerDeConta é a porta dos e-mails de conta dos serviços: o enviador ou,
+// sem e-mail, o SemEnvio, que só registra no log. Os serviços nunca
+// devolvem erro do envio.
+func mailerDeConta(e *contaemail.Enviador) account.AccountMailer {
+	if e == nil {
+		return contaemail.SemEnvio{Log: slog.Default()}
+	}
+	return e
+}
+
+// verificador é o envio do link de verificação do canal de e-mail: e-mail
+// de conta, com balde, teto e remetente de conta. Devolve a interface nil, e
+// não um ponteiro nil, quando o e-mail está desligado: um ponteiro nil numa
+// interface não é nil, e o cadastro do canal acharia que há e-mail.
+func verificador(cfg *config.Config, e *contaemail.Enviador) notify.VerificationMailer {
+	if e == nil {
+		return nil
+	}
+	return contaemail.NovaVerificacaoComTeto(e, novoResend(crypto.Secret(cfg.ResendAPIKey), cfg.RemetenteDeConta()))
+}
+
+// rodarFilaDeConta roda a fila dos e-mails de conta no grupo e a encerra
+// depois da API: um pedido respondido no fim do encerramento ainda tem o
+// e-mail drenado. Se a API demorar, a fila encerra assim mesmo a tempo de o
+// dreno (contaemail.PrazoDreno) caber no grace contado do sinal.
+func rodarFilaDeConta(ctx context.Context, g *errgroup.Group, fila interface{ Rodar(context.Context) }, apiParou <-chan struct{}, grace time.Duration) {
+	filaCtx, parar := context.WithCancel(context.WithoutCancel(ctx))
+	g.Go(func() error {
+		defer parar()
+		feito := make(chan struct{})
+		go func() { defer close(feito); fila.Rodar(filaCtx) }()
+		select {
+		case <-ctx.Done():
+		case <-feito:
+			return nil
+		}
+		folga := grace - contaemail.PrazoDreno
+		espera := time.NewTimer(max(folga, 0))
+		defer espera.Stop()
+		select {
+		case <-apiParou:
+		case <-espera.C:
+			// Com grace ≤ PrazoDreno (só em teste), não há folga a esperar.
+			if folga > 0 {
+				slog.Warn("a API não parou a tempo; a fila dos e-mails de conta encerra assim mesmo")
+			}
+		}
+		parar()
+		<-feito
+		return nil
+	})
 }
 
 // graceDoSondador é o prazo que o sondador dá às sondas em voo no shutdown.
@@ -315,9 +384,12 @@ func erroDeServidor(nome string, err error) error {
 // servir roda srv até ctx acabar e então o desliga com prazo (spec §6.2).
 // Uma falha ao subir volta como erro do grupo e derruba o resto. Pedido que
 // passa do prazo não faz o encerramento falhar: as conexões que sobraram são
-// cortadas e o processo sai normalmente.
-func servir(ctx context.Context, g *errgroup.Group, srv *http.Server, nome string, grace time.Duration) {
+// cortadas e o processo sai normalmente. O canal devolvido fecha quando o
+// servidor terminou (de encerrar ou de falhar).
+func servir(ctx context.Context, g *errgroup.Group, srv *http.Server, nome string, grace time.Duration) <-chan struct{} {
+	encerrou := make(chan struct{})
 	g.Go(func() error {
+		defer close(encerrou)
 		falhou := make(chan error, 1)
 		go func() {
 			slog.Info("servindo", "servidor", nome, "addr", srv.Addr)
@@ -339,4 +411,5 @@ func servir(ctx context.Context, g *errgroup.Group, srv *http.Server, nome strin
 		}
 		return err
 	})
+	return encerrou
 }

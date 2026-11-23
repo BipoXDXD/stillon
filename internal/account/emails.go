@@ -1,6 +1,9 @@
 package account
 
-import "context"
+import (
+	"context"
+	"strings"
+)
 
 // AccountMailer é a porta dos e-mails de conta (confirmação, "já tem conta",
 // redefinição). SendAccountEmail enfileira e volta; não espera a rede. Se a
@@ -13,21 +16,25 @@ type AccountMailer interface {
 // Links monta os links dos e-mails de conta a partir da URL pública do painel.
 // O token vai no fragmento (#token=), que o navegador não manda ao servidor:
 // não aparece em log de acesso nem no Referer.
+// Base aceita a barra no fim (a PUBLIC_BASE_URL pode trazê-la): o link
+// nunca sai com "//".
 type Links struct{ Base string }
+
+func (l Links) base() string { return strings.TrimRight(l.Base, "/") }
 
 // ConfirmarEmail é o link da confirmação de e-mail.
 func (l Links) ConfirmarEmail(token string) string {
-	return l.Base + "/confirm-email#token=" + token
+	return l.base() + "/confirm-email#token=" + token
 }
 
 // RedefinirSenha é o link da redefinição de senha.
 func (l Links) RedefinirSenha(token string) string {
-	return l.Base + "/reset-password#token=" + token
+	return l.base() + "/reset-password#token=" + token
 }
 
 // EsqueciASenha é a página que pede o link de redefinição.
 func (l Links) EsqueciASenha() string {
-	return l.Base + "/forgot-password"
+	return l.base() + "/forgot-password"
 }
 
 // Os textos abaixo são rascunho: a T11 os submete ao dono. Texto puro, com o
