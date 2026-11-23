@@ -41,7 +41,7 @@ var tabelasForaDoProjeto = map[string]string{
 }
 
 // emEscopoDeProjeto roda fn com app.user_id e app.project_id ligados por SQL
-// cru, como storage.InProjectTx fará depois de conferir a pertença: é a
+// cru, como storage.InProjectTx faz depois de conferir a pertença: é a
 // consulta que "esqueceu o filtro", e só a política a contém.
 func emEscopoDeProjeto(t *testing.T, pool *pgxpool.Pool, usuario, projeto uuid.UUID, fn func(pgx.Tx) error) error {
 	t.Helper()

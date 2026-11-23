@@ -67,10 +67,40 @@ type discordAceita struct{}
 
 func (discordAceita) SendTest(context.Context, crypto.Secret) error { return nil }
 
+// esperaPelaTrava espera, com prazo generoso, que algum backend fique
+// bloqueado pela transação segurador (pg_blocking_pids). Se o Create terminar
+// antes, ele não esperou a trava: falha e devolve false.
+func esperaPelaTrava(t *testing.T, a ambiente, segurador int32, fim <-chan error) bool {
+	t.Helper()
+	prazo := time.Now().Add(15 * time.Second)
+	for time.Now().Before(prazo) {
+		select {
+		case err := <-fim:
+			t.Errorf("Create terminou (erro %v) sem esperar a trava do binário anterior: as chaves não são as mesmas", err)
+			return false
+		default:
+		}
+		var esperando bool
+		if err := a.admin.QueryRow(context.Background(), `
+			SELECT EXISTS (SELECT 1 FROM pg_stat_activity
+			                WHERE wait_event_type = 'Lock' AND $1::int = ANY (pg_blocking_pids(pid)))`,
+			segurador).Scan(&esperando); err != nil {
+			t.Fatal(err)
+		}
+		if esperando {
+			return true
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Error("nenhum backend esperou a trava do binário anterior no prazo")
+	return false
+}
+
 // A trava do titular usa a mesma chave do binário anterior, que travava pelo
 // usuário (o titular, único membro): durante a release os dois binários
 // contam em fila. A transação admin segura o SQL literal do binário anterior;
-// o Create no escopo do titular espera até o prazo e passa depois do commit.
+// o Create no escopo do titular fica bloqueado por ela (pg_blocking_pids) e
+// passa depois do commit.
 func TestTitularLockSharesKeyWithPreviousBinary(t *testing.T) {
 	const webhook = "https://discord.com/api/webhooks/123456789/token-do-webhook"
 	box := caixa(t)
@@ -120,25 +150,23 @@ func TestTitularLockSharesKeyWithPreviousBinary(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer tx.Rollback(fundo)
+			var segurador int32
+			if err := tx.QueryRow(fundo, `SELECT pg_backend_pid()`).Scan(&segurador); err != nil {
+				t.Fatal(err)
+			}
 			if _, err := tx.Exec(fundo, c.trava, u); err != nil {
 				t.Fatalf("segurar a trava do binário anterior: %v", err)
 			}
 
-			prazo, cancelar := context.WithTimeout(fundo, 500*time.Millisecond)
-			defer cancelar()
-			err = c.criar(prazo, a, sc)
-			if prazo.Err() == nil {
-				t.Fatalf("Create terminou antes do prazo com a trava do binário anterior segura (erro %v): "+
-					"as chaves não são as mesmas", err)
+			fim := make(chan error, 1)
+			go func() { fim <- c.criar(fundo, a, sc) }()
+			if !esperaPelaTrava(t, a, segurador, fim) {
+				return
 			}
-			if err == nil {
-				t.Fatal("Create passou com a trava do binário anterior segura")
-			}
-
 			if err := tx.Commit(fundo); err != nil {
 				t.Fatal(err)
 			}
-			if err := c.criar(fundo, a, sc); err != nil {
+			if err := <-fim; err != nil {
 				t.Errorf("Create depois do commit da trava: %v", err)
 			}
 		})

@@ -18,7 +18,8 @@ var ErrNotFound = errors.New("alvo não encontrado")
 var ErrLimitReached = errors.New("limite de alvos atingido")
 
 // ErrContentHostLimit: o titular já tem, somando os projetos dele, o teto de
-// alvos com regra de conteúdo no host de destino. A resposta não diz o host nem a contagem.
+// alvos com regra de conteúdo no host de destino. A resposta não diz o host
+// nem a contagem.
 var ErrContentHostLimit = errors.New("limite de regras de conteúdo no host atingido")
 
 // Target é o que sai do domínio. Os VALORES dos headers não saem nunca:
