@@ -1,0 +1,68 @@
+package account
+
+import "context"
+
+// AccountMailer é a porta dos e-mails de conta (confirmação, "já tem conta",
+// redefinição). SendAccountEmail enfileira e volta; não espera a rede. Se a
+// latência do envio aparecesse só num dos ramos (conta existente ou não), o
+// tempo de resposta denunciaria a conta.
+type AccountMailer interface {
+	SendAccountEmail(ctx context.Context, to, subject, body string) error
+}
+
+// Links monta os links dos e-mails de conta a partir da URL pública do painel.
+// O token vai no fragmento (#token=), que o navegador não manda ao servidor:
+// não aparece em log de acesso nem no Referer.
+type Links struct{ Base string }
+
+// ConfirmarEmail é o link da confirmação de e-mail.
+func (l Links) ConfirmarEmail(token string) string {
+	return l.Base + "/confirm-email#token=" + token
+}
+
+// RedefinirSenha é o link da redefinição de senha.
+func (l Links) RedefinirSenha(token string) string {
+	return l.Base + "/reset-password#token=" + token
+}
+
+// EsqueciASenha é a página que pede o link de redefinição.
+func (l Links) EsqueciASenha() string {
+	return l.Base + "/forgot-password"
+}
+
+// Os textos abaixo são rascunho: a T11 os submete ao dono. Texto puro, com o
+// link sozinho numa linha para o cliente de e-mail torná-lo clicável.
+
+// emailDeConfirmacao é o e-mail do cadastro novo.
+func emailDeConfirmacao(link string) (assunto, corpo string) {
+	return "Confirme seu e-mail no StillOn",
+		"Olá,\n\n" +
+			"Recebemos um cadastro no StillOn com este e-mail. Para confirmar, abra o link abaixo:\n\n" +
+			link + "\n\n" +
+			"O link vale por 24 horas e só pode ser usado uma vez.\n\n" +
+			"Se não foi você, ignore esta mensagem: nada será ativado sem a confirmação.\n\n" +
+			"StillOn\n"
+}
+
+// emailJaTemConta é o e-mail de quem tenta se cadastrar com um e-mail que já
+// tem conta: aponta para "esqueci a senha", sem dizer nada a quem cadastrou.
+func emailJaTemConta(linkEsqueci string) (assunto, corpo string) {
+	return "Você já tem conta no StillOn",
+		"Olá,\n\n" +
+			"Alguém tentou criar uma conta no StillOn com este e-mail, mas ele já está cadastrado.\n\n" +
+			"Se foi você e não lembra a senha, peça um link de redefinição aqui:\n\n" +
+			linkEsqueci + "\n\n" +
+			"Se não foi você, ignore esta mensagem: nada mudou na sua conta.\n\n" +
+			"StillOn\n"
+}
+
+// emailDeRedefinicao é o e-mail do "esqueci a senha".
+func emailDeRedefinicao(link string) (assunto, corpo string) {
+	return "Redefina sua senha no StillOn",
+		"Olá,\n\n" +
+			"Recebemos um pedido para redefinir a senha da sua conta no StillOn. Para escolher uma nova, abra o link abaixo:\n\n" +
+			link + "\n\n" +
+			"O link vale por 1 hora e só pode ser usado uma vez. Ao redefinir, todas as sessões abertas são encerradas.\n\n" +
+			"Se não foi você, ignore esta mensagem: sua senha continua a mesma.\n\n" +
+			"StillOn\n"
+}
