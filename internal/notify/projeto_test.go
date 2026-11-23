@@ -139,11 +139,14 @@ func TestMemberCannotManageChannels(t *testing.T) {
 	if n := b.discord.quantos(); n != 0 {
 		t.Errorf("o member fez sair %d mensagens de teste do Discord, queria nenhuma", n)
 	}
-	// O member lê (PermRead). Ver as linhas que outro membro criou depende das
-	// políticas permissivas por projeto, que não são desta tarefa: aqui só a
-	// permissão.
-	if _, err := b.svc.List(ctx, comoMember); err != nil {
+	// O member lê (PermRead) o canal que o titular criou: a política é por
+	// projeto.
+	lista, err := b.svc.List(ctx, comoMember)
+	if err != nil {
 		t.Errorf("List como member: erro %v, queria sem erro (member lê)", err)
+	}
+	if len(lista) != 1 || lista[0].ID != doDono.ID {
+		t.Errorf("List como member trouxe %+v, queria só o canal %s do titular", lista, doDono.ID)
 	}
 	if _, ligado, hashDepois := canalNoBanco(t, doDono.ID); !ligado || string(hashAntes) != string(hashDepois) {
 		t.Errorf("o canal do dono ficou enabled %v, token trocado %v; queria ligado e sem troca",

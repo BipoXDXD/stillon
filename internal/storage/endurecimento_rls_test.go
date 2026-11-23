@@ -327,8 +327,9 @@ func TestParidadeDasParticoesComparaAsExpressoes(t *testing.T) {
 }
 
 // Só existem as políticas de UPDATE esperadas nas tabelas com dono imutável
-// (00031): as três do dono (FOR ALL) e as quatro dos escopos de serviço. Um
-// escopo novo com UPDATE faz o teste falhar e obriga a revisar o gatilho.
+// (00031): as três por projeto (FOR ALL, <t>_do_projeto), as três restritivas
+// por escopo de projeto e as quatro dos escopos de serviço. Um escopo novo
+// com UPDATE faz o teste falhar e obriga a revisar o gatilho.
 func TestPoliticasDeUpdateDasTabelasComDono(t *testing.T) {
 	pool := testdb.New(t)
 	rows, err := pool.Query(context.Background(),
@@ -344,14 +345,14 @@ func TestPoliticasDeUpdateDasTabelasComDono(t *testing.T) {
 		t.Fatal(err)
 	}
 	esperadas := []string{
-		"heartbeats.heartbeats_owner:*",
+		"heartbeats.heartbeats_do_projeto:*",
 		"heartbeats.heartbeats_ping_update:w",
 		"heartbeats.heartbeats_prober_update:w",
 		"heartbeats.heartbeats_so_projeto_do_escopo:*",
-		"notif_channels.notif_channels_owner:*",
+		"notif_channels.notif_channels_do_projeto:*",
 		"notif_channels.notif_channels_so_projeto_do_escopo:*",
 		"notif_channels.notif_channels_verify_update:w",
-		"targets.targets_owner:*",
+		"targets.targets_do_projeto:*",
 		"targets.targets_prober_update:w",
 		"targets.targets_so_projeto_do_escopo:*",
 	}

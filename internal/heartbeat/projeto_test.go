@@ -90,6 +90,12 @@ func TestViewerCannotRotateOrPingHeartbeat(t *testing.T) {
 	_, hashAntes, _ := heartbeatNoBanco(t, h.ID)
 	comoViewer := escopoNo(projeto, v, tenancy.RoleOwner)
 
+	// O viewer lê (PermRead) o heartbeat que o titular criou: a política é
+	// por projeto.
+	if got, err := svc.Get(ctx, comoViewer, h.ID); err != nil || got.ID != h.ID {
+		t.Errorf("Get como viewer: heartbeat %s, erro %v; queria o heartbeat %s do titular", got.ID, err, h.ID)
+	}
+
 	if _, _, err := svc.RotateToken(ctx, comoViewer, h.ID); !errors.Is(err, tenancy.ErrForbidden) {
 		t.Errorf("RotateToken como viewer: erro %v, queria ErrForbidden", err)
 	}

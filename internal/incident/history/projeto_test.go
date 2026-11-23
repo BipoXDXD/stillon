@@ -3,6 +3,7 @@ package history_test
 import (
 	"context"
 	"errors"
+	"slices"
 	"testing"
 	"time"
 
@@ -97,10 +98,13 @@ func TestViewerCannotAckIncident(t *testing.T) {
 	if ack := ackNoBanco(t, incidente); ack != nil {
 		t.Errorf("o ack do viewer gravou ack_at %s, queria nulo", ack)
 	}
-	// O viewer lê (PermRead). Ver as linhas que outro membro criou depende das
-	// políticas permissivas por projeto, que não são desta tarefa: aqui só a
-	// permissão.
-	if _, err := b.svc.List(ctx, comoViewer, history.Filter{}); err != nil {
+	// O viewer lê (PermRead) o incidente do alvo que o titular criou: a
+	// política é por projeto.
+	lista, err := b.svc.List(ctx, comoViewer, history.Filter{})
+	if err != nil {
 		t.Errorf("List como viewer: erro %v, queria sem erro (viewer lê)", err)
+	}
+	if !slices.ContainsFunc(lista, func(i history.Incident) bool { return i.ID == incidente }) {
+		t.Errorf("List como viewer trouxe %+v, queria o incidente %s", lista, incidente)
 	}
 }

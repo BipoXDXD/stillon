@@ -23,9 +23,10 @@ const donoDoEscopoDeProjeto = "internal/storage/scope.go"
 
 // chamadoresDeScopeToUser são os .go de produção que hoje ligam só o escopo do
 // usuário, cada um por um motivo conferido (conta, sessões, TOTP). A lista é
-// fechada de propósito: quando as permissivas passarem a ser por projeto (PR
-// 2b), uma transação nova com só app.user_id enxergaria ou gravaria linhas
-// sem a conferência de pertença, e o vazamento entre projetos nasce aí.
+// fechada de propósito: as permissivas são por projeto, e uma transação com só
+// app.user_id não vê nem grava recurso de projeto nenhum. Um chamador novo que
+// lesse recurso assim receberia vazio em silêncio; o caminho é
+// storage.InProjectTx, que confere a pertença antes de ligar o projeto.
 var chamadoresDeScopeToUser = []string{
 	"internal/account/account.go",
 	"internal/auth/store.go",
@@ -36,8 +37,8 @@ var chamadoresDeScopeToUser = []string{
 // chamadoresDeInUserTx são os .go de produção que podem abrir uma transação
 // com só o escopo do usuário (storage.InUserTx), cada um com o motivo. São os
 // dados da própria pessoa, que não pertencem a projeto nenhum. Recurso de
-// projeto sob InUserTx deixa de aparecer quando as permissivas forem por
-// projeto (PR 2b): a consulta devolve vazio em silêncio e a contagem dá zero.
+// projeto sob InUserTx não aparece, porque as permissivas são por projeto: a
+// consulta devolve vazio em silêncio e a contagem dá zero.
 var chamadoresDeInUserTx = map[string]string{
 	"internal/account/account.go":       "conta e perfil da pessoa",
 	"internal/auth/provas.go":           "provas de família de sessão (00029)",
@@ -149,10 +150,10 @@ func TestOnlyScopeGoSetsProjectScope(t *testing.T) {
 			}
 		case "ScopeToUser":
 			if !slices.Contains(chamadoresDeScopeToUser, u.arquivo) {
-				t.Errorf("%s:%d chama ScopeToUser fora da lista conhecida (%s). Quando as "+
-					"permissivas forem por projeto (PR 2b), uma transação com só app.user_id vaza "+
-					"linhas entre projetos. Use storage.InProjectTx; se o escopo de usuário for "+
-					"mesmo o certo, justifique e acrescente o arquivo a chamadoresDeScopeToUser.",
+				t.Errorf("%s:%d chama ScopeToUser fora da lista conhecida (%s). As permissivas "+
+					"são por projeto: uma transação com só app.user_id não vê recurso de projeto, e a "+
+					"consulta devolve vazio em silêncio. Use storage.InProjectTx; se o escopo de usuário "+
+					"for mesmo o certo, justifique e acrescente o arquivo a chamadoresDeScopeToUser.",
 					u.arquivo, u.linha, strings.Join(chamadoresDeScopeToUser, ", "))
 			}
 		}
@@ -168,9 +169,8 @@ func TestOnlyScopeGoSetsProjectScope(t *testing.T) {
 }
 
 // O escopo só do usuário (InUserTx) fica nos contextos pessoais da lista. Um
-// recurso de projeto lido ou contado sob InUserTx funciona hoje e passa a
-// devolver vazio em silêncio quando as permissivas forem por projeto, com o
-// binário anterior ainda rodando no release.
+// recurso de projeto lido ou contado sob InUserTx devolve vazio em silêncio:
+// as permissivas são por projeto, e só InProjectTx liga app.project_id.
 func TestInUserTxOnlyInPersonalContexts(t *testing.T) {
 	raiz, err := filepath.Abs(filepath.Join("..", ".."))
 	if err != nil {

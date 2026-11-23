@@ -197,6 +197,16 @@ func TestProjectScopeSurvivesConnectionReuse(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// O vazamento aparece aqui: app.user_id volta a '' e só app.project_id
+	// vazado concederia, por targets_do_projeto.
+	var n int
+	if err := conn.QueryRow(ctx, `SELECT count(*) FROM targets`).Scan(&n); err != nil {
+		t.Fatalf("consulta sem escopo numa conexão reusada falhou: %v", err)
+	}
+	if n != 0 {
+		t.Errorf("sem escopo viu %d alvos", n)
+	}
+
 	// A premissa do teste: se o Postgres um dia devolver NULL aqui, o teste
 	// deixa de provar o caso da string vazia, e precisa dizer isso.
 	var vazio bool
@@ -205,14 +215,6 @@ func TestProjectScopeSurvivesConnectionReuse(t *testing.T) {
 	}
 	if !vazio {
 		t.Fatal("premissa quebrada: app.project_id não ficou '' depois do SET LOCAL; revise este teste")
-	}
-
-	var n int
-	if err := conn.QueryRow(ctx, `SELECT count(*) FROM targets`).Scan(&n); err != nil {
-		t.Fatalf("consulta sem escopo numa conexão reusada falhou: %v", err)
-	}
-	if n != 0 {
-		t.Errorf("sem escopo viu %d alvos", n)
 	}
 
 	err = storage.InProjectTx(ctx, conn, u, b, func(q *db.Queries, _ tenancy.ProjectScope) error {
