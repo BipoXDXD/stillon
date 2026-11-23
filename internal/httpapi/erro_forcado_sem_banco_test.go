@@ -86,6 +86,14 @@ func apiSemBanco(t *testing.T) (*httptest.Server, *clock.Fake) {
 		Heartbeats:      heartbeat.NewService(pool, clk),
 		Projects:        tenancy.NewService(pgstore.New(pool), clk),
 		EmailConfirmado: conferidorQueConfirma{},
+		// Os serviços reais, sobre o banco fora: as rotas públicas da conta
+		// param antes, no limite por IP, mas se um dia passarem a chegar a
+		// eles, a falha que aparece é a do banco.
+		Cadastro:    account.NewCadastro(pool, clk, &mailerDeContaFalso{}, linksDoPainel),
+		Recuperacao: account.NewRecuperacao(pool, clk, &mailerDeContaFalso{}, linksDoPainel),
+		Turnstile:   turnstileQueRecusa{},
+		// Ligado, para que signup e forgot não parem no 404 antes do limite.
+		CadastroPublico: httpapi.ConfigCadastro{Habilitado: true, SiteKey: "site-key-publica"},
 		Clock:           clk, Ready: pool.Ping,
 		LimitesIP: storage.NewOrcamentosPorIP(pool, clk),
 	}))
@@ -145,11 +153,13 @@ func TestBancoForaNaoVazaNadaEmNenhumaRota(t *testing.T) {
 	c.proibidos = append([]string{c.canario, c.tokenDeURL, c.slug}, marcasDeDetalheInterno...)
 
 	esperados := map[string]respostaSemBanco{
-		"GET /healthz":         {status: http.StatusOK},
-		"GET /readyz":          {status: http.StatusServiceUnavailable, codigo: "unavailable"},
-		"GET /p/{slug}":        {status: http.StatusServiceUnavailable, pagina: true},
-		"GET /verify/{token}":  {status: http.StatusInternalServerError, pagina: true},
-		"POST /verify/{token}": {status: http.StatusInternalServerError, pagina: true},
+		"GET /healthz": {status: http.StatusOK},
+		// Configuração pública do formulário: não consulta o banco.
+		"GET /api/v1/auth/signup-config": {status: http.StatusOK},
+		"GET /readyz":                    {status: http.StatusServiceUnavailable, codigo: "unavailable"},
+		"GET /p/{slug}":                  {status: http.StatusServiceUnavailable, pagina: true},
+		"GET /verify/{token}":            {status: http.StatusInternalServerError, pagina: true},
+		"POST /verify/{token}":           {status: http.StatusInternalServerError, pagina: true},
 	}
 	padrao := respostaSemBanco{status: http.StatusInternalServerError, codigo: "internal_error"}
 

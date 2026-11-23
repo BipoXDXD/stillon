@@ -35,6 +35,9 @@ func corposEstritos() map[string]corpoEstrito {
 	alvos, batidas, canais := &TargetHandlers{}, &HeartbeatHandlers{}, &ChannelHandlers{}
 	paginas, conta, sessao := &StatusPageHandlers{}, &AccountHandlers{}, &AuthHandlers{}
 	projetos := &ProjectHandlers{}
+	// Ligado, para que o signup e o forgot passem do 404 e cheguem ao
+	// decoder; sem serviço nem Turnstile, chegar a eles é panic.
+	cadastro := &CadastroHandlers{config: ConfigCadastro{Habilitado: true}}
 	item := `{"target_id":"` + uuid.NewString() + `","display_name":"a","extra":1}`
 	agendaComExtra := `{"kind":"period","period_sec":60,"extra":1}`
 
@@ -61,6 +64,12 @@ func corposEstritos() map[string]corpoEstrito {
 		"AuthHandlers.TOTPDisable":       {handler: sessao.TOTPDisable, valido: `{"password":"x","code":"1"}`},
 		"AuthHandlers.TOTPRotate":        {handler: sessao.TOTPRotate, valido: `{"password":"x","code":"1"}`},
 		"AuthHandlers.TOTPRotateConfirm": {handler: sessao.TOTPRotateConfirm, valido: `{"code":"1","rotation":"x"}`},
+		"CadastroHandlers.Signup": {handler: cadastro.Signup,
+			valido: `{"email":"a@exemplo.com","password":"uma-senha-bem-comprida","turnstile_token":"x"}`},
+		"CadastroHandlers.ConfirmarEmail": {handler: cadastro.ConfirmarEmail, valido: `{"token":"x"}`},
+		"CadastroHandlers.EsqueciASenha":  {handler: cadastro.EsqueciASenha, valido: `{"email":"a@exemplo.com","turnstile_token":"x"}`},
+		"CadastroHandlers.RedefinirSenha": {handler: cadastro.RedefinirSenha,
+			valido: `{"token":"x","new_password":"uma-senha-bem-comprida"}`},
 	}
 }
 
