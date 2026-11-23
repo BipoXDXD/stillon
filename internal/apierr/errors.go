@@ -44,6 +44,7 @@ const (
 	CodeContentHostLimit    ErrorCode = "content_rule_host_limit_reached"
 	CodeMethodNotAllowed    ErrorCode = "method_not_allowed"
 	CodeScheduleUnsupported ErrorCode = "schedule_unsupported"
+	CodeProjectLimit        ErrorCode = "project_limit_reached"
 )
 
 // A mensagem vem sempre desta tabela, nunca do erro subjacente.
@@ -86,6 +87,8 @@ var errorTable = map[ErrorCode]struct {
 	// O heartbeat foi gravado por uma versão posterior, com um agendamento que
 	// esta não sabe editar: conflito com o estado do recurso, não pedido inválido.
 	CodeScheduleUnsupported: {http.StatusConflict, "Agendamento não suportado nesta versão."},
+	// O teto de projetos de que a conta é titular (o padrão conta).
+	CodeProjectLimit: {http.StatusConflict, "Limite de projetos atingido."},
 }
 
 // FieldError aponta o campo culpado de um 400. Field e Reason vêm de

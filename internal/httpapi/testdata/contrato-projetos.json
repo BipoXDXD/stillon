@@ -1,0 +1,22 @@
+[
+  {
+    "caso": "padrão, owner",
+    "resposta": {
+      "id": "01900000-0000-7000-8000-000000000101",
+      "name": "Projeto padrão",
+      "is_default": true,
+      "role": "owner",
+      "created_at": "2026-11-01T12:00:00Z"
+    }
+  },
+  {
+    "caso": "criado pela API, owner",
+    "resposta": {
+      "id": "01900000-0000-7000-8000-000000000102",
+      "name": "Clientes",
+      "is_default": false,
+      "role": "owner",
+      "created_at": "2026-11-22T09:30:15.123Z"
+    }
+  }
+]
