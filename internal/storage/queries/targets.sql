@@ -1,10 +1,8 @@
 -- Toda query de posse daqui filtra por project_id E roda sob a RLS de
 -- InProjectTx. As duas barreiras são independentes de propósito (spec §5.5):
 -- um WHERE esquecido é pego pela política, e uma política desligada é pega
--- pelo WHERE. As exceções, por user_id, são as cotas no fim do arquivo
--- (LockUserTargets, CountTargets, ListContentRuleTargetURLs): até o PR 2b,
--- contam os alvos de quem chama dentro do projeto atual (a RLS restritiva
--- corta os de outros projetos); o teto por titular vem no PR 2b.
+-- pelo WHERE. As exceções são as cotas no fim do arquivo, que contam pelo
+-- titular do projeto, somando os projetos dele (funções cota_* da 00045).
 
 -- user_id é quem criou o alvo; project_id, o projeto em que ele vive,
 -- obrigatório: todo chamador grava no escopo de projeto.
@@ -220,17 +218,22 @@ SELECT t.id, unnest(sqlc.arg(tags)::text[])
   FROM targets t
  WHERE t.project_id = sqlc.arg(project_id)::uuid AND t.id = sqlc.arg(target_id);
 
--- O teto de alvos: contar e inserir sob esta trava. Até o PR 2b ele vale
--- para o usuário dentro do projeto atual (CountTargets roda sob a RLS
--- restritiva de InProjectTx); o teto por titular vem no PR 2b. Sem a trava,
--- dois POST simultâneos passariam os dois pela contagem.
--- name: LockUserTargets :exec
-SELECT pg_advisory_xact_lock(hashtextextended('stillon.targets:' || sqlc.arg(user_id)::uuid::text, 0));
+-- O teto de alvos é do titular, somando os projetos dele: contar e inserir
+-- sob esta trava. Sem ela, dois POST simultâneos (de membros diferentes, ou
+-- em projetos diferentes do mesmo titular) passariam os dois pela contagem.
+-- Mesma chave textual de LockUserTargets: o binário anterior (titular = único
+-- membro) trava igual.
+-- name: LockTitularTargets :exec
+SELECT pg_advisory_xact_lock(hashtextextended('stillon.targets:' || sqlc.arg(titular_id)::uuid::text, 0));
 
--- name: CountTargets :one
-SELECT count(*) FROM targets WHERE user_id = $1;
+-- Conta no escopo de quem chama: projeto que ele não enxerga é 42501.
+-- name: CountTitularTargets :one
+SELECT cota_alvos_do_titular(sqlc.arg(project_id)::uuid)::bigint;
 
--- O teto de regras por host: as URLs dos alvos com regra de quem chama,
--- dentro do projeto atual até o PR 2b, lidas sob LockUserTargets. A chave do host sai em Go (IDNA).
--- name: ListContentRuleTargetURLs :many
-SELECT id, url FROM targets WHERE user_id = $1 AND content_mode IS NOT NULL;
+-- O teto de regras por host: as URLs dos alvos com regra do titular, em
+-- todos os projetos dele, lidas sob LockTitularTargets. A chave do host sai
+-- em Go (IDNA). Os casts e os AS são para o sqlc, que não enxerga as colunas
+-- do RETURNS TABLE de uma função plpgsql.
+-- name: ListTitularContentRuleTargetURLs :many
+SELECT r.id::uuid AS id, r.url::text AS url
+  FROM cota_urls_com_regra_do_titular(sqlc.arg(project_id)::uuid) AS r;

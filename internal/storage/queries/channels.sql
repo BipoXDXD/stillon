@@ -1,16 +1,23 @@
 -- Canais (spec §8, §5.8). As do dono rodam sob InProjectTx e filtram por
--- project_id; as exceções, por user_id, são a cota do usuário (LockUser,
--- CountChannels). FindChannelByVerification e ConfirmChannel rodam sob
--- InVerifyTx.
+-- project_id; as exceções são a cota do titular do projeto (LockUser,
+-- LockTitularChannels, CountTitularChannels). FindChannelByVerification e
+-- ConfirmChannel rodam sob InVerifyTx.
 
--- Serializa as criações de canal do mesmo usuário, para que o limite de
--- canais valha também contra duas requisições simultâneas. users não tem
--- RLS.
+-- A trava do binário anterior, que serializava as criações de canal pelo
+-- usuário (o titular, único membro): fica para os dois binários contarem em
+-- fila durante a release. users não tem RLS.
 -- name: LockUser :exec
 SELECT id FROM users WHERE id = $1 FOR UPDATE;
 
--- name: CountChannels :one
-SELECT count(*) FROM notif_channels WHERE user_id = $1;
+-- Serializa as criações de canal do titular, em todos os projetos dele, para
+-- que o limite valha também contra duas requisições simultâneas. Chave
+-- advisory: não depende da RLS de users (invisível ao membro no PR 4).
+-- name: LockTitularChannels :exec
+SELECT pg_advisory_xact_lock(hashtextextended('stillon.channels:' || sqlc.arg(titular_id)::uuid::text, 0));
+
+-- Conta no escopo de quem chama: projeto que ele não enxerga é 42501.
+-- name: CountTitularChannels :one
+SELECT cota_canais_do_titular(sqlc.arg(project_id)::uuid)::bigint;
 
 -- user_id é quem criou o canal; project_id, o projeto em que ele vive, e
 -- sempre vem: no escopo de projeto o gatilho preencher_project_id_padrao não
@@ -23,9 +30,8 @@ VALUES (sqlc.arg(id), sqlc.arg(user_id), sqlc.arg(kind), sqlc.arg(config_enc),
         sqlc.narg(verified_at), sqlc.narg(verify_token_hash), sqlc.narg(verify_expires_at),
         true, sqlc.arg(created_at), sqlc.arg(project_id)::uuid);
 
--- Sem paginação: a listagem traz os canais de quem chama no projeto atual,
--- que nunca passam do limite pequeno do usuário (notify.MaxChannels); o teto
--- por titular vem no PR 2b.
+-- Sem paginação: a listagem traz os canais do projeto, que nunca passam do
+-- limite pequeno do titular, somando os projetos dele (notify.MaxChannels).
 -- name: ListChannels :many
 SELECT c.id, c.kind, c.config_enc, c.verified_at, c.verify_expires_at, c.enabled, c.created_at,
        h.last_success_at, h.last_failure_at, h.last_error

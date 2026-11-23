@@ -75,7 +75,7 @@ var errorTable = map[ErrorCode]struct {
 	// é conflito.
 	CodeStatusPageExists: {http.StatusConflict, "Você já tem uma status page."},
 	CodeSlugTaken:        {http.StatusConflict, "Este endereço já está em uso."},
-	// O teto de alvos por usuário.
+	// O teto de alvos por titular, somando os projetos dele.
 	CodeTargetLimit:    {http.StatusConflict, "Limite de alvos atingido."},
 	CodeHeartbeatLimit: {http.StatusConflict, "Limite de heartbeats atingido."},
 	// Sem o host nem a contagem: o painel já sabe o host que o dono digitou.

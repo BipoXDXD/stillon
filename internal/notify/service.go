@@ -22,10 +22,10 @@ import (
 )
 
 const (
-	// MaxChannels é o limite de canais do usuário (ver cabe e Create para
-	// onde ele é contado). A regra da spec (§Cotas e abuso) conta os canais do
-	// titular em todos os projetos dele. Canal é destino de envio: sem teto,
-	// cada canal novo seria mais um alvo de mensagem.
+	// MaxChannels é o limite de canais por titular, somando os projetos
+	// dele (spec §Cotas e abuso; ver cabe e Create para onde ele é contado).
+	// Canal é destino de envio: sem teto, cada canal novo seria mais um alvo
+	// de mensagem.
 	MaxChannels = 10
 	// VerifyTTL é a validade do link de verificação (spec §5.8).
 	VerifyTTL = 24 * time.Hour
@@ -105,12 +105,11 @@ type ChannelInput struct {
 // que confere a pertença e liga a RLS para aquele projeto: as queries filtram
 // por project_id E a política filtra de novo. A permissão vale pelo papel lido
 // NA transação (o escopo que InProjectTx entrega), nunca pelo que quem chamou
-// trouxe. A cota (trava e contagem) continua por user_id, e as duas
-// conferências rodam sob InProjectTx: a pré-conferência (cabe), antes do
-// envio, e a definitiva, com a trava, na gravação. Com um projeto por usuário,
-// contar por user_id dá o mesmo que a regra da spec (§Cotas e abuso): os canais do
-// titular em todos os projetos dele. A verificação por link (CheckToken,
-// ConfirmToken) não sabe nada de projeto.
+// trouxe. A cota (trava e contagem) é a da spec (§Cotas e abuso): os canais
+// do titular do projeto em todos os projetos dele. As duas conferências rodam
+// sob InProjectTx e contam o mesmo: a pré-conferência (cabe), antes do envio,
+// e a definitiva, com a trava, na gravação. A verificação por link
+// (CheckToken, ConfirmToken) não sabe nada de projeto.
 type ChannelService struct {
 	pool    *pgxpool.Pool
 	box     *crypto.Box
@@ -143,7 +142,7 @@ func NewChannelService(pool *pgxpool.Pool, box *crypto.Box, clk clock.Clock, dis
 //
 // A permissão e o limite são conferidos antes do envio, para não mandar
 // mensagem a um canal que não será gravado, e de novo na gravação: a
-// permissão pelo papel daquela transação, o limite com o usuário travado,
+// permissão pelo papel daquela transação, o limite com o titular travado,
 // para que duas criações simultâneas não passem as duas.
 func (s *ChannelService) Create(ctx context.Context, scope tenancy.ProjectScope, in ChannelInput) (Channel, error) {
 	dest, err := s.validar(in)
@@ -197,7 +196,7 @@ func (s *ChannelService) Create(ctx context.Context, scope tenancy.ProjectScope,
 		if err := atual.Require(tenancy.PermManageChannels); err != nil {
 			return err
 		}
-		if err := s.cabeNa(ctx, q, atual.UserID, true); err != nil {
+		if err := s.cabeNa(ctx, q, atual, true); err != nil {
 			return err
 		}
 		p.UserID, p.ProjectID = atual.UserID, atual.ProjectID
@@ -249,23 +248,33 @@ func (s *ChannelService) exigir(ctx context.Context, scope tenancy.ProjectScope,
 }
 
 // cabe é a pré-conferência do limite, antes do envio, sem trava. Roda sob
-// InProjectTx, como a conferência definitiva (cabeNa com a trava, em Create):
-// InUserTx num recurso de projeto devolveria vazio em silêncio quando as
-// permissivas forem por projeto. Com um projeto por usuário as duas contam o
-// mesmo que a regra da spec (§Cotas e abuso), que conta os canais do titular.
+// InProjectTx e conta o mesmo que a conferência definitiva (cabeNa com a
+// trava, em Create): os canais do titular em todos os projetos dele.
 func (s *ChannelService) cabe(ctx context.Context, scope tenancy.ProjectScope) error {
 	return storage.InProjectTx(ctx, s.pool, scope.UserID, scope.ProjectID, func(q *db.Queries, atual tenancy.ProjectScope) error {
-		return s.cabeNa(ctx, q, atual.UserID, false)
+		return s.cabeNa(ctx, q, atual, false)
 	})
 }
 
-func (s *ChannelService) cabeNa(ctx context.Context, q *db.Queries, userID uuid.UUID, travar bool) error {
+// cabeNa conta os canais do titular do projeto do escopo e recusa no teto.
+// Com travar, toma antes as duas travas do titular: a linha de users, que o
+// binário anterior tomava (o titular era o único membro), para os dois
+// contarem em fila durante a release, e a chave advisory, que não depende da
+// RLS de users.
+func (s *ChannelService) cabeNa(ctx context.Context, q *db.Queries, sc tenancy.ProjectScope, travar bool) error {
 	if travar {
-		if err := q.LockUser(ctx, userID); err != nil {
-			return fmt.Errorf("travar usuário: %w", err)
+		titular, err := q.ProjectTitular(ctx, sc.ProjectID)
+		if err != nil {
+			return fmt.Errorf("ler o titular do projeto: %w", err)
+		}
+		if err := q.LockUser(ctx, titular); err != nil {
+			return fmt.Errorf("travar o titular: %w", err)
+		}
+		if err := q.LockTitularChannels(ctx, titular); err != nil {
+			return fmt.Errorf("travar canais do titular: %w", err)
 		}
 	}
-	n, err := q.CountChannels(ctx, userID)
+	n, err := q.CountTitularChannels(ctx, sc.ProjectID)
 	if err != nil {
 		return fmt.Errorf("contar canais: %w", err)
 	}

@@ -240,16 +240,86 @@ func achadosDeGUCDeProjeto(arquivo, sql string) []string {
 	return achados
 }
 
+// migrationDaCota é a das funções de cota do titular: a única, fora de
+// ScopeToProject, que escreve em app.project_id, e só para zerá-lo durante a
+// contagem e devolvê-lo ao valor que guardou (nenhuma liga projeto novo).
+var migrationDaCota = filepath.Join("migrations", "00045_contagem_de_cota_do_titular.sql")
+
+var (
+	// escritaDaCota casa as duas formas aceitas na 00045: set_config local de
+	// app.project_id para a string vazia (grupo 1) ou para uma variável
+	// (grupo 2), que tem de ser a que guardou o valor (guardaDoEscopo).
+	escritaDaCota = regexp.MustCompile(
+		`(?i)set_config\s*\(\s*'app\.project_id'\s*,\s*(?:('')|([a-z_][a-z0-9_]*))\s*,\s*true\s*\)`)
+	// guardaDoEscopo casa a atribuição que guarda app.project_id numa
+	// variável (grupo 1) antes de zerá-lo.
+	guardaDoEscopo = regexp.MustCompile(
+		`(?i)\b([a-z_][a-z0-9_]*)\s*:=\s*COALESCE\s*\(\s*current_setting\s*\(\s*'app\.project_id'\s*,\s*true\s*\)\s*,\s*''\s*\)`)
+)
+
+// semEscritasDaCota tira do SQL (e dos comentários) cada escrita aceita em
+// app.project_id e diz quantas zeram e quantas restauram. A restauração só é
+// aceita com uma variável que o mesmo SQL guardou com guardaDoEscopo: outra
+// variável, outro literal, set_config não local ou a cláusula SET de função
+// ficam no SQL e viram achado.
+func semEscritasDaCota(sql string) (semEscritas string, zeram, restauram int) {
+	limpo := apagarPreservandoLinhas(comentarioDeBloco, sql)
+	limpo = apagarPreservandoLinhas(comentarioDeLinha, limpo)
+	guardadas := map[string]bool{}
+	for _, m := range guardaDoEscopo.FindAllStringSubmatch(limpo, -1) {
+		guardadas[strings.ToLower(m[1])] = true
+	}
+	var b strings.Builder
+	desde := 0
+	for _, m := range escritaDaCota.FindAllStringSubmatchIndex(limpo, -1) {
+		switch {
+		case m[2] >= 0:
+			zeram++
+		case guardadas[strings.ToLower(limpo[m[4]:m[5]])]:
+			restauram++
+		default:
+			continue
+		}
+		b.WriteString(limpo[desde:m[0]])
+		b.WriteString(apagarPreservandoLinhas(escritaDaCota, limpo[m[0]:m[1]]))
+		desde = m[1]
+	}
+	b.WriteString(limpo[desde:])
+	return b.String(), zeram, restauram
+}
+
 // O SQL espelho de TestOnlyScopeGoSetsProjectScope: app.project_id só é
 // ligado pela query ScopeToProject, que só InProjectTx chama depois de
 // conferir a pertença. Um set_config numa função, num gatilho ou noutra query
-// liga o escopo de projeto sem essa conferência.
+// liga o escopo de projeto sem essa conferência. A exceção são as funções de
+// cota da 00045, que o zeram e o devolvem ao valor guardado, sem ligar
+// projeto nenhum.
 func TestOnlyScopeSQLSetsProjectGUC(t *testing.T) {
 	if n := len(achadosDeGUCDeProjeto("x.sql", "SELECT set_config('app.project_id', $1, true);")); n != 1 {
 		t.Fatalf("o caso positivo deu %d achados, esperado 1: a regex não enxerga set_config", n)
 	}
 	if n := len(achadosDeGUCDeProjeto("x.sql", "BEGIN;\nSET LOCAL app.project_id = 'x';")); n != 1 {
 		t.Fatalf("o caso positivo deu %d achados, esperado 1: a regex não enxerga SET LOCAL", n)
+	}
+	const guarda = "escopo := COALESCE(current_setting('app.project_id', true), '');\n"
+	for _, c := range []struct {
+		nome, sql                 string
+		zeram, restauram, achados int
+	}{
+		{"zera", "PERFORM set_config('app.project_id', '', true);", 1, 0, 0},
+		{"restaura o guardado", guarda + "PERFORM set_config('app.project_id', escopo, true);", 0, 1, 0},
+		{"variável não guardada", guarda + "PERFORM set_config('app.project_id', outro, true);", 0, 0, 1},
+		{"literal com valor", "PERFORM set_config('app.project_id', 'x', true);", 0, 0, 1},
+		{"não local", "PERFORM set_config('app.project_id', '', false);", 0, 0, 1},
+		{"cláusula de função", "CREATE FUNCTION f() RETURNS int LANGUAGE sql\n" +
+			"SET app.project_id = '' AS $$ SELECT 1 $$;", 0, 0, 1},
+	} {
+		sql, zeram, restauram := semEscritasDaCota(c.sql)
+		achados := len(achadosDeGUCDeProjeto("x.sql", sql))
+		if zeram != c.zeram || restauram != c.restauram || achados != c.achados {
+			t.Fatalf("%s: %d zera(m), %d restaura(m) e %d achado(s); esperado %d, %d e %d",
+				c.nome, zeram, restauram, achados, c.zeram, c.restauram, c.achados)
+		}
 	}
 
 	var caminhos []string
@@ -264,13 +334,16 @@ func TestOnlyScopeSQLSetsProjectGUC(t *testing.T) {
 		caminhos = append(caminhos, achados...)
 	}
 
-	viuScopeToProject := false
+	viuScopeToProject, zeramNaCota, restauramNaCota := false, 0, 0
 	for _, c := range caminhos {
 		conteudo, err := os.ReadFile(c)
 		if err != nil {
 			t.Fatal(err)
 		}
 		sql := string(conteudo)
+		if c == migrationDaCota {
+			sql, zeramNaCota, restauramNaCota = semEscritasDaCota(sql)
+		}
 		for _, achado := range achadosDeGUCDeProjeto(c, sql) {
 			if c == filepath.Join("queries", "scope.sql") && blocoDaLinha(sql, linhaDoAchado(t, achado)) == "ScopeToProject" {
 				viuScopeToProject = true
@@ -283,6 +356,93 @@ func TestOnlyScopeSQLSetsProjectGUC(t *testing.T) {
 	}
 	if !viuScopeToProject {
 		t.Error("a varredura não achou o set_config de ScopeToProject em queries/scope.sql; ela deixou de enxergar o SQL")
+	}
+	if zeramNaCota == 0 || restauramNaCota == 0 {
+		t.Errorf("a varredura achou %d escrita(s) que zeram e %d que restauram app.project_id em %s; "+
+			"queria as duas formas: ela deixou de enxergar a migration", zeramNaCota, restauramNaCota, migrationDaCota)
+	}
+}
+
+// gucsDaCota são os GUCs que abrem os projetos do titular às políticas
+// <t>_cota_select. Só as funções da 00045 os ligam, e elas os zeram de novo
+// antes de sair.
+var gucsDaCota = []string{"app.cota_titular_id", "app.cota_projetos"}
+
+// Ligar app.cota_* fora das funções de cota abriria, a quem só enxerga um
+// projeto, os recursos de todos os projetos do titular. Nenhuma query, nenhuma
+// outra migration e nenhum .go de produção os cita, nem em comentário.
+func TestOnlyQuotaFunctionsUseQuotaGUCs(t *testing.T) {
+	cita := func(texto string) string {
+		for _, guc := range gucsDaCota {
+			if strings.Contains(texto, guc) {
+				return guc
+			}
+		}
+		return ""
+	}
+
+	viuNaMigration := false
+	for _, padrao := range []string{"queries/*.sql", "migrations/*.sql"} {
+		caminhos, err := filepath.Glob(padrao)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(caminhos) == 0 {
+			t.Fatalf("nenhum arquivo em %s: o caminho do teste está errado", padrao)
+		}
+		for _, c := range caminhos {
+			conteudo, err := os.ReadFile(c)
+			if err != nil {
+				t.Fatal(err)
+			}
+			guc := cita(string(conteudo))
+			switch {
+			case guc == "":
+			case c == migrationDaCota:
+				viuNaMigration = true
+			default:
+				t.Errorf("%s cita %s: só as funções de cota de %s ligam esse GUC", c, guc, migrationDaCota)
+			}
+		}
+	}
+	if !viuNaMigration {
+		t.Errorf("a varredura não achou os GUCs da cota em %s; ela deixou de enxergar a migration", migrationDaCota)
+	}
+
+	raiz, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lidos := 0
+	err = filepath.WalkDir(raiz, func(caminho string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			if caminho != raiz && (strings.HasPrefix(d.Name(), ".") || diretoriosForaDaVarredura[d.Name()]) {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(caminho, ".go") || strings.HasSuffix(caminho, "_test.go") {
+			return nil
+		}
+		conteudo, err := os.ReadFile(caminho)
+		if err != nil {
+			return err
+		}
+		lidos++
+		if guc := cita(string(conteudo)); guc != "" {
+			rel, _ := filepath.Rel(raiz, caminho)
+			t.Errorf("%s cita %s: só as funções de cota de %s ligam esse GUC", filepath.ToSlash(rel), guc, migrationDaCota)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("varrer %s: %v", raiz, err)
+	}
+	if lidos == 0 {
+		t.Errorf("a varredura de %s não leu nenhum .go de produção", raiz)
 	}
 }
 

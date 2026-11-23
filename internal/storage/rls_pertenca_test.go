@@ -47,15 +47,14 @@ func contarNoEscopoDoProjeto(t *testing.T, pool *pgxpool.Pool, usuario, projeto 
 }
 
 // alvosNoEscopoDoUsuario conta, em storage.InUserTx, os alvos que a RLS deixa
-// o usuário ver com a query gerada.
+// o usuário ver: um SELECT count(*) sem WHERE, contido só pela política.
 func alvosNoEscopoDoUsuario(t *testing.T, pool *pgxpool.Pool, usuario uuid.UUID) int64 {
 	t.Helper()
 	ctx := context.Background()
 	var n int64
-	err := storage.InUserTx(ctx, pool, usuario, func(q *db.Queries) error {
-		var err error
-		n, err = q.CountTargets(ctx, usuario)
-		return err
+	g := &guardaTx{Beginner: pool}
+	err := storage.InUserTx(ctx, g, usuario, func(*db.Queries) error {
+		return g.tx.QueryRow(ctx, `SELECT count(*) FROM targets`).Scan(&n)
 	})
 	if err != nil {
 		t.Fatalf("contar os alvos de %s no escopo de usuário: %v", usuario, err)

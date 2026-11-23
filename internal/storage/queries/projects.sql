@@ -49,3 +49,8 @@ RETURNING id, name, is_default, created_at;
 -- name: InsertProjectOwner :exec
 INSERT INTO project_members (project_id, user_id, role, created_at)
 VALUES (sqlc.arg(project_id), sqlc.arg(user_id), 'owner', sqlc.arg(now));
+
+-- O titular do projeto, para as cotas (trava e contagem). Roda sob
+-- InProjectTx: projects_member_select deixa o membro ver o projeto.
+-- name: ProjectTitular :one
+SELECT titular_id FROM projects WHERE id = sqlc.arg(project_id);

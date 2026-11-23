@@ -211,7 +211,7 @@ func TestUpdateFalhaAoZerarAHisteresePreservaOAlvo(t *testing.T) {
 	exigirAlvoIntacto(t, a, dono, alvo, "API", entrada().URL, []string{})
 }
 
-// Sem conseguir tomar a trava do usuário, o PATCH falha com a causa do banco
+// Sem conseguir tomar a trava do titular, o PATCH falha com a causa do banco
 // antes de ler o alvo e nada muda.
 func TestUpdateFalhaAoTravarOsAlvosDoUsuario(t *testing.T) {
 	a := novoAmbiente(t)
@@ -223,7 +223,7 @@ func TestUpdateFalhaAoTravarOsAlvosDoUsuario(t *testing.T) {
 
 	_, err := a.svc.Update(context.Background(), targets.EscopoDe(t, a.pool, dono), alvo, targets.Patch{Name: ptr("Novo nome")})
 
-	exigirPGComplementar(t, err, "42501", "travar alvos do usuário: ")
+	exigirPGComplementar(t, err, "42501", "travar alvos do titular: ")
 	restaurar()
 	exigirAlvoIntacto(t, a, dono, alvo, "API", entrada().URL, []string{})
 }

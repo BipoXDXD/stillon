@@ -194,3 +194,16 @@ func (q *Queries) LockTitularProjects(ctx context.Context, titularID uuid.UUID) 
 	_, err := q.db.Exec(ctx, lockTitularProjects, titularID)
 	return err
 }
+
+const projectTitular = `-- name: ProjectTitular :one
+SELECT titular_id FROM projects WHERE id = $1
+`
+
+// O titular do projeto, para as cotas (trava e contagem). Roda sob
+// InProjectTx: projects_member_select deixa o membro ver o projeto.
+func (q *Queries) ProjectTitular(ctx context.Context, projectID uuid.UUID) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, projectTitular, projectID)
+	var titular_id uuid.UUID
+	err := row.Scan(&titular_id)
+	return titular_id, err
+}

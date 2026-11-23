@@ -14,22 +14,23 @@ import (
 	"github.com/BipoXDXD/stillon/internal/tenancy"
 )
 
-// CountTargets filtra só por user_id: U tem um alvo em A e outro em B, e ver
-// 1 dentro de InProjectTx(U, A) prova que app.project_id foi ligado.
+// U tem um alvo em A e outro em B. Só app.project_id concede (app.user_id
+// não abre recurso nenhum): ler o alvo de A dentro de InProjectTx(U, A) prova
+// que ele foi ligado, e não ler o de B, pedido com o filtro de B, prova que
+// a política corta o outro projeto.
 func TestInProjectTxScopesUserAndProject(t *testing.T) {
 	pool := testdb.New(t)
 	ctx := context.Background()
-	u, a, _, _, _ := doisProjetos(t, pool)
+	u, a, b, ra, rb := doisProjetos(t, pool)
 
 	var visto tenancy.ProjectScope
 	err := storage.InProjectTx(ctx, pool, u, a, func(q *db.Queries, sc tenancy.ProjectScope) error {
 		visto = sc
-		n, err := q.CountTargets(ctx, u)
-		if err != nil {
-			return err
+		if _, err := q.GetTarget(ctx, db.GetTargetParams{ProjectID: a, ID: ra.alvo}); err != nil {
+			t.Errorf("no escopo do projeto A, o alvo de A: %v", err)
 		}
-		if n != 1 {
-			t.Errorf("no escopo do projeto A, CountTargets(U) deu %d, queria 1", n)
+		if _, err := q.GetTarget(ctx, db.GetTargetParams{ProjectID: b, ID: rb.alvo}); !errors.Is(err, pgx.ErrNoRows) {
+			t.Errorf("no escopo do projeto A, o alvo de B deu %v; queria pgx.ErrNoRows", err)
 		}
 		return nil
 	})
@@ -181,7 +182,7 @@ func TestInProjectTxRejectsNilIDs(t *testing.T) {
 func TestProjectScopeSurvivesConnectionReuse(t *testing.T) {
 	pool := testdb.New(t)
 	ctx := context.Background()
-	u, a, b, _, _ := doisProjetos(t, pool)
+	u, a, b, ra, rb := doisProjetos(t, pool)
 
 	conn, err := pool.Acquire(ctx)
 	if err != nil {
@@ -190,7 +191,7 @@ func TestProjectScopeSurvivesConnectionReuse(t *testing.T) {
 	defer conn.Release()
 
 	err = storage.InProjectTx(ctx, conn, u, a, func(q *db.Queries, _ tenancy.ProjectScope) error {
-		_, err := q.CountTargets(ctx, u)
+		_, err := q.GetTarget(ctx, db.GetTargetParams{ProjectID: a, ID: ra.alvo})
 		return err
 	})
 	if err != nil {
@@ -218,12 +219,11 @@ func TestProjectScopeSurvivesConnectionReuse(t *testing.T) {
 	}
 
 	err = storage.InProjectTx(ctx, conn, u, b, func(q *db.Queries, _ tenancy.ProjectScope) error {
-		total, err := q.CountTargets(ctx, u)
-		if err != nil {
+		if _, err := q.GetTarget(ctx, db.GetTargetParams{ProjectID: b, ID: rb.alvo}); err != nil {
 			return err
 		}
-		if total != 1 {
-			t.Errorf("InProjectTx no projeto B depois do A na mesma conexão viu %d alvos, queria 1", total)
+		if _, err := q.GetTarget(ctx, db.GetTargetParams{ProjectID: a, ID: ra.alvo}); !errors.Is(err, pgx.ErrNoRows) {
+			t.Errorf("InProjectTx no projeto B depois do A na mesma conexão leu o alvo de A: %v", err)
 		}
 		return nil
 	})
