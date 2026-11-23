@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/google/uuid"
@@ -43,7 +44,8 @@ func NewRecuperacao(pool *pgxpool.Pool, clk clock.Clock, mailer AccountMailer, l
 // com distinção de caixa e entregar a outra caixa.
 //
 // O e-mail só é enfileirado (AccountMailer): a latência da rede não aparece
-// no ramo "tem conta". Um erro aqui é só de infraestrutura.
+// no ramo "tem conta". Um erro devolvido é só do banco: a falha do mailer vai
+// para o log e não muda a resposta.
 func (r *Recuperacao) PedirRedefinicao(ctx context.Context, email string) error {
 	userID, err := db.New(r.pool).GetUserIDByEmail(ctx, auth.NormalizeEmail(email))
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -71,6 +73,14 @@ func (r *Recuperacao) PedirRedefinicao(ctx context.Context, email string) error 
 		if err := q.ScopeToUser(ctx, userID); err != nil {
 			return fmt.Errorf("escopo do usuário: %w", err)
 		}
+		// A trava do usuário antes do DELETE: sem ela, dois pedidos
+		// simultâneos não veem o INSERT um do outro, e os dois links ficam
+		// valendo. Com ela, o segundo espera o commit do primeiro e o apaga.
+		// É a mesma trava que Redefinir toma antes de consumir o token, e na
+		// mesma ordem (trava, depois linhas): as duas não se travam em ciclo.
+		if err := q.LockUserSessions(ctx, userID); err != nil {
+			return fmt.Errorf("travar o usuário: %w", err)
+		}
 		if err := q.DeleteAccountTokens(ctx, db.DeleteAccountTokensParams{
 			UserID: userID, Purpose: propositoRedefinicao,
 		}); err != nil {
@@ -93,7 +103,10 @@ func (r *Recuperacao) PedirRedefinicao(ctx context.Context, email string) error 
 
 	assunto, corpo := emailDeRedefinicao(r.links.RedefinirSenha(token))
 	if err := r.mailer.SendAccountEmail(ctx, destino, assunto, corpo); err != nil {
-		return fmt.Errorf("enfileirar e-mail de redefinição: %w", err)
+		// Devolver o erro só aqui, no ramo "tem conta", seria um oráculo:
+		// o ramo sem conta nunca falha. Vai para o log, sem endereço nem
+		// link, e a resposta fica igual; "pedir de novo" resolve.
+		slog.ErrorContext(ctx, "e-mail de redefinição não enfileirado", "erro", err)
 	}
 	return nil
 }
@@ -104,8 +117,8 @@ func (r *Recuperacao) PedirRedefinicao(ctx context.Context, email string) error 
 //  2. o token espiado, sem consumir: token lixo, usado ou vencido para aqui,
 //     antes do Argon2id;
 //  3. o hash novo, fora da transação;
-//  4. a transação: o consumo atômico do token (quem perde a corrida recebe
-//     ErrTokenInvalido), a trava de sessões do dono, o hash trocado, TODAS as
+//  4. a transação: a trava de sessões do dono espiado, o consumo atômico do
+//     token (quem perde a corrida recebe ErrTokenInvalido), o hash trocado, TODAS as
 //     sessões encerradas, o e-mail confirmado (o link prova a posse da
 //     caixa), os tokens de redefinição apagados e a auditoria.
 //
@@ -119,8 +132,10 @@ func (r *Recuperacao) Redefinir(ctx context.Context, token, novaSenha string) er
 	}
 	tokenHash := crypto.HashToken(token)
 
+	var dono uuid.UUID
 	err := storage.InAccountTokenTx(ctx, r.pool, tokenHash, func(q *db.Queries) error {
-		_, err := q.PeekAccountToken(ctx, db.PeekAccountTokenParams{
+		var err error
+		dono, err = q.PeekAccountToken(ctx, db.PeekAccountTokenParams{
 			TokenHash: tokenHash, Purpose: propositoRedefinicao, Now: r.clk.Now(),
 		})
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -142,6 +157,13 @@ func (r *Recuperacao) Redefinir(ctx context.Context, token, novaSenha string) er
 
 	now := r.clk.Now()
 	return storage.InAccountTokenTx(ctx, r.pool, tokenHash, func(q *db.Queries) error {
+		// A trava do dono (o espiado) antes de qualquer linha: é a ordem de
+		// PedirRedefinicao, que a toma antes de apagar os tokens. Consumir
+		// primeiro travaria a linha do token, e um pedido simultâneo com a
+		// trava na mão esperaria por ela no DELETE: um ciclo.
+		if err := q.LockUserSessions(ctx, dono); err != nil {
+			return fmt.Errorf("travar sessões: %w", err)
+		}
 		// O UPDATE é o árbitro: de dois consumos simultâneos, só um
 		// devolve a linha.
 		userID, err := q.ConsumeAccountToken(ctx, db.ConsumeAccountTokenParams{

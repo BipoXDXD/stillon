@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/google/uuid"
@@ -52,8 +53,9 @@ func ValidarCadastro(email, senha string) (string, error) {
 // confirmação, e manda o link por e-mail. Com o e-mail já cadastrado
 // (confirmado ou não, em qualquer caixa), não grava nada e manda o "você já
 // tem conta; esqueceu a senha?". Nos dois casos devolve nil: o erro é só de
-// validação (antes de qualquer trabalho) ou de infraestrutura, inclusive
-// auth.ErrArgon2Busy.
+// validação (antes de qualquer trabalho) ou de infraestrutura (banco,
+// inclusive auth.ErrArgon2Busy). A falha do mailer vai para o log e não muda
+// a resposta.
 //
 // Contra a enumeração, os dois ramos fazem o mesmo trabalho caro: o Argon2id
 // roda SEMPRE, antes de qualquer consulta, e sai exatamente um e-mail, depois
@@ -112,7 +114,8 @@ func (c *Cadastro) Cadastrar(ctx context.Context, email, senha string) error {
 	} else {
 		assunto, corpo = emailDeConfirmacao(c.links.ConfirmarEmail(token))
 	}
-	return c.enviar(ctx, e, assunto, corpo)
+	c.enviarSemOraculo(ctx, e, assunto, corpo)
+	return nil
 }
 
 // ConfirmarEmail consome o token do link e marca o e-mail como confirmado, na
@@ -195,4 +198,15 @@ func (c *Cadastro) enviar(ctx context.Context, to, assunto, corpo string) error 
 		return fmt.Errorf("enfileirar e-mail de conta: %w", err)
 	}
 	return nil
+}
+
+// enviarSemOraculo é o envio do Cadastrar: a falha do mailer vai para o log,
+// sem endereço nem link, e não muda a resposta. Os dois ramos mandam e-mail,
+// mas um erro que dependesse do conteúdo (ou do tamanho da fila num ramo só)
+// separaria as respostas; "reenviar" e "esqueci a senha" resolvem o e-mail
+// perdido.
+func (c *Cadastro) enviarSemOraculo(ctx context.Context, to, assunto, corpo string) {
+	if err := c.enviar(ctx, to, assunto, corpo); err != nil {
+		slog.ErrorContext(ctx, "e-mail do cadastro não enfileirado", "erro", err)
+	}
 }

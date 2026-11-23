@@ -74,6 +74,17 @@ type Deps struct {
 	// de criação: o account.Service em produção. Obrigatório; os testes sem
 	// banco passam um conferidor falso.
 	EmailConfirmado middleware.ConferidorDeEmail
+	// Cadastro, Recuperacao e Turnstile servem as rotas públicas do cadastro,
+	// da confirmação de e-mail e da redefinição de senha: account.Cadastro,
+	// account.Recuperacao e turnstile.Verificador em produção. Obrigatórios,
+	// mesmo com o cadastro desligado (a confirmação, o reenvio e a
+	// redefinição continuam no ar); os testes sem banco passam falsos.
+	Cadastro    Cadastrador
+	Recuperacao Recuperador
+	Turnstile   VerificadorTurnstile
+	// CadastroPublico liga o signup e o forgot e dá a site key do widget.
+	// Desligado (o zero), os dois respondem 404.
+	CadastroPublico ConfigCadastro
 	Clock           clock.Clock
 	// LimitesIP guarda os baldes por IP do login e do /totp/verify. Em
 	// produção é o Postgres (storage.OrcamentosPorIP), para que réplicas
@@ -114,6 +125,17 @@ func Routes(ctx context.Context, cfg *config.Config, d Deps) http.Handler {
 	if d.EmailConfirmado == nil {
 		panic("httpapi: Deps sem EmailConfirmado; passe o account.Service (ou, sem banco, um conferidor falso)")
 	}
+	// Sem eles, as rotas públicas da conta cairiam em panic no primeiro
+	// pedido: defeito de montagem, recusado aqui.
+	if d.Cadastro == nil {
+		panic("httpapi: Deps sem Cadastro; passe o account.Cadastro (ou, sem banco, um falso)")
+	}
+	if d.Recuperacao == nil {
+		panic("httpapi: Deps sem Recuperacao; passe o account.Recuperacao (ou, sem banco, um falso)")
+	}
+	if d.Turnstile == nil {
+		panic("httpapi: Deps sem Turnstile; passe o turnstile.Verificador (ou, sem banco, um falso)")
+	}
 	secureCookie := config.EhHTTPS(cfg.PublicBaseURL)
 	// O teto de Argon2id simultâneos é do processo, e quem o
 	// paga é a API: o config.Load sempre o preenche; um Config montado à mão
@@ -137,6 +159,7 @@ func Routes(ctx context.Context, cfg *config.Config, d Deps) http.Handler {
 	sp := NewStatusPageHandlers(d.StatusPages, cfg.PublicBaseURL)
 	ah := NewAccountHandlers(d.Accounts, proxiesDe(cfg), secureCookie, provas)
 	ph := NewProjectHandlers(d.Projects)
+	cad := NewCadastroHandlers(d.Cadastro, d.Recuperacao, d.Turnstile, d.CadastroPublico, proxiesDe(cfg))
 	authn := middleware.Authn(cfg.JWTSecret, d.Clock)
 	// criacao é a trava "sem e-mail confirmado não cria" (403
 	// email_not_verified), em todo POST que cria targets, heartbeats (inclusive
@@ -195,6 +218,24 @@ func Routes(ctx context.Context, cfg *config.Config, d Deps) http.Handler {
 	mux.Handle("POST /api/v1/auth/password", autenticadaComLimite(ah.ChangePassword))
 	mux.Handle("POST /api/v1/auth/refresh", http.HandlerFunc(h.Refresh))
 	mux.Handle("POST /api/v1/auth/logout", http.HandlerFunc(h.Logout))
+
+	// O cadastro público e a recuperação de senha: sem sessão, cada rota com o
+	// seu balde por IP em d.LimitesIP (somado entre réplicas). Signup e forgot
+	// são os mais apertados (2/min, rajada 5): cada um custa um Argon2id ou um
+	// e-mail, e o Turnstile só vem depois da validação. Confirm e reset têm o
+	// token de 256 bits como credencial, e o balde só segura a martelada.
+	baldeIP := func(b middleware.BaldeIP, fn http.HandlerFunc) http.Handler {
+		return middleware.RateLimitIPCompartilhado(d.LimitesIP, b, proxiesDe(cfg), cfg.IPHashKey)(fn)
+	}
+	mux.Handle("GET /api/v1/auth/signup-config", http.HandlerFunc(cad.Config))
+	mux.Handle("POST /api/v1/auth/signup",
+		baldeIP(middleware.BaldeIP{Nome: "signup", PorMinuto: 2, Rajada: 5}, cad.Signup))
+	mux.Handle("POST /api/v1/auth/password/forgot",
+		baldeIP(middleware.BaldeIP{Nome: "password_forgot", PorMinuto: 2, Rajada: 5}, cad.EsqueciASenha))
+	mux.Handle("POST /api/v1/auth/email/confirm",
+		baldeIP(middleware.BaldeIP{Nome: "email_confirm", PorMinuto: 10, Rajada: 10}, cad.ConfirmarEmail))
+	mux.Handle("POST /api/v1/auth/password/reset",
+		baldeIP(middleware.BaldeIP{Nome: "password_reset", PorMinuto: 10, Rajada: 5}, cad.RedefinirSenha))
 
 	// Todas exigem a família do token viva: um token de sessão encerrada não mexe
 	// no 2FA.
@@ -257,6 +298,12 @@ func Routes(ctx context.Context, cfg *config.Config, d Deps) http.Handler {
 	porProjetoNovo := middleware.RateLimitUserEvery(ctx, d.Clock, projetoNovoACada, projetoNovoBurst)
 	criacaoDeProjeto := func(fn http.HandlerFunc) http.Handler { return authn(porUsuario(porProjetoNovo(viva(fn)))) }
 	mux.Handle("POST /api/v1/projects", criacaoDeProjeto(criacao(ph.Create)))
+	// O reenvio da confirmação é da conta, com sessão, e manda um e-mail: balde
+	// próprio por usuário (3 de uma vez, depois 1 a cada 10 min), antes da
+	// consulta de sessão. Sem a trava de e-mail, claro: é para quem não
+	// confirmou.
+	porReenvio := middleware.RateLimitUserEvery(ctx, d.Clock, 10*time.Minute, 3)
+	mux.Handle("POST /api/v1/auth/email/resend", authn(porUsuario(porReenvio(viva(http.HandlerFunc(cad.ReenviarConfirmacao))))))
 
 	mux.Handle("GET /api/v1/targets", recursoLegado(th.List))
 	mux.Handle("POST /api/v1/targets", recursoLegado(criacao(th.Create)))

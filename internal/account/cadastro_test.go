@@ -1,9 +1,11 @@
 package account_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"slices"
 	"strings"
 	"sync"
@@ -461,5 +463,56 @@ func TestReenviarJaConfirmadoNaoManda(t *testing.T) {
 	}
 	if n := contar(t, `SELECT count(*) FROM account_tokens WHERE user_id = $1`, id); n != tokens {
 		t.Fatalf("%d tokens; queria %d (nenhum novo)", n, tokens)
+	}
+}
+
+// mailerForaDoAr recusa todo e-mail, como uma fila que não aceita mais nada.
+type mailerForaDoAr struct{ chamadas atomic.Int32 }
+
+func (m *mailerForaDoAr) SendAccountEmail(context.Context, string, string, string) error {
+	m.chamadas.Add(1)
+	return errors.New("fila de e-mails de conta fora do ar")
+}
+
+// capturarLog troca o logger padrão por um que escreve no buffer devolvido, e
+// desfaz a troca no fim do teste.
+func capturarLog(t *testing.T) *bytes.Buffer {
+	t.Helper()
+	var saida bytes.Buffer
+	anterior := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&saida, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(anterior) })
+	return &saida
+}
+
+// Com o mailer fora do ar, o cadastro devolve nil nos dois ramos: um erro só
+// no ramo que manda e-mail seria um oráculo de conta, e os dois ramos mandam.
+// O erro vai para o log, sem o endereço e sem o token.
+func TestCadastrarComMailerForaDoArDevolveNilNosDoisRamos(t *testing.T) {
+	a := novoCadastro(t)
+	mailer := &mailerForaDoAr{}
+	cad := account.NewCadastro(a.pool, a.clk, mailer, linksDeTeste)
+	cad.SetHash(a.hasher.hash)
+	log := capturarLog(t)
+	ctx := context.Background()
+
+	if err := cad.Cadastrar(ctx, "fulano@exemplo.com", senha); err != nil {
+		t.Fatalf("conta nova com o mailer fora do ar: %v; queria nil", err)
+	}
+	if err := cad.Cadastrar(ctx, "fulano@exemplo.com", senha); err != nil {
+		t.Fatalf("conta existente com o mailer fora do ar: %v; queria nil", err)
+	}
+	if n := mailer.chamadas.Load(); n != 2 {
+		t.Fatalf("%d e-mails tentados; queria 2", n)
+	}
+	if n := contar(t, `SELECT count(*) FROM users WHERE email = 'fulano@exemplo.com'`); n != 1 {
+		t.Fatalf("%d usuários; queria 1 (a conta nasce mesmo sem o e-mail)", n)
+	}
+	saida := log.String()
+	if !strings.Contains(saida, "fila de e-mails de conta fora do ar") {
+		t.Errorf("o erro do mailer não foi para o log: %s", saida)
+	}
+	if strings.Contains(saida, "fulano") || strings.Contains(saida, "token") {
+		t.Errorf("o log traz o endereço ou o token: %s", saida)
 	}
 }

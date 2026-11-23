@@ -19,6 +19,7 @@ import (
 	"github.com/BipoXDXD/stillon/internal/auth"
 	"github.com/BipoXDXD/stillon/internal/clock"
 	"github.com/BipoXDXD/stillon/internal/config"
+	"github.com/BipoXDXD/stillon/internal/contaemail"
 	"github.com/BipoXDXD/stillon/internal/crypto"
 	"github.com/BipoXDXD/stillon/internal/heartbeat"
 	"github.com/BipoXDXD/stillon/internal/httpapi"
@@ -31,6 +32,7 @@ import (
 	"github.com/BipoXDXD/stillon/internal/targets"
 	"github.com/BipoXDXD/stillon/internal/tenancy"
 	"github.com/BipoXDXD/stillon/internal/tenancy/pgstore"
+	"github.com/BipoXDXD/stillon/internal/turnstile"
 )
 
 // totpIssuer é o nome que aparece no app autenticador do usuário.
@@ -239,6 +241,14 @@ func run(ctx context.Context, cfg *config.Config) error {
 			Clock:           clk,
 			LimitesIP:       storage.NewOrcamentosPorIP(pool, clk),
 			Ready:           pool.Ping,
+
+			// Provisório até a fiação do cadastro (T9): o cadastro público
+			// fica desligado (signup e forgot dão 404) e os e-mails de conta
+			// não saem. A T9 troca o SemEnvio pelo contaemail.Enviador e liga
+			// o CadastroPublico pelo cfg.SignupEnabled().
+			Cadastro:    account.NewCadastro(pool, clk, contaemail.SemEnvio{Log: slog.Default()}, account.Links{Base: cfg.PublicBaseURL}),
+			Recuperacao: account.NewRecuperacao(pool, clk, contaemail.SemEnvio{Log: slog.Default()}, account.Links{Base: cfg.PublicBaseURL}),
+			Turnstile:   turnstile.New(crypto.Secret(cfg.TurnstileSecretKey), cfg.HostDoTurnstile()),
 		}
 		servir(gctx, g, httpapi.NewServer(cfg, httpapi.Routes(gctx, cfg, deps)), "api", cfg.ShutdownGrace)
 		// O aviso do bloqueio do segundo fator sai deste papel, que é quem

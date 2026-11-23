@@ -33,6 +33,8 @@ import (
 	"github.com/BipoXDXD/stillon/internal/targets"
 	"github.com/BipoXDXD/stillon/internal/tenancy"
 	"github.com/BipoXDXD/stillon/internal/tenancy/pgstore"
+	"github.com/BipoXDXD/stillon/internal/turnstile"
+	"github.com/BipoXDXD/stillon/internal/turnstile/turnstiletest"
 )
 
 const (
@@ -75,6 +77,10 @@ type api struct {
 	// discord e email substituem os envios de verificação dos canais.
 	discord *discordFalso
 	email   *carteiroFalso
+	// conta grava os e-mails de conta (confirmação, "já tem conta",
+	// redefinição); turnstile é o verificador ligado ao siteverify falso.
+	conta     *mailerDeContaFalso
+	turnstile *turnstile.Verificador
 	// rotacao é o rotation da última troca de autenticador que o iniciarTrocaHTTP
 	// viu aceita: o confirmarTrocaHTTP o manda de volta.
 	rotacao string
@@ -156,10 +162,18 @@ func newAPICom(t *testing.T, ajustar func(*config.Config), ajustarDeps func(*htt
 
 	discord, email := &discordFalso{}, &carteiroFalso{}
 	contas := account.NewService(pool, segundoFator, clk, cfg.IPHashKey)
+	// O cadastro público sai ligado, com o siteverify falso que aceita o
+	// token das chaves de teste da Cloudflare.
+	emailsDeConta := &mailerDeContaFalso{}
+	desafio := turnstiletest.Verificador(t, turnstiletest.SecretPassa)
 	deps := httpapi.Deps{
 		Store: store, Sessions: mgr, TOTP: segundoFator,
 		Accounts:        contas,
 		EmailConfirmado: contas,
+		Cadastro:        account.NewCadastro(pool, clk, emailsDeConta, linksDoPainel),
+		Recuperacao:     account.NewRecuperacao(pool, clk, emailsDeConta, linksDoPainel),
+		Turnstile:       desafio,
+		CadastroPublico: httpapi.ConfigCadastro{Habilitado: true, SiteKey: turnstiletest.SiteKeyPassa},
 		Proofs:          auth.NewFamilyProofs(pool, clk),
 		Targets:         targets.NewService(pool, box, clk),
 		Incidents:       history.NewService(pool, clk),
@@ -177,7 +191,7 @@ func newAPICom(t *testing.T, ajustar func(*config.Config), ajustarDeps func(*htt
 	srv := httptest.NewServer(httpapi.Routes(ctx, cfg, deps))
 	t.Cleanup(srv.Close)
 	return &api{srv: srv, pool: pool, clk: clk, userID: userID, discord: discord, email: email,
-		ctx: ctx, cfg: cfg, deps: deps}
+		conta: emailsDeConta, turnstile: desafio, ctx: ctx, cfg: cfg, deps: deps}
 }
 
 func post(t *testing.T, c *http.Client, url string, body any) *http.Response {

@@ -42,7 +42,6 @@ func (c *carteiro) todos() []emailDeRecuperacao {
 	return append([]emailDeRecuperacao(nil), c.enviados...)
 }
 
-
 const senhaRedefinida = "a-senha-redefinida-pelo-link"
 
 func novaRecuperacao(pool *pgxpool.Pool, clk clock.Clock) (*account.Recuperacao, *carteiro) {
@@ -414,5 +413,76 @@ func TestRedefinicaoSimultaneaSoUmaVence(t *testing.T) {
 	}
 	if !senhaEntra(t, c.pool, c.user, fmt.Sprintf("senha-simultanea-numero-%02d", vencedor)) {
 		t.Error("a senha final não é a do vencedor")
+	}
+}
+
+// Com o mailer fora do ar, o pedido com conta devolve nil, como o sem conta:
+// um erro só no ramo "tem conta" seria um oráculo. O erro vai para o log, sem
+// o endereço e sem o token.
+func TestPedirRedefinicaoComMailerForaDoArRespondeComoSemConta(t *testing.T) {
+	c := montar(t)
+	mailer := &mailerForaDoAr{}
+	r := account.NewRecuperacao(c.pool, c.clk, mailer, linksDeTeste)
+	log := capturarLog(t)
+	ctx := context.Background()
+
+	semConta := r.PedirRedefinicao(ctx, "ninguem@exemplo.com")
+	comConta := r.PedirRedefinicao(ctx, "dono@exemplo.com")
+	if semConta != nil || comConta != nil {
+		t.Fatalf("sem conta: %v; com conta: %v; queria nil nos dois", semConta, comConta)
+	}
+	if n := mailer.chamadas.Load(); n != 1 {
+		t.Fatalf("%d e-mails tentados; queria 1 (só o da conta)", n)
+	}
+	saida := log.String()
+	if !strings.Contains(saida, "fila de e-mails de conta fora do ar") {
+		t.Errorf("o erro do mailer não foi para o log: %s", saida)
+	}
+	if strings.Contains(saida, "dono@") || strings.Contains(saida, "token") {
+		t.Errorf("o log traz o endereço ou o token: %s", saida)
+	}
+}
+
+// Dois pedidos simultâneos não deixam dois links válidos: a trava do usuário
+// antes do DELETE faz o segundo pedido ver (e apagar) o token do primeiro.
+func TestPedidosSimultaneosDeixamUmSoLink(t *testing.T) {
+	c := montar(t)
+	r, m := novaRecuperacao(c.pool, c.clk)
+
+	// A corrida sem a trava nem sempre aparece numa rodada só: cinco rodadas
+	// de dez pedidos a pegam quase sempre.
+	const rodadas, n = 5, 10
+	for rodada := range rodadas {
+		erros := make([]error, n)
+		largada := make(chan struct{})
+		var wg sync.WaitGroup
+		for i := range n {
+			wg.Go(func() {
+				<-largada
+				erros[i] = r.PedirRedefinicao(context.Background(), "dono@exemplo.com")
+			})
+		}
+		close(largada)
+		wg.Wait()
+		for i, err := range erros {
+			if err != nil {
+				t.Fatalf("rodada %d, pedido %d: %v", rodada, i, err)
+			}
+		}
+
+		tokens := tokensDeRedefinicao(t, c.user)
+		if len(tokens) != 1 {
+			t.Fatalf("rodada %d: %d links de redefinição válidos depois de %d pedidos simultâneos; queria 1",
+				rodada, len(tokens), n)
+		}
+		var doEmail bool
+		for _, e := range m.todos() {
+			if _, ok := tokens[fmt.Sprintf("%x", crypto.HashToken(tokenDoEmailDeRecuperacao(t, e)))]; ok {
+				doEmail = true
+			}
+		}
+		if !doEmail {
+			t.Errorf("rodada %d: o link que sobrou não é de nenhum e-mail enviado", rodada)
+		}
 	}
 }

@@ -63,6 +63,31 @@ var rotasLimitadas = []rotaLimitada{
 	},
 	verificacaoGET,
 	verificacaoPOST,
+	// O cadastro sai desligado na bancada: signup e forgot respondem 404 de
+	// dentro do limite. Confirm e reset recebem um token comprido demais, que
+	// vira token_invalid sem consulta.
+	{
+		nome: "signup", metodo: http.MethodPost, caminho: "/api/v1/auth/signup", corpo: `{}`,
+		fixos: map[string]string{"X-Requested-With": "stillon"}, rajada: 5,
+		dentro: http.StatusNotFound, umaFicha: 30 * time.Second, retryAfter: "30",
+	},
+	{
+		nome: "esqueci a senha", metodo: http.MethodPost, caminho: "/api/v1/auth/password/forgot", corpo: `{}`,
+		fixos: map[string]string{"X-Requested-With": "stillon"}, rajada: 5,
+		dentro: http.StatusNotFound, umaFicha: 30 * time.Second, retryAfter: "30",
+	},
+	{
+		nome: "confirmação de e-mail", metodo: http.MethodPost, caminho: "/api/v1/auth/email/confirm",
+		corpo: `{"token":"` + strings.Repeat("A", 129) + `"}`,
+		fixos: map[string]string{"X-Requested-With": "stillon"}, rajada: 10,
+		dentro: http.StatusBadRequest, umaFicha: 6 * time.Second, retryAfter: "6",
+	},
+	{
+		nome: "redefinição de senha", metodo: http.MethodPost, caminho: "/api/v1/auth/password/reset",
+		corpo: `{"token":"` + strings.Repeat("A", 129) + `","new_password":"uma-senha-bem-comprida"}`,
+		fixos: map[string]string{"X-Requested-With": "stillon"}, rajada: 5,
+		dentro: http.StatusBadRequest, umaFicha: 6 * time.Second, retryAfter: "6",
+	},
 	{
 		nome: "código do 2FA", metodo: http.MethodPost, caminho: "/api/v1/auth/totp/verify",
 		corpo: `{"challenge":"desafio-invalido","code":"000000"}`,
@@ -99,8 +124,9 @@ func novaBancada(t *testing.T, ajustar func(*config.Config)) *bancada {
 		StatusPages:     statuspage.NewService(nil, clk),
 		Projects:        tenancy.NewService(repoFalso{}, clk),
 		EmailConfirmado: conferidorQueConfirma{},
-		Clock:           clk,
-		LimitesIP:       middleware.NovosOrcamentosEmMemoria(ctx, clk),
+		Cadastro:        contaPublicaFalsa{}, Recuperacao: contaPublicaFalsa{}, Turnstile: turnstileQueRecusa{},
+		Clock:     clk,
+		LimitesIP: middleware.NovosOrcamentosEmMemoria(ctx, clk),
 	}
 	return &bancada{rotas: httpapi.Routes(ctx, cfg, deps), clk: clk}
 }
