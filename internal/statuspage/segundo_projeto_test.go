@@ -65,8 +65,10 @@ func TestSecondProjectGetsItsOwnStatusPage(t *testing.T) {
 }
 
 // O texto de ErrExists fala do projeto: a página deixou de ser uma por usuário.
+// O texto ao usuário não sai daqui: o handler responde com o código
+// status_page_exists, e a mensagem vem de apierr.
 func TestErrExistsFalaDoProjeto(t *testing.T) {
-	if got, quer := statuspage.ErrExists.Error(), "Este projeto já tem uma status page."; got != quer {
+	if got, quer := statuspage.ErrExists.Error(), "o projeto já tem uma status page"; got != quer {
 		t.Errorf("ErrExists = %q, queria %q", got, quer)
 	}
 }

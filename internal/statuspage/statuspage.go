@@ -23,7 +23,7 @@ import (
 var (
 	ErrNotFound = errors.New("status page não encontrada")
 	// ErrExists: o projeto já tem a página dele (uma por projeto, 00046).
-	ErrExists = errors.New("Este projeto já tem uma status page.")
+	ErrExists = errors.New("o projeto já tem uma status page")
 	// ErrSlugTaken: outro usuário já publicou (ou reservou) este slug.
 	ErrSlugTaken = errors.New("slug em uso")
 )
