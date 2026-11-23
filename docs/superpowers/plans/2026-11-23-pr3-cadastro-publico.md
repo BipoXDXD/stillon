@@ -25,7 +25,7 @@
   - rota pública entra em `rotasPublicas` com o porquê;
   - arquivo novo que chama `ScopeToUser`/`InUserTx` entra na lista de `internal/storage/guarda_escopo_test.go` com o motivo.
 - Valores do spec: token de **256 bits**, só o hash SHA-256 gravado. Confirmação vale **24 h**, redefinição **1 h**, os dois de uso único. O teto é de **50** e-mails de conta por dia (dia UTC). O token do Turnstile tem até **2048** caracteres e vale 300 s; o servidor não guarda token.
-- Um comando pesado por vez (Docker, Playwright); remova os contêineres que criar. Merge fora de 00:00–01:00 e 03:10–03:45 BRT. Depois de cada merge, confira o run do `Coolify release` desse SHA e o `readyz`.
+- Um comando pesado por vez (Docker, Playwright); remova os contêineres que criar. Merge fora de 00:00–01:00 BRT. Depois de cada merge, confira o run do `Coolify release` desse SHA e o `readyz`.
 - Tarefas de tela (T11, T12): carregue `frontend-design:frontend-design` (direção C "Editorial claro", Fraunces + Inter, primária índigo), `design-skills:ux-writing`, `design-skills:interaction-design`, `design-skills:design-systems` (reusar `web/src/components/ui`) e `design-skills:accessibility-audit` (WCAG 2.2 AA).
 
 ## Foco da revisão
