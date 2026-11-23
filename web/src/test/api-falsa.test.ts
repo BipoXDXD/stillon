@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { usarApiFalsa } from './ambiente'
-import { ERROS_DO_SERVIDOR, TOTP_OK } from './api-falsa'
+import { EMAIL, ERROS_DO_SERVIDOR, SENHA, TOKEN_DO_TURNSTILE, TOTP_OK } from './api-falsa'
 import { alvo, canal, heartbeat, incidente, itemDoResumo, pagina } from './fixtures'
 
 // A API falsa é o contrato dos testes de tela: quando ela diverge do servidor,
@@ -543,5 +543,54 @@ describe('tabela de erros (errorTable do servidor)', () => {
     // @ts-expect-error o código é internal_error
     falsa.estado.forcar.set('GET /targets', { status: 500, code: 'internal' })
     expect(falsa.estado.forcar.size).toBe(1)
+  })
+})
+
+// As rotas públicas do cadastro (contrato HTTP do PR 3): sem Bearer.
+describe('o cadastro público', () => {
+  function pedirPublico(caminho: string, corpo: unknown) {
+    return fetch(new URL(`/api/v1${caminho}`, location.origin), {
+      method: 'POST',
+      headers: { 'X-Requested-With': 'stillon', 'Content-Type': 'application/json' },
+      body: JSON.stringify(corpo),
+    })
+  }
+
+  const cadastro = (email: string) => ({ email, password: SENHA, turnstile_token: TOKEN_DO_TURNSTILE })
+
+  it('signup com campo a mais dá 400', async () => {
+    const falsa = usarApiFalsa()
+    const r = await pedirPublico('/auth/signup', { ...cadastro('nova@exemplo.com'), name: 'Nova' })
+    expect(r.status).toBe(400)
+    expect(await r.json()).toMatchObject({ error: { code: 'validation_failed' } })
+    expect(falsa.estado.cadastro.contas.has('nova@exemplo.com')).toBe(false)
+  })
+
+  it('signup responde 202 igual com e sem conta', async () => {
+    const falsa = usarApiFalsa()
+    const comConta = await pedirPublico('/auth/signup', cadastro(EMAIL))
+    const semConta = await pedirPublico('/auth/signup', cadastro('nova@exemplo.com'))
+
+    expect([comConta.status, semConta.status]).toEqual([202, 202])
+    expect(await comConta.text()).toBe('')
+    expect(await semConta.text()).toBe('')
+    expect([...comConta.headers]).toEqual([...semConta.headers])
+    // Só a conta nova ganha um token de confirmação.
+    expect(falsa.estado.cadastro.contas.has('nova@exemplo.com')).toBe(true)
+    expect([...falsa.estado.cadastro.tokens.values()]).toEqual(['confirm_email'])
+  })
+
+  it('confirm consome o token uma vez', async () => {
+    const falsa = usarApiFalsa()
+    falsa.estado.emailConfirmado = false
+    falsa.estado.cadastro.tokens.set('token-1', 'confirm_email')
+
+    const primeira = await pedirPublico('/auth/email/confirm', { token: 'token-1' })
+    const segunda = await pedirPublico('/auth/email/confirm', { token: 'token-1' })
+
+    expect(primeira.status).toBe(204)
+    expect(falsa.estado.emailConfirmado).toBe(true)
+    expect(segunda.status).toBe(400)
+    expect(await segunda.json()).toMatchObject({ error: { code: 'token_invalid' } })
   })
 })

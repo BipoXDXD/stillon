@@ -14,6 +14,7 @@ import type {
   Sessao,
 } from '@/lib/api/schemas'
 import { Agendamento } from '@/lib/api/schemas'
+import { SITE_KEY_DO_TURNSTILE, TOKEN_DO_TURNSTILE } from './fixtures'
 
 // Uma API falsa, com estado, para o MSW. Ela imita as GUARDAS do servidor, e
 // não só as respostas felizes; sem isso, os testes de cliente passariam
@@ -48,6 +49,7 @@ export const CODIGOS_NOVOS = Array.from({ length: 10 }, (_, i) => `NOVO${String(
 // servidor (16 bytes derivados do segredo pendente).
 export const PING_URL = 'https://stillon.exemplo/ping/CANARIO-do-token-de-ping'
 export const rotacao = (n: number) => n.toString(16).padStart(32, '0')
+export { SITE_KEY_DO_TURNSTILE, TOKEN_DO_TURNSTILE }
 
 const agora = () => new Date('2026-09-24T12:00:00Z')
 
@@ -81,6 +83,10 @@ export const ERROS_DO_SERVIDOR = {
   method_not_allowed: 405,
   schedule_unsupported: 409,
   project_limit_reached: 409,
+  // Os códigos do cadastro público (PR 3).
+  email_not_verified: 403,
+  turnstile_failed: 400,
+  token_invalid: 400,
 } as const
 
 type ErrosDoServidor = typeof ERROS_DO_SERVIDOR
@@ -125,6 +131,11 @@ const OBRIGATORIOS_DO_ALVO = ['name', 'url', 'method', 'interval_sec', 'timeout_
 const OBRIGATORIOS_DO_HEARTBEAT = ['name', 'schedule', 'grace_sec', 'enabled', 'ping_resumes']
 const OBRIGATORIOS_DA_PAGINA = ['slug', 'title', 'published', 'items']
 const PROVAS_DO_2FA = ['password', 'code', 'recovery_code']
+// auth.MinPasswordLen e MaxPasswordLen: em code points.
+const MIN_SENHA = 15
+const MAX_SENHA = 128
+const EMAIL_VALIDO = /^[^@\s]+@[^@\s]+$/
+type TipoDeToken = 'confirm_email' | 'reset_password'
 
 export type ApiFalsa = ReturnType<typeof criarApiFalsa>
 
@@ -204,6 +215,16 @@ export function criarApiFalsa() {
     canais: [] as Entrada<typeof Canal>[],
     paginas: [] as Entrada<typeof PaginaDeStatus>[],
     sessoes: [] as Entrada<typeof Sessao>[],
+    // O e-mail da conta logada (o email_verified do /me); o confirm o marca.
+    emailConfirmado: true,
+    // O cadastro público. Habilitado, ao contrário do padrão do servidor:
+    // as telas do cadastro são o caso comum dos testes. contas são os e-mails
+    // com conta; tokens, os de uso único que os e-mails levariam.
+    cadastro: {
+      habilitado: true,
+      contas: new Set<string>([EMAIL]),
+      tokens: new Map<string, TipoDeToken>(),
+    },
     // Respostas forçadas por rota ("POST /targets" → 409 etc.).
     forcar: new Map<string, ErroForcado>(),
   }
@@ -276,6 +297,42 @@ export function criarApiFalsa() {
       return recusado ? erro(400, 'validation_failed') : fn(a)
     }
   }
+
+  // ValidateNewPassword do servidor: o motivo da recusa, ou null.
+  function motivoDaSenha(senha: unknown) {
+    const n = [...String(senha ?? '')].length
+    if (n < MIN_SENHA) return 'too_short'
+    return n > MAX_SENHA ? 'too_long' : null
+  }
+
+  // A ordem do servidor no signup e no forgot: o formato (sem consulta, sem
+  // gastar o token do Turnstile), depois o Turnstile, e só então o banco.
+  function recusaDoFormulario(corpo: Json, campoDaSenha?: string) {
+    const fields: CampoComErro[] = []
+    if (!EMAIL_VALIDO.test(String(corpo.email ?? ''))) fields.push({ field: 'email', reason: 'invalid' })
+    const motivo = campoDaSenha ? motivoDaSenha(corpo[campoDaSenha]) : null
+    if (campoDaSenha && motivo) fields.push({ field: campoDaSenha, reason: motivo })
+    if (fields.length > 0) return erro(400, 'validation_failed', fields)
+    if (corpo.turnstile_token !== TOKEN_DO_TURNSTILE) return erro(400, 'turnstile_failed')
+    return null
+  }
+
+  function novoTokenDeConta(tipo: TipoDeToken) {
+    const token = `token-de-conta-${++st.seq}`
+    st.cadastro.tokens.set(token, tipo)
+    return token
+  }
+
+  // Uso único: o token sai na primeira leitura que confere o tipo.
+  function consumirToken(token: unknown, tipo: TipoDeToken) {
+    const t = String(token ?? '')
+    if (st.cadastro.tokens.get(t) !== tipo) return false
+    st.cadastro.tokens.delete(t)
+    return true
+  }
+
+  // 202 sem corpo: a mesma resposta com e sem conta (enumeração).
+  const aceito = () => new HttpResponse(null, { status: 202 })
 
   // ParseTag do servidor: a tag canônica, ou o motivo da recusa.
   function lerTag(crua: string) {
@@ -447,7 +504,86 @@ export function criarApiFalsa() {
       false,
     ),
     rota('get', '/me', () =>
-      HttpResponse.json({ id: 'u1', email: EMAIL, totp_enabled: st.totpLigado, created_at: '2026-09-01T10:00:00Z' }),
+      HttpResponse.json({
+        id: 'u1',
+        email: EMAIL,
+        totp_enabled: st.totpLigado,
+        email_verified: st.emailConfirmado,
+        created_at: '2026-09-01T10:00:00Z',
+      }),
+    ),
+
+    // O cadastro público (contrato HTTP do PR 3). Desligado, signup e forgot
+    // são 404; a config diz isso ao painel com a site key vazia.
+    rota(
+      'get',
+      '/auth/signup-config',
+      () =>
+        HttpResponse.json({
+          enabled: st.cadastro.habilitado,
+          turnstile_site_key: st.cadastro.habilitado ? SITE_KEY_DO_TURNSTILE : '',
+        }),
+      false,
+    ),
+    // E-mail com conta recebe o "você já tem conta" (fora desta falsa); sem
+    // conta, a conta nasce não confirmada e ganha o token de confirmação.
+    rota(
+      'post',
+      '/auth/signup',
+      estrita(['email', 'password', 'turnstile_token'], ({ corpo }) => {
+        if (!st.cadastro.habilitado) return erro(404, 'not_found')
+        const recusa = recusaDoFormulario(corpo, 'password')
+        if (recusa) return recusa
+        const email = String(corpo.email)
+        if (!st.cadastro.contas.has(email)) {
+          st.cadastro.contas.add(email)
+          novoTokenDeConta('confirm_email')
+        }
+        return aceito()
+      }),
+      false,
+    ),
+    rota(
+      'post',
+      '/auth/email/confirm',
+      estrita(['token'], ({ corpo }) => {
+        if (!consumirToken(corpo.token, 'confirm_email')) return erro(400, 'token_invalid')
+        st.emailConfirmado = true
+        return new HttpResponse(null, { status: 204 })
+      }),
+      false,
+    ),
+    // Com sessão: reenvia a confirmação ao e-mail da conta logada.
+    rota('post', '/auth/email/resend', () => {
+      if (!st.emailConfirmado) novoTokenDeConta('confirm_email')
+      return aceito()
+    }),
+    // Sem conta: 202 e nenhum token.
+    rota(
+      'post',
+      '/auth/password/forgot',
+      estrita(['email', 'turnstile_token'], ({ corpo }) => {
+        if (!st.cadastro.habilitado) return erro(404, 'not_found')
+        const recusa = recusaDoFormulario(corpo)
+        if (recusa) return recusa
+        if (st.cadastro.contas.has(String(corpo.email))) novoTokenDeConta('reset_password')
+        return aceito()
+      }),
+      false,
+    ),
+    // A política da senha antes do token, como o servidor. O reset também
+    // confirma o e-mail (quem lê a caixa é o dono).
+    rota(
+      'post',
+      '/auth/password/reset',
+      estrita(['token', 'new_password'], ({ corpo }) => {
+        const motivo = motivoDaSenha(corpo.new_password)
+        if (motivo) return erro(400, 'validation_failed', [{ field: 'new_password', reason: motivo }])
+        if (!consumirToken(corpo.token, 'reset_password')) return erro(400, 'token_invalid')
+        st.emailConfirmado = true
+        return new HttpResponse(null, { status: 204 })
+      }),
+      false,
     ),
 
     // O filtro do servidor (targets.SummaryFilter): tags em E, estados em OU.

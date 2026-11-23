@@ -7,6 +7,8 @@ import {
   rotacao,
   SEGREDO_NOVO,
   SENHA,
+  SITE_KEY_DO_TURNSTILE,
+  TOKEN_DO_TURNSTILE,
   TOTP_NOVO,
   TOTP_OK,
 } from '@/test/api-falsa'
@@ -893,5 +895,58 @@ describe('o id hostil vai codificado em toda rota com id', () => {
     const { api } = novaSessao({ buscar })
     await chamar(api).catch(() => undefined)
     expect(pedidos).toEqual([esperada])
+  })
+})
+
+// O cadastro público (PR 3): as rotas sem sessão vão como o /auth/login,
+// sem access token e sem renovar em 401.
+describe('o cadastro público', () => {
+  it('cadastrar envia o corpo exato e não manda Authorization', async () => {
+    const falsa = usarApiFalsa()
+    const cabecalhos: Headers[] = []
+    const buscar = vi.fn<Buscar>((entrada, init) => {
+      cabecalhos.push(new Headers(init.headers))
+      return buscarDoTeste(entrada, init)
+    })
+    const { sessao, api } = novaSessao({ buscar })
+    // Com uma sessão aberta: o token existe, e mesmo assim não vai.
+    await sessao.entrar(EMAIL, SENHA)
+    const entrada = { email: 'nova@exemplo.com', password: SENHA, turnstile_token: TOKEN_DO_TURNSTILE }
+
+    await expect(api.cadastrar(entrada)).resolves.toBeUndefined()
+
+    expect(falsa.corpos('POST /auth/signup')).toEqual([entrada])
+    const doCadastro = cabecalhos.at(-1)!
+    expect(doCadastro.has('Authorization')).toBe(false)
+    expect(doCadastro.get('X-Requested-With')).toBe('stillon')
+  })
+
+  it('confirmarEmail com token_invalid rejeita com ApiError code token_invalid', async () => {
+    const falsa = usarApiFalsa()
+    const { api } = novaSessao()
+
+    const e = await api.confirmarEmail('token-que-nao-existe').catch((x: unknown) => x)
+
+    expect(e).toBeInstanceOf(ApiError)
+    expect(e).toMatchObject({ status: 400, code: 'token_invalid' })
+    expect(falsa.corpos('POST /auth/email/confirm')).toEqual([{ token: 'token-que-nao-existe' }])
+    expect(falsa.chamadas('POST /auth/refresh')).toBe(0)
+  })
+
+  it('me aceita email_verified', async () => {
+    const { falsa, api } = await logado()
+    falsa.estado.emailConfirmado = false
+    await expect(api.me()).resolves.toMatchObject({ email_verified: false })
+    falsa.estado.emailConfirmado = true
+    await expect(api.me()).resolves.toMatchObject({ email_verified: true })
+  })
+
+  it('configDoCadastro lê enabled e a site key', async () => {
+    const falsa = usarApiFalsa()
+    const { api } = novaSessao()
+
+    await expect(api.configDoCadastro()).resolves.toEqual({ enabled: true, turnstile_site_key: SITE_KEY_DO_TURNSTILE })
+    falsa.estado.cadastro.habilitado = false
+    await expect(api.configDoCadastro()).resolves.toEqual({ enabled: false, turnstile_site_key: '' })
   })
 })
