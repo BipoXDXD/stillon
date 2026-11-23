@@ -29,7 +29,7 @@ func TestAPIRoleAppliesTheConfiguredContentRulesPerHost(t *testing.T) {
 	pool := testdb.New(t)
 	ctx := context.Background()
 	dono := uuid.Must(uuid.NewV7())
-	if _, err := pool.Exec(ctx, `INSERT INTO users (id, email, password_hash) VALUES ($1, 'teto@exemplo.com', 'x')`, dono); err != nil {
+	if _, err := pool.Exec(ctx, `INSERT INTO users (id, email, password_hash, email_verified_at) VALUES ($1, 'teto@exemplo.com', 'x', now())`, dono); err != nil {
 		t.Fatal(err)
 	}
 	addr := portaLivre(t)

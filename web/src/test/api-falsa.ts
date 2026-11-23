@@ -81,6 +81,9 @@ export const ERROS_DO_SERVIDOR = {
   method_not_allowed: 405,
   schedule_unsupported: 409,
   project_limit_reached: 409,
+  email_not_verified: 403,
+  turnstile_failed: 400,
+  token_invalid: 400,
 } as const
 
 type ErrosDoServidor = typeof ERROS_DO_SERVIDOR

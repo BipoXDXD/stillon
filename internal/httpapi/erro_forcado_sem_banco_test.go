@@ -76,16 +76,17 @@ func apiSemBanco(t *testing.T) (*httptest.Server, *clock.Fake) {
 	store := auth.NewPGStore(pool)
 	srv := httptest.NewServer(httpapi.Routes(ctx, cfg, httpapi.Deps{
 		Store: store, Sessions: auth.NewManager(store, clk, cfg.IPHashKey), TOTP: segundoFator,
-		Accounts:    account.NewService(pool, segundoFator, clk, cfg.IPHashKey),
-		Proofs:      auth.NewFamilyProofs(pool, clk),
-		Targets:     targets.NewService(pool, box, clk),
-		Incidents:   history.NewService(pool, clk),
-		Channels:    notify.NewChannelService(pool, box, clk, &discordFalso{}, &carteiroFalso{}, cfg.PublicBaseURL),
-		StatusPages: statuspage.NewService(pool, clk),
-		Pings:       heartbeat.NewPingService(pool, clk),
-		Heartbeats:  heartbeat.NewService(pool, clk),
-		Projects:    tenancy.NewService(pgstore.New(pool), clk),
-		Clock:       clk, Ready: pool.Ping,
+		Accounts:        account.NewService(pool, segundoFator, clk, cfg.IPHashKey),
+		Proofs:          auth.NewFamilyProofs(pool, clk),
+		Targets:         targets.NewService(pool, box, clk),
+		Incidents:       history.NewService(pool, clk),
+		Channels:        notify.NewChannelService(pool, box, clk, &discordFalso{}, &carteiroFalso{}, cfg.PublicBaseURL),
+		StatusPages:     statuspage.NewService(pool, clk),
+		Pings:           heartbeat.NewPingService(pool, clk),
+		Heartbeats:      heartbeat.NewService(pool, clk),
+		Projects:        tenancy.NewService(pgstore.New(pool), clk),
+		EmailConfirmado: conferidorQueConfirma{},
+		Clock:           clk, Ready: pool.Ping,
 		LimitesIP: storage.NewOrcamentosPorIP(pool, clk),
 	}))
 	t.Cleanup(srv.Close)

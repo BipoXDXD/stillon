@@ -110,6 +110,59 @@ func TestCreateUserRecusaEmailRepetido(t *testing.T) {
 	}
 }
 
+// inserirComoNoSignup grava o usuário como o cadastro público grava: sem
+// email_verified_at.
+func inserirComoNoSignup(t *testing.T, pool *pgxpool.Pool, email string) uuid.UUID {
+	t.Helper()
+	id := uuid.New()
+	if _, err := pool.Exec(context.Background(),
+		`INSERT INTO users (id, email, password_hash) VALUES ($1, $2, 'barato$x')`, id, email); err != nil {
+		t.Fatal(err)
+	}
+	return id
+}
+
+// O /me diz se o e-mail foi confirmado: falso no cadastro público ainda sem
+// confirmação, verdadeiro no operador do CLI.
+func TestMeTrazEmailVerified(t *testing.T) {
+	svc, pool := novo(t)
+	ctx := context.Background()
+	semConfirmar := inserirComoNoSignup(t, pool, "novo@exemplo.com")
+	operador, err := svc.CreateUser(ctx, "dono@exemplo.com", senha)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for id, queria := range map[uuid.UUID]bool{semConfirmar: false, operador: true} {
+		conta, err := svc.Me(ctx, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if conta.EmailVerified != queria {
+			t.Errorf("Me(%v).EmailVerified = %v, queria %v", id, conta.EmailVerified, queria)
+		}
+	}
+}
+
+// EmailConfirmado acompanha a coluna: falso antes da confirmação, verdadeiro
+// depois. Usuário inexistente é ErrUserNotFound, nunca "confirmado".
+func TestEmailConfirmadoSegueAConfirmacao(t *testing.T) {
+	svc, pool := novo(t)
+	ctx := context.Background()
+	id := inserirComoNoSignup(t, pool, "novo@exemplo.com")
+	if ok, err := svc.EmailConfirmado(ctx, id); err != nil || ok {
+		t.Fatalf("antes da confirmação: %v, %v; queria false, nil", ok, err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE users SET email_verified_at = now() WHERE id = $1`, id); err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := svc.EmailConfirmado(ctx, id); err != nil || !ok {
+		t.Fatalf("depois da confirmação: %v, %v; queria true, nil", ok, err)
+	}
+	if ok, err := svc.EmailConfirmado(ctx, uuid.New()); !errors.Is(err, account.ErrUserNotFound) || ok {
+		t.Errorf("usuário inexistente: %v, %v; queria false, ErrUserNotFound", ok, err)
+	}
+}
+
 func TestValidateEmail(t *testing.T) {
 	bons := map[string]string{
 		"dono@exemplo.com":     "dono@exemplo.com",

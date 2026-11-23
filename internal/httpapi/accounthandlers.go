@@ -31,10 +31,13 @@ func NewAccountHandlers(svc *account.Service, proxies middleware.Proxies, secure
 
 // meResponse é construído campo a campo: nada de hash, bloqueio ou segredo.
 type meResponse struct {
-	ID          string    `json:"id"`
-	Email       string    `json:"email"`
-	TOTPEnabled bool      `json:"totp_enabled"`
-	CreatedAt   time.Time `json:"created_at"`
+	ID          string `json:"id"`
+	Email       string `json:"email"`
+	TOTPEnabled bool   `json:"totp_enabled"`
+	// EmailVerified falso faz o painel mostrar "confirme seu e-mail"; as rotas
+	// de criação recusam com 403 email_not_verified enquanto isso.
+	EmailVerified bool      `json:"email_verified"`
+	CreatedAt     time.Time `json:"created_at"`
 }
 
 // Me diz ao painel quem está logado e se o segundo fator está ligado (é o que
@@ -56,7 +59,8 @@ func (h *AccountHandlers) Me(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	apierr.WriteJSON(w, http.StatusOK, meResponse{
-		ID: a.ID.String(), Email: a.Email, TOTPEnabled: a.TOTPEnabled, CreatedAt: a.CreatedAt.UTC(),
+		ID: a.ID.String(), Email: a.Email, TOTPEnabled: a.TOTPEnabled,
+		EmailVerified: a.EmailVerified, CreatedAt: a.CreatedAt.UTC(),
 	})
 }
 
