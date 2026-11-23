@@ -166,18 +166,23 @@ func TestCreateProjectLimitUnderRace(t *testing.T) {
 
 	const corrida = 5
 	var (
-		wg    sync.WaitGroup
-		erros [corrida]error
+		wg      sync.WaitGroup
+		erros   [corrida]error
+		largada = make(chan struct{})
 	)
+	// A largada fecha só depois de subir todas: sem ela, a primeira goroutine
+	// costuma terminar antes de a última começar, e a corrida não acontece.
 	for i := range corrida {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			<-largada
 			_, erros[i] = st.Create(context.Background(), tenancy.NewProject{
 				ID: uuid.Must(uuid.NewV7()), Name: fmt.Sprintf("Corrida %d", i), TitularID: u, Now: time.Now(),
 			})
 		}()
 	}
+	close(largada)
 	wg.Wait()
 
 	passaram := 0

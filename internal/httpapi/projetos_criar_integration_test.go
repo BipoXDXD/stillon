@@ -133,7 +133,7 @@ func TestCreateProjectRejectsInvalidName(t *testing.T) {
 		{"vazio", "", "required"},
 		{"só espaço", "   ", "required"},
 		{"longo demais", strings.Repeat("é", tenancy.MaxProjectNameRunes+1), "too_long"},
-		{"caractere invisível", "a​b", "invalid"},
+		{"caractere invisível", "a\u200bb", "invalid"},
 	} {
 		t.Run(c.caso, func(t *testing.T) {
 			antes := projetosDoTitular(t, a.userID)
@@ -150,13 +150,17 @@ func TestCreateProjectRejectsInvalidName(t *testing.T) {
 func TestCreateProjectRejectsUnknownField(t *testing.T) {
 	a := newAPI(t)
 	token := tokenDe(t, a, a.userID)
+	outro := outroUsuario(t, a)
 	status, corpo := criarProjetoHTTP(t, a, token,
-		map[string]string{"name": "x", "titular_id": outroUsuario(t, a).String()})
+		map[string]string{"name": "x", "titular_id": outro.String()})
 	if status != http.StatusBadRequest || codigoNoCorpo(t, corpo) != string(apierr.CodeValidation) {
 		t.Errorf("campo desconhecido deu %d %s, queria 400 validation_failed", status, corpo)
 	}
 	if n := projetosDoTitular(t, a.userID); n != 0 {
 		t.Errorf("a recusa gravou %d projetos", n)
+	}
+	if n := projetosDoTitular(t, outro); n != 0 {
+		t.Errorf("a recusa gravou %d projetos no titular do corpo", n)
 	}
 }
 
