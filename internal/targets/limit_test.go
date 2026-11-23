@@ -36,11 +36,10 @@ func (a ambiente) encherAte(t *testing.T, dono uuid.UUID, n int) {
 	}
 }
 
-// O 100º entra; o 101º é ErrLimitReached; o teto é por usuário.
-//
-// Duas barreiras fazem a contagem ser por usuário: o WHERE user_id de
-// CountTargets e a RLS do projeto (a contagem roda em storage.InProjectTx).
-// Sabotar só uma deixa o teste verde; só sabotar as duas juntas o quebra.
+// O 100º entra; o 101º é ErrLimitReached; o teto é por titular: o de um não
+// barra outro. A contagem (cota_alvos_do_titular) soma só os projetos do
+// titular do escopo; TestMemberQuotaCountsTitularProjects cobre os projetos
+// que ele tem além do padrão.
 func TestCreateStopsAtTheLimit(t *testing.T) {
 	a := novoAmbiente(t)
 	ctx := context.Background()

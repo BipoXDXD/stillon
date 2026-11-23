@@ -13,11 +13,12 @@ import (
 
 var ErrNotFound = errors.New("alvo não encontrado")
 
-// ErrLimitReached: o usuário já tem MaxTargetsPerUser alvos.
+// ErrLimitReached: o titular já tem MaxTargetsPerUser alvos, somando os
+// projetos dele.
 var ErrLimitReached = errors.New("limite de alvos atingido")
 
-// ErrContentHostLimit: o usuário já tem o teto de alvos com regra de conteúdo
-// no host de destino. A resposta não diz o host nem a contagem.
+// ErrContentHostLimit: o titular já tem, somando os projetos dele, o teto de
+// alvos com regra de conteúdo no host de destino. A resposta não diz o host nem a contagem.
 var ErrContentHostLimit = errors.New("limite de regras de conteúdo no host atingido")
 
 // Target é o que sai do domínio. Os VALORES dos headers não saem nunca:
@@ -126,11 +127,11 @@ const (
 	DefaultPageSize int32 = 50
 	MaxPageSize     int32 = 100
 
-	// MaxTargetsPerUser é o teto de alvos. Até o PR 2b ele vale para o
-	// usuário dentro do projeto atual (a contagem roda sob InProjectTx); o
-	// teto por titular vem no PR 2b. É o mesmo número de MaxPageSize, então uma página de GET /targets sempre
-	// cabe todos, e o custo de GET /targets/summary, que não pagina, tem teto
-	// (~33 ms e ~180 KB com 100 alvos, medidos na spec).
+	// MaxTargetsPerUser é o teto de alvos por titular, somando os projetos
+	// dele (o nome fica até o PR 5). É o mesmo número de MaxPageSize, então
+	// uma página de GET /targets sempre cabe todos os alvos de um projeto, e
+	// o custo de GET /targets/summary, que não pagina, tem teto (~33 ms e
+	// ~180 KB com 100 alvos, medidos na spec).
 	MaxTargetsPerUser = int64(MaxPageSize)
 
 	// DefaultContentRulesPerHost é o teto de alvos com regra de conteúdo por

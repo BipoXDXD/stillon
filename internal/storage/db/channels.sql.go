@@ -35,15 +35,16 @@ func (q *Queries) ConfirmChannel(ctx context.Context, arg ConfirmChannelParams) 
 	return result.RowsAffected(), nil
 }
 
-const countChannels = `-- name: CountChannels :one
-SELECT count(*) FROM notif_channels WHERE user_id = $1
+const countTitularChannels = `-- name: CountTitularChannels :one
+SELECT cota_canais_do_titular($1::uuid)::bigint
 `
 
-func (q *Queries) CountChannels(ctx context.Context, userID uuid.UUID) (int64, error) {
-	row := q.db.QueryRow(ctx, countChannels, userID)
-	var count int64
-	err := row.Scan(&count)
-	return count, err
+// Conta no escopo de quem chama: projeto que ele não enxerga é 42501.
+func (q *Queries) CountTitularChannels(ctx context.Context, projectID uuid.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, countTitularChannels, projectID)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
 }
 
 const deleteChannel = `-- name: DeleteChannel :execrows
@@ -248,9 +249,8 @@ type ListChannelsRow struct {
 	LastError       *string
 }
 
-// Sem paginação: a listagem traz os canais de quem chama no projeto atual,
-// que nunca passam do limite pequeno do usuário (notify.MaxChannels); o teto
-// por titular vem no PR 2b.
+// Sem paginação: a listagem traz os canais do projeto, que nunca passam do
+// limite pequeno do titular, somando os projetos dele (notify.MaxChannels).
 func (q *Queries) ListChannels(ctx context.Context, projectID uuid.UUID) ([]ListChannelsRow, error) {
 	rows, err := q.db.Query(ctx, listChannels, projectID)
 	if err != nil {
@@ -282,18 +282,30 @@ func (q *Queries) ListChannels(ctx context.Context, projectID uuid.UUID) ([]List
 	return items, nil
 }
 
+const lockTitularChannels = `-- name: LockTitularChannels :exec
+SELECT pg_advisory_xact_lock(hashtextextended('stillon.channels:' || $1::uuid::text, 0))
+`
+
+// Serializa as criações de canal do titular, em todos os projetos dele, para
+// que o limite valha também contra duas requisições simultâneas. Chave
+// advisory: não depende da RLS de users (invisível ao membro no PR 4).
+func (q *Queries) LockTitularChannels(ctx context.Context, titularID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, lockTitularChannels, titularID)
+	return err
+}
+
 const lockUser = `-- name: LockUser :exec
 
 SELECT id FROM users WHERE id = $1 FOR UPDATE
 `
 
 // Canais (spec §8, §5.8). As do dono rodam sob InProjectTx e filtram por
-// project_id; as exceções, por user_id, são a cota do usuário (LockUser,
-// CountChannels). FindChannelByVerification e ConfirmChannel rodam sob
-// InVerifyTx.
-// Serializa as criações de canal do mesmo usuário, para que o limite de
-// canais valha também contra duas requisições simultâneas. users não tem
-// RLS.
+// project_id; as exceções são a cota do titular do projeto (LockUser,
+// LockTitularChannels, CountTitularChannels). FindChannelByVerification e
+// ConfirmChannel rodam sob InVerifyTx.
+// A trava do binário anterior, que serializava as criações de canal pelo
+// usuário (o titular, único membro): fica para os dois binários contarem em
+// fila durante a release. users não tem RLS.
 func (q *Queries) LockUser(ctx context.Context, id uuid.UUID) error {
 	_, err := q.db.Exec(ctx, lockUser, id)
 	return err

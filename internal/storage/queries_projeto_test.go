@@ -25,14 +25,10 @@ var arquivosDeRecursoDeProjeto = []string{
 	"targets.sql", "heartbeats.sql", "channels.sql", "statuspages.sql", "incidents.sql", "notifications.sql",
 }
 
-// queriesQueFiltramPorUsuario são as únicas queries de recurso de projeto que
-// ainda filtram por user_id, cada uma com o motivo.
-var queriesQueFiltramPorUsuario = map[string]string{
-	"CountTargets":              "cota por usuário até a Task 23",
-	"ListContentRuleTargetURLs": "cota por usuário até a Task 23",
-	"CountHeartbeats":           "cota por usuário até a Task 23",
-	"CountChannels":             "cota por usuário até a Task 23",
-}
+// queriesQueFiltramPorUsuario são as queries de recurso de projeto que podem
+// filtrar por user_id, cada uma com o motivo. Vazia: as cotas contam pelo
+// titular do projeto (funções cota_* da 00045).
+var queriesQueFiltramPorUsuario = map[string]string{}
 
 // blocoDeQuery é um bloco "-- name:" de um arquivo de queries.
 type blocoDeQuery struct {
@@ -93,8 +89,7 @@ func achadosDeFiltroPorUsuario(arquivo, sql string) map[string]string {
 // Recurso de projeto é escolhido pelo project_id do escopo, nunca pelo
 // user_id de quem pede: com membros, user_id é quem criou a linha, e filtrar
 // por ele esconde o que os outros membros criaram e mostra o que a pessoa
-// criou em outro projeto. Só as contagens de cota ficam por usuário até a
-// Task 23 trocá-las pelo titular.
+// criou em outro projeto. Nem as cotas: elas contam pelo titular do projeto.
 func TestResourceQueriesFilterByProject(t *testing.T) {
 	exemplo := "-- name: ListarAlgo :many\n-- user_id = $9 no comentário não conta\nSELECT id FROM targets\n WHERE user_id = $1;\n\n" +
 		"-- name: OutraCoisa :one\nSELECT id FROM targets WHERE project_id = $1;\n\n" +
@@ -125,8 +120,8 @@ func TestResourceQueriesFilterByProject(t *testing.T) {
 				"queriesQueFiltramPorUsuario com o motivo.", achado)
 		}
 	}
-	// A lista não guarda exceção vencida: quando a Task 23 tirar o filtro de
-	// uma contagem, o nome sai daqui. Isso também prova que a varredura achou
+	// A lista não guarda exceção vencida: quando uma query deixa de filtrar
+	// por user_id, o nome sai daqui. Isso também prova que a varredura achou
 	// os filtros que existem.
 	for _, nome := range slices.Sorted(maps.Keys(queriesQueFiltramPorUsuario)) {
 		if !vistos[nome] {

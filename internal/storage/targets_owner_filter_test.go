@@ -22,9 +22,7 @@ func TestTargetQueriesFilterByOwnerWithoutRLS(t *testing.T) {
 	pool := testdb.New(t)
 	ctx := context.Background()
 	// Os dois projetos são do MESMO usuário: só o filtro por projeto os separa.
-	// B é outro usuário, para a cota (ListContentRuleTargetURLs), que segue
-	// por dono.
-	a, b := novoUsuario(t, pool), novoUsuario(t, pool)
+	a := novoUsuario(t, pool)
 	pa, pb := testdb.ProjetoPadrao(t, a), testdb.NovoProjeto(t, a, "B")
 	proximo := agora.Add(42 * time.Minute)
 	alvoDeA := novoAlvo(t, pool, a, proximo)
@@ -91,25 +89,5 @@ func TestTargetQueriesFilterByOwnerWithoutRLS(t *testing.T) {
 	}
 	if e := ler(); e.nome != "roubado" || e.falhas != 0 || e.sequenciaDesde != nil {
 		t.Errorf("com o dono, UpdateTarget e ResetTargetHealth não agiram: %+v", e)
-	}
-
-	// O teto de regras por host lê as URLs com regra do dono: sem o
-	// filtro, as de A contariam no teto de B.
-	if _, err := admin.Exec(ctx, `UPDATE targets SET content_mode = 'contains', content_value = 'ok' WHERE id = $1`, alvoDeA); err != nil {
-		t.Fatal(err)
-	}
-	rows, err := q.ListContentRuleTargetURLs(ctx, b)
-	if err != nil {
-		t.Fatalf("ListContentRuleTargetURLs de B: %v", err)
-	}
-	if len(rows) != 0 {
-		t.Errorf("ListContentRuleTargetURLs de B devolveu %d linhas de A", len(rows))
-	}
-	rows, err = q.ListContentRuleTargetURLs(ctx, a)
-	if err != nil {
-		t.Fatalf("ListContentRuleTargetURLs de A: %v", err)
-	}
-	if len(rows) != 1 || rows[0].ID != alvoDeA {
-		t.Errorf("ListContentRuleTargetURLs de A = %+v, queria só o alvo %s", rows, alvoDeA)
 	}
 }

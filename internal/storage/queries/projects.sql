@@ -27,3 +27,8 @@ SELECT p.id, p.name, p.is_default, m.role, p.created_at
   JOIN users t ON t.id = p.titular_id
  WHERE m.user_id = sqlc.arg(user_id) AND t.suspended_at IS NULL
  ORDER BY p.is_default DESC, p.id;
+
+-- O titular do projeto, para as cotas (trava e contagem). Roda sob
+-- InProjectTx: projects_member_select deixa o membro ver o projeto.
+-- name: ProjectTitular :one
+SELECT titular_id FROM projects WHERE id = sqlc.arg(project_id);

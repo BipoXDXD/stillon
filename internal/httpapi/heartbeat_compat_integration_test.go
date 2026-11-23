@@ -204,7 +204,7 @@ func TestCloneByOtherUserOnUnknownScheduleIsNotFound(t *testing.T) {
 		strings.Contains(corpo, "schedule_unsupported") || strings.Contains(corpo, id.String()) {
 		t.Errorf("duplicar alheio: %d %s, queria 404 not_found sem schedule_unsupported nem o id", status, corpo)
 	}
-	if n := contarHeartbeatsDe(t, a, outro); n != 0 {
+	if n := contarHeartbeatsDe(t, outro); n != 0 {
 		t.Errorf("o intruso ficou com %d heartbeats, queria 0", n)
 	}
 	if n := contarHeartbeats(t, a); n != 1 {
