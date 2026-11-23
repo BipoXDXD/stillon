@@ -81,18 +81,6 @@ func inserirComSQLAntigo(t *testing.T, pool *pgxpool.Pool, ins insercaoAntiga, d
 	return id
 }
 
-// projectIDDe relê o project_id por fora da RLS.
-func projectIDDe(t *testing.T, tabela string, id uuid.UUID) *uuid.UUID {
-	t.Helper()
-	var got *uuid.UUID
-	// tabela é sempre um literal do próprio teste.
-	if err := testdb.Admin(t).QueryRow(context.Background(),
-		`SELECT project_id FROM `+tabela+` WHERE id = $1`, id).Scan(&got); err != nil {
-		t.Fatalf("%s: reler project_id: %v", tabela, err)
-	}
-	return got
-}
-
 // outroProjeto cria, por fora da RLS, um segundo projeto (não padrão) do titular.
 func outroProjeto(t *testing.T, titular uuid.UUID) uuid.UUID {
 	t.Helper()

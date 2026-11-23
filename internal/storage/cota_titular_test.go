@@ -111,6 +111,62 @@ func TestQuotaFunctionsCountEveryProjectOfTitular(t *testing.T) {
 	}
 }
 
+// A segunda barreira: o filtro por projetos do titular dentro das funções
+// vale sem a RLS. O superusuário ignora as políticas (inclusive a leitura do
+// titular e a recusa 42501, que dependem dela), então só o WHERE project_id =
+// ANY (projetos) separa U (A com dois de cada recurso, B com um) de V (um de
+// cada).
+func TestQuotaFunctionsFilterTitularWithoutRLS(t *testing.T) {
+	pool := testdb.New(t)
+	ctx := context.Background()
+	admin := testdb.Admin(t)
+	u := novoUsuario(t, pool)
+	a := testdb.ProjetoPadrao(t, u)
+	b := testdb.NovoProjeto(t, u, "Projeto B")
+	ra := semearProjeto(t, u, a, "a1", "")
+	semearProjeto(t, u, a, "a2", "")
+	rb := semearProjeto(t, u, b, "b1", "")
+	v := novoUsuario(t, pool)
+	pv := testdb.ProjetoPadrao(t, v)
+	rv := semearProjeto(t, v, pv, "v1", "")
+	comRegra(t, ra.alvo, rb.alvo, rv.alvo)
+
+	for _, c := range []struct {
+		nome    string
+		projeto uuid.UUID
+		n       int64
+		urls    []uuid.UUID
+	}{
+		{"U", a, 3, []uuid.UUID{ra.alvo, rb.alvo}},
+		{"V", pv, 1, []uuid.UUID{rv.alvo}},
+	} {
+		var alvos, heartbeats, canais int64
+		if err := admin.QueryRow(ctx, `SELECT cota_alvos_do_titular($1), cota_heartbeats_do_titular($1),
+		                                      cota_canais_do_titular($1)`, c.projeto).Scan(&alvos, &heartbeats, &canais); err != nil {
+			t.Fatal(err)
+		}
+		for nome, n := range map[string]int64{"alvos": alvos, "heartbeats": heartbeats, "canais": canais} {
+			if n != c.n {
+				t.Errorf("sem RLS, a cota de %s de %s deu %d, queria %d", nome, c.nome, n, c.n)
+			}
+		}
+		linhas, err := admin.Query(ctx, `SELECT r.id FROM cota_urls_com_regra_do_titular($1) AS r`, c.projeto)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids, err := pgx.CollectRows(linhas, pgx.RowTo[uuid.UUID])
+		if err != nil {
+			t.Fatal(err)
+		}
+		porTexto := func(x, y uuid.UUID) int { return strings.Compare(x.String(), y.String()) }
+		slices.SortFunc(ids, porTexto)
+		slices.SortFunc(c.urls, porTexto)
+		if !slices.Equal(ids, c.urls) {
+			t.Errorf("sem RLS, as URLs com regra de %s trouxeram %v, queria %v", c.nome, ids, c.urls)
+		}
+	}
+}
+
 // Os alvos de outro titular (V) não entram na cota de U.
 func TestQuotaFunctionDoesNotCountOtherTitulars(t *testing.T) {
 	pool := testdb.New(t)
