@@ -2,7 +2,6 @@ package account_test
 
 import (
 	"context"
-	"errors"
 	"testing"
 	"time"
 
@@ -129,24 +128,28 @@ func TestCreatedUserWritesTargetInDefaultProject(t *testing.T) {
 	}
 }
 
-// A recusa do segundo usuário não deixa projeto para trás.
-func TestCreateUserRefusesSecondUserWithoutCreatingProject(t *testing.T) {
+// A segunda conta, com outro e-mail, também nasce com o seu Projeto padrão.
+func TestCreateUserSegundaContaGanhaProjetoProprio(t *testing.T) {
 	svc, _ := novo(t)
 	ctx := context.Background()
-	if _, err := svc.CreateUser(ctx, "dono@exemplo.com", senha); err != nil {
+	primeiro, err := svc.CreateUser(ctx, "dono@exemplo.com", senha)
+	if err != nil {
 		t.Fatal(err)
 	}
 
-	_, err := svc.CreateUser(ctx, "outro@exemplo.com", senha)
-	if !errors.Is(err, account.ErrUserExists) {
-		t.Fatalf("segunda criação: err = %v, queria ErrUserExists", err)
+	segundo, err := svc.CreateUser(ctx, "outro@exemplo.com", senha)
+	if err != nil {
+		t.Fatalf("segunda criação: %v", err)
 	}
 
 	var n int
 	if err := testdb.Admin(t).QueryRow(ctx, `SELECT count(*) FROM projects`).Scan(&n); err != nil {
 		t.Fatal(err)
 	}
-	if n != 1 {
-		t.Errorf("%d projetos depois da recusa, queria 1", n)
+	if n != 2 {
+		t.Errorf("%d projetos depois da segunda conta, queria 2", n)
+	}
+	if projetosPadraoDe(t, primeiro) != 1 || projetosPadraoDe(t, segundo) != 1 {
+		t.Error("cada conta deveria ter o seu Projeto padrão")
 	}
 }

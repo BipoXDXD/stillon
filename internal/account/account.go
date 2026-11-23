@@ -26,12 +26,12 @@ import (
 	"github.com/BipoXDXD/stillon/internal/crypto"
 	"github.com/BipoXDXD/stillon/internal/storage"
 	"github.com/BipoXDXD/stillon/internal/storage/db"
-	"github.com/BipoXDXD/stillon/internal/tenancy"
 )
 
 var (
-	// ErrUserExists: o sistema já tem usuário (spec §2.1: usuário único).
-	ErrUserExists = errors.New("já existe um usuário")
+	// ErrEmailTaken: já existe conta com este e-mail (o citext compara sem a
+	// caixa). A recusa não muda nada.
+	ErrEmailTaken = errors.New("já existe uma conta com esse e-mail")
 	// ErrUserNotFound: nenhum usuário com este e-mail.
 	ErrUserNotFound = errors.New("usuário não cadastrado")
 	// ErrInvalidEmail: não é um endereço puro (sem nome de exibição).
@@ -68,9 +68,6 @@ type Service struct {
 	// O custo de derivação fica fora das transações, separado da persistência.
 	hashPassword   func(context.Context, string) (string, error)
 	verifyPassword func(ctx context.Context, encoded, plain string) (ok, needsRehash bool, err error)
-	// depoisDeContar existe para o teste de criação concorrente: roda entre a
-	// contagem de usuários e a inserção.
-	depoisDeContar func()
 }
 
 // NewService: totp e ipKey só servem à API (troca de senha). O CLI passa nil
@@ -270,17 +267,6 @@ func ValidateEmail(email string) (string, error) {
 	return e, nil
 }
 
-// HasUsers responde se o sistema já tem usuário. O CLI pergunta ANTES de
-// pedir a senha, para ninguém digitar duas vezes à toa; CreateUser confere de
-// novo sob a trava.
-func (s *Service) HasUsers(ctx context.Context) (bool, error) {
-	n, err := db.New(s.pool).CountUsers(ctx)
-	if err != nil {
-		return false, fmt.Errorf("contar usuários: %w", err)
-	}
-	return n > 0, nil
-}
-
 // UserIDByEmail devolve ErrUserNotFound quando o e-mail não está cadastrado.
 func (s *Service) UserIDByEmail(ctx context.Context, email string) (uuid.UUID, error) {
 	id, err := db.New(s.pool).GetUserIDByEmail(ctx, auth.NormalizeEmail(email))
@@ -293,11 +279,13 @@ func (s *Service) UserIDByEmail(ctx context.Context, email string) (uuid.UUID, e
 	return id, nil
 }
 
-// CreateUser cria o dono. Recusa com ErrUserExists se já existe QUALQUER
-// usuário, e a recusa não muda nada.
-//
-// A contagem e a inserção rodam sob uma advisory lock de transação: sem
-// ela, dois CLIs simultâneos contariam zero e criariam dois donos.
+// restricaoEmailUnico é a UNIQUE de users.email (migration 00001).
+const restricaoEmailUnico = "users_email_key"
+
+// CreateUser cria um operador pelo CLI. E-mail já cadastrado (inclusive com
+// outra caixa) é ErrEmailTaken, e a recusa não muda nada: quem decide é a
+// UNIQUE do banco, então dois CLIs simultâneos com o mesmo e-mail não criam
+// duas contas.
 //
 // O usuário nasce operador (is_operator, e-mail verificado) e com o Projeto
 // padrão, de que é titular e owner, tudo na mesma transação.
@@ -309,7 +297,7 @@ func (s *Service) CreateUser(ctx context.Context, email, password string) (uuid.
 	if motivo := auth.ValidateNewPassword(password); motivo != "" {
 		return uuid.Nil, PolicyError{Reason: motivo}
 	}
-	// O Argon2id leva ~100 ms: fora da transação, para não segurar a trava.
+	// O Argon2id leva ~100 ms: fora da transação.
 	hash, err := s.hashPassword(ctx, password)
 	if err != nil {
 		return uuid.Nil, err
@@ -321,25 +309,12 @@ func (s *Service) CreateUser(ctx context.Context, email, password string) (uuid.
 	now := s.clk.Now()
 
 	err = s.inTx(ctx, func(q *db.Queries) error {
-		if err := q.LockUserCreation(ctx); err != nil {
-			return fmt.Errorf("travar criação de usuário: %w", err)
-		}
-		n, err := q.CountUsers(ctx)
-		if err != nil {
-			return fmt.Errorf("contar usuários: %w", err)
-		}
-		if s.depoisDeContar != nil {
-			s.depoisDeContar()
-		}
-		if n > 0 {
-			return ErrUserExists
-		}
 		if err := q.InsertUser(ctx, db.InsertUserParams{
 			ID: id, Email: e, PasswordHash: hash, CreatedAt: now,
 		}); err != nil {
 			var pgErr *pgconn.PgError
-			if errors.As(err, &pgErr) && pgErr.Code == "23505" {
-				return ErrUserExists
+			if errors.As(err, &pgErr) && pgErr.Code == "23505" && pgErr.ConstraintName == restricaoEmailUnico {
+				return ErrEmailTaken
 			}
 			return fmt.Errorf("inserir usuário: %w", err)
 		}
@@ -357,33 +332,15 @@ func (s *Service) CreateUser(ctx context.Context, email, password string) (uuid.
 	return id, nil
 }
 
-// criarProjetoPadrao cria o Projeto padrão do usuário e o vínculo de owner,
-// na transação que criou o usuário: o banco não garante que todo projeto tenha
-// um owner, então os dois nascem juntos ou nenhum nasce. projects e
-// project_members estão sob FORCE RLS, por isso o escopo do usuário vem antes.
+// criarProjetoPadrao liga o escopo do usuário recém-criado e cria o Projeto
+// padrão com o vínculo de owner (storage.CriarProjetoPadraoNaTx), na
+// transação que criou o usuário.
 func criarProjetoPadrao(ctx context.Context, q *db.Queries, userID uuid.UUID, now time.Time) error {
 	if err := q.ScopeToUser(ctx, userID); err != nil {
 		return fmt.Errorf("escopo do usuário: %w", err)
 	}
-	novo, err := uuid.NewV7()
-	if err != nil {
-		return fmt.Errorf("gerar id do projeto: %w", err)
-	}
-	if err := q.EnsureDefaultProject(ctx, db.EnsureDefaultProjectParams{
-		ID: novo, Name: tenancy.DefaultProjectName, TitularID: userID, Now: now,
-	}); err != nil {
-		return fmt.Errorf("criar Projeto padrão: %w", err)
-	}
-	projeto, err := q.GetDefaultProjectID(ctx, userID)
-	if err != nil {
-		return fmt.Errorf("ler Projeto padrão: %w", err)
-	}
-	if err := q.EnsureProjectOwner(ctx, db.EnsureProjectOwnerParams{
-		ProjectID: projeto, UserID: userID, Now: now,
-	}); err != nil {
-		return fmt.Errorf("vincular owner ao Projeto padrão: %w", err)
-	}
-	return nil
+	_, err := storage.CriarProjetoPadraoNaTx(ctx, q, userID, now)
+	return err
 }
 
 // ResetPassword é o caminho de recuperação do operador (stillon user
@@ -598,7 +555,13 @@ func (s *Service) revogarFamilia(ctx context.Context, userID, familyID uuid.UUID
 }
 
 func (s *Service) inTx(ctx context.Context, fn func(*db.Queries) error) error {
-	tx, err := s.pool.Begin(ctx)
+	return emTx(ctx, s.pool, fn)
+}
+
+// emTx roda fn numa transação sem escopo: quem precisa da RLS de um usuário
+// liga o escopo dentro de fn (ScopeToUser), quando o usuário aparece.
+func emTx(ctx context.Context, pool *pgxpool.Pool, fn func(*db.Queries) error) error {
+	tx, err := pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("abrir transação: %w", err)
 	}
