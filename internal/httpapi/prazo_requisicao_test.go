@@ -15,6 +15,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/BipoXDXD/stillon/internal/account"
 	"github.com/BipoXDXD/stillon/internal/clock"
 	"github.com/BipoXDXD/stillon/internal/config"
 	"github.com/BipoXDXD/stillon/internal/crypto"
@@ -23,6 +24,7 @@ import (
 	"github.com/BipoXDXD/stillon/internal/notify"
 	"github.com/BipoXDXD/stillon/internal/statuspage"
 	"github.com/BipoXDXD/stillon/internal/tenancy"
+	"github.com/BipoXDXD/stillon/internal/turnstile"
 )
 
 // repoFalso é o repositório de projetos dos testes sem banco. Nenhum deles
@@ -47,6 +49,37 @@ func (repoFalso) Create(context.Context, tenancy.NewProject) (tenancy.ProjectSum
 	return tenancy.ProjectSummary{}, errRepoFalso
 }
 
+// conferidorQueConfirma é a trava de e-mail dos testes sem banco: toda conta
+// conta como confirmada, para que a trava não esconda o que o teste olha.
+type conferidorQueConfirma struct{}
+
+func (conferidorQueConfirma) EmailConfirmado(context.Context, uuid.UUID) (bool, error) {
+	return true, nil
+}
+
+// contaPublicaFalsa é o cadastro e a recuperação dos testes sem banco: todo
+// token é inválido, e o resto falha como o repositório falso.
+type contaPublicaFalsa struct{}
+
+func (contaPublicaFalsa) Cadastrar(context.Context, string, string) error { return errRepoFalso }
+func (contaPublicaFalsa) ConfirmarEmail(context.Context, string) error {
+	return account.ErrTokenInvalido
+}
+func (contaPublicaFalsa) ReenviarConfirmacao(context.Context, uuid.UUID) error {
+	return errRepoFalso
+}
+func (contaPublicaFalsa) PedirRedefinicao(context.Context, string) error { return errRepoFalso }
+func (contaPublicaFalsa) Redefinir(context.Context, string, string) error {
+	return account.ErrTokenInvalido
+}
+
+// turnstileQueRecusa é o Turnstile dos testes sem banco: recusa todo desafio.
+type turnstileQueRecusa struct{}
+
+func (turnstileQueRecusa) Verificar(context.Context, string, string, string) error {
+	return turnstile.ErrRecusado
+}
+
 // rotasSemBanco monta Routes sem Postgres: o /readyz só chama o ping
 // injetado, e o ping vê o contexto que a cadeia de middlewares lhe deu.
 func rotasSemBanco(t *testing.T, cfg *config.Config, ping func(context.Context) error) http.Handler {
@@ -55,12 +88,14 @@ func rotasSemBanco(t *testing.T, cfg *config.Config, ping func(context.Context) 
 	t.Cleanup(cancel)
 	clk := clock.NewFake(time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC))
 	return httpapi.Routes(ctx, cfg, httpapi.Deps{
-		Channels:    notify.NewChannelService(nil, nil, clk, nil, nil, cfg.PublicBaseURL),
-		StatusPages: statuspage.NewService(nil, clk),
-		Projects:    tenancy.NewService(repoFalso{}, clk),
-		Clock:       clk,
-		Ready:       ping,
-		LimitesIP:   middleware.NovosOrcamentosEmMemoria(ctx, clk),
+		Channels:        notify.NewChannelService(nil, nil, clk, nil, nil, cfg.PublicBaseURL),
+		StatusPages:     statuspage.NewService(nil, clk),
+		Projects:        tenancy.NewService(repoFalso{}, clk),
+		EmailConfirmado: conferidorQueConfirma{},
+		Cadastro:        contaPublicaFalsa{}, Recuperacao: contaPublicaFalsa{}, Turnstile: turnstileQueRecusa{},
+		Clock:     clk,
+		Ready:     ping,
+		LimitesIP: middleware.NovosOrcamentosEmMemoria(ctx, clk),
 	})
 }
 
@@ -170,12 +205,75 @@ func TestRoutesRecusaDepsSemProjects(t *testing.T) {
 		}
 	}()
 	httpapi.Routes(ctx, cfg, httpapi.Deps{
+		Channels:        notify.NewChannelService(nil, nil, clk, nil, nil, cfg.PublicBaseURL),
+		StatusPages:     statuspage.NewService(nil, clk),
+		Projects:        nil,
+		EmailConfirmado: conferidorQueConfirma{},
+		Cadastro:        contaPublicaFalsa{}, Recuperacao: contaPublicaFalsa{}, Turnstile: turnstileQueRecusa{},
+		Clock:     clk,
+		LimitesIP: middleware.NovosOrcamentosEmMemoria(ctx, clk),
+	})
+}
+
+// Sem conferidor de e-mail, a trava de criação não teria como recusar a conta
+// não confirmada: a montagem recusa os Deps, em vez de deixar todo mundo criar.
+func TestRoutesRecusaDepsSemEmailConfirmado(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	clk := clock.NewFake(time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC))
+	cfg := configSemBanco(time.Second)
+	defer func() {
+		motivo, _ := recover().(string)
+		if !strings.Contains(motivo, "EmailConfirmado") || !strings.Contains(motivo, "account.Service") {
+			t.Fatalf("Routes sem EmailConfirmado: panic %q, queria um que mande passar o account.Service", motivo)
+		}
+	}()
+	httpapi.Routes(ctx, cfg, httpapi.Deps{
 		Channels:    notify.NewChannelService(nil, nil, clk, nil, nil, cfg.PublicBaseURL),
 		StatusPages: statuspage.NewService(nil, clk),
-		Projects:    nil,
+		Projects:    tenancy.NewService(repoFalso{}, clk),
 		Clock:       clk,
 		LimitesIP:   middleware.NovosOrcamentosEmMemoria(ctx, clk),
 	})
+}
+
+// Sem o cadastro, a recuperação ou o Turnstile, as rotas públicas da conta
+// cairiam em panic no primeiro pedido: a montagem recusa os Deps antes, e o
+// panic diz o que passar.
+func TestRoutesRecusaDepsSemCadastroPublico(t *testing.T) {
+	casos := []struct {
+		campo, dica string
+		tirar       func(*httpapi.Deps)
+	}{
+		{"Cadastro", "account.Cadastro", func(d *httpapi.Deps) { d.Cadastro = nil }},
+		{"Recuperacao", "account.Recuperacao", func(d *httpapi.Deps) { d.Recuperacao = nil }},
+		{"Turnstile", "turnstile.Verificador", func(d *httpapi.Deps) { d.Turnstile = nil }},
+	}
+	for _, c := range casos {
+		t.Run(c.campo, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			t.Cleanup(cancel)
+			clk := clock.NewFake(time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC))
+			cfg := configSemBanco(time.Second)
+			deps := httpapi.Deps{
+				Channels:        notify.NewChannelService(nil, nil, clk, nil, nil, cfg.PublicBaseURL),
+				StatusPages:     statuspage.NewService(nil, clk),
+				Projects:        tenancy.NewService(repoFalso{}, clk),
+				EmailConfirmado: conferidorQueConfirma{},
+				Cadastro:        contaPublicaFalsa{}, Recuperacao: contaPublicaFalsa{}, Turnstile: turnstileQueRecusa{},
+				Clock:     clk,
+				LimitesIP: middleware.NovosOrcamentosEmMemoria(ctx, clk),
+			}
+			c.tirar(&deps)
+			defer func() {
+				motivo, _ := recover().(string)
+				if !strings.Contains(motivo, c.campo) || !strings.Contains(motivo, c.dica) {
+					t.Fatalf("Routes sem %s: panic %q, queria um que mande passar o %s", c.campo, motivo, c.dica)
+				}
+			}()
+			httpapi.Routes(ctx, cfg, deps)
+		})
+	}
 }
 
 // bancoMudo aceita a conexão TCP e nunca responde: o pgx fica esperando a
@@ -237,11 +335,13 @@ func TestVerifyAplicaOPrazoDaConfiguracao(t *testing.T) {
 		t.Fatal(err)
 	}
 	rotas := httpapi.Routes(ctx, cfg, httpapi.Deps{
-		Channels:    notify.NewChannelService(pool, box, clk, &discordFalso{}, &carteiroFalso{}, cfg.PublicBaseURL),
-		StatusPages: statuspage.NewService(nil, clk),
-		Projects:    tenancy.NewService(repoFalso{}, clk),
-		Clock:       clk,
-		LimitesIP:   middleware.NovosOrcamentosEmMemoria(ctx, clk),
+		Channels:        notify.NewChannelService(pool, box, clk, &discordFalso{}, &carteiroFalso{}, cfg.PublicBaseURL),
+		StatusPages:     statuspage.NewService(nil, clk),
+		Projects:        tenancy.NewService(repoFalso{}, clk),
+		EmailConfirmado: conferidorQueConfirma{},
+		Cadastro:        contaPublicaFalsa{}, Recuperacao: contaPublicaFalsa{}, Turnstile: turnstileQueRecusa{},
+		Clock:     clk,
+		LimitesIP: middleware.NovosOrcamentosEmMemoria(ctx, clk),
 	})
 	for _, rota := range []struct{ metodo, caminho string }{
 		{http.MethodGet, "/verify/" + strings.Repeat("A", 43)},

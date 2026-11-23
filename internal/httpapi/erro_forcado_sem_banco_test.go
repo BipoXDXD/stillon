@@ -76,16 +76,25 @@ func apiSemBanco(t *testing.T) (*httptest.Server, *clock.Fake) {
 	store := auth.NewPGStore(pool)
 	srv := httptest.NewServer(httpapi.Routes(ctx, cfg, httpapi.Deps{
 		Store: store, Sessions: auth.NewManager(store, clk, cfg.IPHashKey), TOTP: segundoFator,
-		Accounts:    account.NewService(pool, segundoFator, clk, cfg.IPHashKey),
-		Proofs:      auth.NewFamilyProofs(pool, clk),
-		Targets:     targets.NewService(pool, box, clk),
-		Incidents:   history.NewService(pool, clk),
-		Channels:    notify.NewChannelService(pool, box, clk, &discordFalso{}, &carteiroFalso{}, cfg.PublicBaseURL),
-		StatusPages: statuspage.NewService(pool, clk),
-		Pings:       heartbeat.NewPingService(pool, clk),
-		Heartbeats:  heartbeat.NewService(pool, clk),
-		Projects:    tenancy.NewService(pgstore.New(pool), clk),
-		Clock:       clk, Ready: pool.Ping,
+		Accounts:        account.NewService(pool, segundoFator, clk, cfg.IPHashKey),
+		Proofs:          auth.NewFamilyProofs(pool, clk),
+		Targets:         targets.NewService(pool, box, clk),
+		Incidents:       history.NewService(pool, clk),
+		Channels:        notify.NewChannelService(pool, box, clk, &discordFalso{}, &carteiroFalso{}, cfg.PublicBaseURL),
+		StatusPages:     statuspage.NewService(pool, clk),
+		Pings:           heartbeat.NewPingService(pool, clk),
+		Heartbeats:      heartbeat.NewService(pool, clk),
+		Projects:        tenancy.NewService(pgstore.New(pool), clk),
+		EmailConfirmado: conferidorQueConfirma{},
+		// Os serviços reais, sobre o banco fora: as rotas públicas da conta
+		// param antes, no limite por IP, mas se um dia passarem a chegar a
+		// eles, a falha que aparece é a do banco.
+		Cadastro:    account.NewCadastro(pool, clk, &mailerDeContaFalso{}, linksDoPainel),
+		Recuperacao: account.NewRecuperacao(pool, clk, &mailerDeContaFalso{}, linksDoPainel),
+		Turnstile:   turnstileQueRecusa{},
+		// Ligado, para que signup e forgot não parem no 404 antes do limite.
+		CadastroPublico: httpapi.ConfigCadastro{Habilitado: true, SiteKey: "site-key-publica"},
+		Clock:           clk, Ready: pool.Ping,
 		LimitesIP: storage.NewOrcamentosPorIP(pool, clk),
 	}))
 	t.Cleanup(srv.Close)
@@ -144,11 +153,13 @@ func TestBancoForaNaoVazaNadaEmNenhumaRota(t *testing.T) {
 	c.proibidos = append([]string{c.canario, c.tokenDeURL, c.slug}, marcasDeDetalheInterno...)
 
 	esperados := map[string]respostaSemBanco{
-		"GET /healthz":         {status: http.StatusOK},
-		"GET /readyz":          {status: http.StatusServiceUnavailable, codigo: "unavailable"},
-		"GET /p/{slug}":        {status: http.StatusServiceUnavailable, pagina: true},
-		"GET /verify/{token}":  {status: http.StatusInternalServerError, pagina: true},
-		"POST /verify/{token}": {status: http.StatusInternalServerError, pagina: true},
+		"GET /healthz": {status: http.StatusOK},
+		// Configuração pública do formulário: não consulta o banco.
+		"GET /api/v1/auth/signup-config": {status: http.StatusOK},
+		"GET /readyz":                    {status: http.StatusServiceUnavailable, codigo: "unavailable"},
+		"GET /p/{slug}":                  {status: http.StatusServiceUnavailable, pagina: true},
+		"GET /verify/{token}":            {status: http.StatusInternalServerError, pagina: true},
+		"POST /verify/{token}":           {status: http.StatusInternalServerError, pagina: true},
 	}
 	padrao := respostaSemBanco{status: http.StatusInternalServerError, codigo: "internal_error"}
 

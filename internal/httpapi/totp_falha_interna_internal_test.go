@@ -116,7 +116,7 @@ func (c cenarioDoSegundoFator) comContadorNoBanco(t *testing.T) *pgxpool.Pool {
 	ctx := context.Background()
 	pool := testdb.New(t)
 	if _, err := pool.Exec(ctx,
-		`INSERT INTO users (id, email, password_hash) VALUES ($1, 'dono@exemplo.com', 'x')`, c.usuario); err != nil {
+		`INSERT INTO users (id, email, password_hash, email_verified_at) VALUES ($1, 'dono@exemplo.com', 'x', now())`, c.usuario); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := testdb.Admin(t).Exec(ctx,

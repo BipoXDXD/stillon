@@ -42,7 +42,7 @@ func outroUsuario(t *testing.T, a *api) uuid.UUID {
 	t.Helper()
 	id := uuid.Must(uuid.NewV7())
 	if _, err := a.pool.Exec(context.Background(),
-		`INSERT INTO users (id, email, password_hash) VALUES ($1, $2, 'x')`,
+		`INSERT INTO users (id, email, password_hash, email_verified_at) VALUES ($1, $2, 'x', now())`,
 		id, id.String()+"@exemplo.com"); err != nil {
 		t.Fatal(err)
 	}

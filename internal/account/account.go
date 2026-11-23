@@ -79,12 +79,15 @@ func NewService(pool *pgxpool.Pool, totp *auth.TOTP, clk clock.Clock, ipKey []by
 	}
 }
 
-// Account é o que GET /me devolve.
+// Account é o que GET /me devolve. EmailVerified é falso na conta do cadastro
+// público antes do link de confirmação: o painel mostra o aviso, e as rotas de
+// criação recusam (EmailConfirmado).
 type Account struct {
-	ID          uuid.UUID
-	Email       string
-	TOTPEnabled bool
-	CreatedAt   time.Time
+	ID            uuid.UUID
+	Email         string
+	TOTPEnabled   bool
+	EmailVerified bool
+	CreatedAt     time.Time
 }
 
 // Me devolve ErrUserNotFound se o usuário do token não existe mais.
@@ -96,7 +99,25 @@ func (s *Service) Me(ctx context.Context, userID uuid.UUID) (Account, error) {
 	if err != nil {
 		return Account{}, fmt.Errorf("ler conta: %w", err)
 	}
-	return Account{ID: r.ID, Email: r.Email, TOTPEnabled: r.TotpEnabled, CreatedAt: r.CreatedAt}, nil
+	return Account{
+		ID: r.ID, Email: r.Email, TOTPEnabled: r.TotpEnabled,
+		EmailVerified: r.EmailVerifiedAt != nil, CreatedAt: r.CreatedAt,
+	}, nil
+}
+
+// EmailConfirmado é a conferência da trava de criação
+// (middleware.ExigeEmailConfirmado), a cada pedido de criação. users não tem
+// RLS: a consulta vai direto ao pool, como Me. Usuário que não existe mais é
+// ErrUserNotFound, nunca "confirmado".
+func (s *Service) EmailConfirmado(ctx context.Context, userID uuid.UUID) (bool, error) {
+	ok, err := db.New(s.pool).UserEmailVerified(ctx, userID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, ErrUserNotFound
+	}
+	if err != nil {
+		return false, fmt.Errorf("conferir e-mail confirmado: %w", err)
+	}
+	return ok, nil
 }
 
 // FamilyIsLive diz se a família de sessão do token ainda está viva: tem a
