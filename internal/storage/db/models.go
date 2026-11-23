@@ -10,6 +10,20 @@ import (
 	"github.com/google/uuid"
 )
 
+type AccountEmailDaily struct {
+	Day  time.Time
+	Sent int32
+}
+
+type AccountToken struct {
+	TokenHash []byte
+	UserID    uuid.UUID
+	Purpose   string
+	CreatedAt time.Time
+	ExpiresAt time.Time
+	UsedAt    *time.Time
+}
+
 type AuditLog struct {
 	ID       uuid.UUID
 	UserID   *uuid.UUID
