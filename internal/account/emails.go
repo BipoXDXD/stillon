@@ -30,17 +30,17 @@ func (l Links) EsqueciASenha() string {
 	return l.Base + "/forgot-password"
 }
 
-// Os textos abaixo são rascunho: a T11 os submete ao dono. Texto puro, com o
+// Os textos aprovados pelo dono (Step 1 da T11 do PR 3). Texto puro, com o
 // link sozinho numa linha para o cliente de e-mail torná-lo clicável.
 
 // emailDeConfirmacao é o e-mail do cadastro novo.
 func emailDeConfirmacao(link string) (assunto, corpo string) {
 	return "Confirme seu e-mail no StillOn",
 		"Olá,\n\n" +
-			"Recebemos um cadastro no StillOn com este e-mail. Para confirmar, abra o link abaixo:\n\n" +
+			"Recebemos um cadastro no StillOn com este e-mail. Para concluir, abra o link:\n\n" +
 			link + "\n\n" +
-			"O link vale por 24 horas e só pode ser usado uma vez.\n\n" +
-			"Se não foi você, ignore esta mensagem: nada será ativado sem a confirmação.\n\n" +
+			"O link vale por 24 horas e funciona uma vez.\n\n" +
+			"Se não foi você, ignore esta mensagem. Sem a confirmação, nada fica ativo.\n\n" +
 			"StillOn\n"
 }
 
@@ -49,10 +49,10 @@ func emailDeConfirmacao(link string) (assunto, corpo string) {
 func emailJaTemConta(linkEsqueci string) (assunto, corpo string) {
 	return "Você já tem conta no StillOn",
 		"Olá,\n\n" +
-			"Alguém tentou criar uma conta no StillOn com este e-mail, mas ele já está cadastrado.\n\n" +
-			"Se foi você e não lembra a senha, peça um link de redefinição aqui:\n\n" +
+			"Alguém tentou criar uma conta no StillOn com este e-mail, que já está cadastrado.\n\n" +
+			"Se foi você e não lembra a senha, peça um link de redefinição:\n\n" +
 			linkEsqueci + "\n\n" +
-			"Se não foi você, ignore esta mensagem: nada mudou na sua conta.\n\n" +
+			"Se não foi você, ignore esta mensagem. Nada mudou na sua conta.\n\n" +
 			"StillOn\n"
 }
 
@@ -60,9 +60,9 @@ func emailJaTemConta(linkEsqueci string) (assunto, corpo string) {
 func emailDeRedefinicao(link string) (assunto, corpo string) {
 	return "Redefina sua senha no StillOn",
 		"Olá,\n\n" +
-			"Recebemos um pedido para redefinir a senha da sua conta no StillOn. Para escolher uma nova, abra o link abaixo:\n\n" +
+			"Recebemos um pedido para redefinir a senha da sua conta no StillOn. Para escolher uma nova, abra o link:\n\n" +
 			link + "\n\n" +
-			"O link vale por 1 hora e só pode ser usado uma vez. Ao redefinir, todas as sessões abertas são encerradas.\n\n" +
-			"Se não foi você, ignore esta mensagem: sua senha continua a mesma.\n\n" +
+			"O link vale por 1 hora e funciona uma vez. Ao salvar a senha nova, todas as sessões abertas são encerradas.\n\n" +
+			"Se não foi você, ignore esta mensagem. Sua senha continua a mesma.\n\n" +
 			"StillOn\n"
 }

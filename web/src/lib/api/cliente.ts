@@ -230,8 +230,10 @@ export function criarApi(sessao: Sessao, buscar: Buscar, o: OpcoesDaApi = {}) {
 
     // Cadastro público (PR 3). O resend é o único com sessão: reenvia a
     // confirmação para o e-mail da conta logada.
+    // O tipo explícito: com o publico (sobrecarregado) como enviarPedido, a
+    // inferência do get caía em unknown.
     configDoCadastro: (sinal?: AbortSignal) =>
-      get('/auth/signup-config', ConfigDoCadastro, sinal, publico),
+      get<ConfigDoCadastro>('/auth/signup-config', ConfigDoCadastro, sinal, publico),
     cadastrar: (e: EntradaCadastro) => publico({ metodo: 'POST', caminho: '/auth/signup', corpo: e }, null),
     confirmarEmail: (token: string) =>
       publico({ metodo: 'POST', caminho: '/auth/email/confirm', corpo: { token } }, null),

@@ -224,6 +224,37 @@ test('a barreira da CSP falha com o coletor quebrado', async ({ context }) => {
   await expect(controlePositivo(semColetor, 'sem coletor')).rejects.toThrow(/sem coletor: a violação do controle positivo/)
 })
 
+// As telas públicas do cadastro (PR 3), sem sessão, nos dois temas: o widget
+// do Turnstile vem do api.js imitado, carregado de challenges.cloudflare.com
+// sob a CSP de produção (script-src).
+const ROTAS_PUBLICAS: [string, string][] = [
+  ['/signup', 'Criar conta no StillOn'],
+  ['/confirm-email#token=token-da-caixa', 'E-mail confirmado'],
+  ['/forgot-password', 'Redefinir a senha'],
+  ['/reset-password#token=token-de-reset', 'Escolha uma senha nova'],
+]
+
+for (const tema of ['claro', 'escuro'] as const) {
+  test(`acessibilidade e CSP nas telas do cadastro, tema ${tema}`, async ({ page }) => {
+    await page.emulateMedia({ colorScheme: tema === 'escuro' ? 'dark' : 'light' })
+    await imitarApi(page)
+    await page.route('**/api/v1/auth/refresh', (route) =>
+      route.fulfill({ status: 401, json: { error: { code: 'invalid_session', message: '' }, trace_id: 't' } }),
+    )
+    for (const [rota, titulo] of ROTAS_PUBLICAS) {
+      await page.goto(rota)
+      await expect(page.getByRole('heading', { name: titulo, level: 1 })).toBeVisible()
+      await expect(page.locator('html')).toHaveClass(tema === 'escuro' ? /dark/ : /^(?!.*dark)/)
+      if (rota === '/signup' || rota === '/forgot-password') {
+        await expect(page.locator('[data-turnstile-imitado]'), rota).toBeAttached()
+      }
+      const r = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze()
+      expect(r.violations.map((v) => `${rota}: ${v.id} (${v.nodes.map((n) => n.target.join(' ')).join(', ')})`)).toEqual([])
+      await controlePositivo(page, rota)
+    }
+  })
+}
+
 test('a tela de login, sem sessão', async ({ page }) => {
   await page.route('**/api/v1/auth/refresh', (route) =>
     route.fulfill({ status: 401, json: { error: { code: 'invalid_session', message: '' }, trace_id: 't' } }),

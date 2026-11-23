@@ -1,5 +1,9 @@
 import type { RouteObject } from 'react-router'
 import { PaginaCanais } from '@/features/canais/PaginaCanais'
+import { PaginaCadastro } from '@/features/conta/PaginaCadastro'
+import { PaginaConfirmarEmail } from '@/features/conta/PaginaConfirmarEmail'
+import { PaginaEsqueciSenha } from '@/features/conta/PaginaEsqueciSenha'
+import { PaginaRedefinirSenha } from '@/features/conta/PaginaRedefinirSenha'
 import { PaginaHeartbeat } from '@/features/heartbeats/PaginaHeartbeat'
 import { PaginaEditarHeartbeat, PaginaNovoHeartbeat } from '@/features/heartbeats/PaginasDoFormulario'
 import { PaginaIncidentes } from '@/features/incidentes/PaginaIncidentes'
@@ -17,6 +21,12 @@ import { carregarConfiguracoes, carregarDetalhe } from './rotas-sob-demanda'
 // demanda.
 export const rotas: RouteObject[] = [
   { path: '/login', Component: PaginaLogin, ErrorBoundary: ErroDeRota },
+  // O cadastro público (PR 3): sem sessão, como o login. Os links dos e-mails
+  // levam o token no fragmento (#token=).
+  { path: '/signup', Component: PaginaCadastro, ErrorBoundary: ErroDeRota },
+  { path: '/confirm-email', Component: PaginaConfirmarEmail, ErrorBoundary: ErroDeRota },
+  { path: '/forgot-password', Component: PaginaEsqueciSenha, ErrorBoundary: ErroDeRota },
+  { path: '/reset-password', Component: PaginaRedefinirSenha, ErrorBoundary: ErroDeRota },
   {
     Component: ExigirSessao,
     ErrorBoundary: ErroDeRota,

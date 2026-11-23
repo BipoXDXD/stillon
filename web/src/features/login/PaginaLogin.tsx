@@ -30,10 +30,12 @@ export function destinoSeguro(next: string | null): string {
   return next
 }
 
-const avisosDeMotivo: Partial<Record<Motivo, string>> = {
+// senha-redefinida: a tela de redefinição (features/conta) traz para cá.
+const avisosDeMotivo: Partial<Record<Motivo | 'senha-redefinida', string>> = {
   expirou: 'Sua sessão terminou. Entre de novo.',
   'outra-aba': 'Você saiu em outra aba.',
   'encerrada-aqui': 'Você encerrou esta sessão.',
+  'senha-redefinida': 'Senha redefinida. Entre com a senha nova.',
 }
 
 // O location.state vem do history do navegador: entra como unknown. A busca
