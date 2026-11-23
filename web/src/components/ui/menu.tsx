@@ -31,8 +31,10 @@ export function ConteudoDoMenu({ className, ...props }: ComponentProps<typeof Dr
   )
 }
 
+// O fundo do item em foco (primaria-100) mede ~1,1:1 contra o menu: o anel
+// de 2 px na cor do foco é o indicador (WCAG 2.4.7 e 1.4.11, ≥ 3:1).
 const item =
-  'flex min-h-11 cursor-default items-center gap-2 rounded-padrao px-3 text-sm text-texto outline-none select-none data-highlighted:bg-primaria-100 data-disabled:opacity-60'
+  'flex min-h-11 cursor-default items-center gap-2 rounded-padrao px-3 text-sm text-texto outline-none select-none data-highlighted:bg-primaria-100 data-highlighted:ring-2 data-highlighted:ring-foco data-highlighted:ring-inset data-disabled:opacity-60'
 
 export function ItemDoMenu({ className, ...props }: ComponentProps<typeof DropdownMenu.Item>) {
   return <DropdownMenu.Item className={cn(item, className)} {...props} />

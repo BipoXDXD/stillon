@@ -1041,8 +1041,17 @@ const seletorDeProjeto = (page: Page) => page.getByRole('button', { name: /^Proj
 // dentro (html, body, …, o controle). O anel fica fora da caixa
 // (outline-offset): atrás dele, só os ancestrais; a borda pinta sobre o
 // fundo do próprio controle.
-async function contrasteContraOFundo(controle: Locator, propriedade: 'outlineColor' | 'borderTopColor'): Promise<number> {
+// boxShadow: o anel do Tailwind (ring) é uma das camadas da box-shadow (as
+// outras ficam transparentes e sem espessura); vale a cor da camada com
+// espessura, e sem ela o contraste é 1.
+async function contrasteContraOFundo(controle: Locator, propriedade: 'outlineColor' | 'borderTopColor' | 'boxShadow'): Promise<number> {
   return controle.evaluate((e, prop) => {
+    const indicador =
+      prop === 'boxShadow'
+        ? (Array.from(getComputedStyle(e).boxShadow.matchAll(/((?:rgba?|oklch|oklab|lab|lch|color)\([^)]*\)) \S+ \S+ \S+ ([\d.]+)px/g)).find(
+            (m) => Number(m[2]) > 0,
+          )?.[1] ?? 'transparent')
+        : getComputedStyle(e)[prop]
     const camadas: string[] = []
     for (let a: Element | null = prop === 'outlineColor' ? e.parentElement : e; a; a = a.parentElement) {
       camadas.unshift(getComputedStyle(a).backgroundColor)
@@ -1064,7 +1073,7 @@ async function contrasteContraOFundo(controle: Locator, propriedade: 'outlineCol
       return 0.2126 * r + 0.7152 * g + 0.0722 * b
     }
     const fundo = luminancia(pintar(camadas))
-    const frente = luminancia(pintar([...camadas, getComputedStyle(e)[prop]]))
+    const frente = luminancia(pintar([...camadas, indicador]))
     return (Math.max(fundo, frente) + 0.05) / (Math.min(fundo, frente) + 0.05)
   }, propriedade)
 }
@@ -1121,6 +1130,10 @@ for (const tema of ['claro', 'escuro'] as const) {
     // Pelo teclado, o foco abre no projeto atual, e não no primeiro item.
     const marcado = menu.getByRole('menuitemradio', { name: 'Projeto padrão' })
     await expect(marcado).toBeFocused()
+    // 2.4.7 / 1.4.11: o item em foco não fica só no fundo claro (1,2:1 contra
+    // o menu): um anel de 2 px na cor do foco, ≥ 3:1 contra o fundo do item.
+    await expect(marcado).toHaveAttribute('data-highlighted', '')
+    expect(await contrasteContraOFundo(marcado, 'boxShadow'), 'anel do item em foco').toBeGreaterThanOrEqual(3)
     await semViolacoesDoAxe(page, `seletor aberto, ${tema}`, { menuAberto: true })
 
     // O Radix move o foco do End num setTimeout: o Enter espera por ele.
