@@ -41,9 +41,11 @@ const scopeToProject = `-- name: ScopeToProject :exec
 SELECT set_config('app.project_id', $1::uuid::text, true)
 `
 
-// O ÚNICO lugar que liga app.project_id é storage.InProjectTx, e só depois de
-// ActiveMembershipRole conferir a pertença na mesma transação. As políticas
-// restritivas da 00042 passam a enxergar só as linhas deste projeto.
+// app.project_id CONCEDE acesso: as permissivas <t>_do_projeto (00044) e as
+// de posse indireta liberam as linhas deste projeto, e as restritivas da
+// 00042 barram as dos outros. Por isso o ÚNICO lugar que o liga é
+// storage.InProjectTx, e só depois de ActiveMembershipRole conferir a
+// pertença na mesma transação.
 func (q *Queries) ScopeToProject(ctx context.Context, projectID uuid.UUID) error {
 	_, err := q.db.Exec(ctx, scopeToProject, projectID)
 	return err

@@ -14,7 +14,6 @@ import (
 	"github.com/BipoXDXD/stillon/internal/storage"
 	"github.com/BipoXDXD/stillon/internal/storage/db"
 	"github.com/BipoXDXD/stillon/internal/storage/testdb"
-	"github.com/BipoXDXD/stillon/internal/tenancy"
 )
 
 // tabelasDoProjeto são todas as tabelas com RLS cujas linhas pertencem a um
@@ -220,28 +219,16 @@ func TestStatusPageStaysInsideItsProject(t *testing.T) {
 	w := novoUsuario(t, pool)
 	c := testdb.ProjetoPadrao(t, w)
 	semearProjeto(t, w, c, "c", "pagina-c")
-	ctx := context.Background()
 
-	contarNoProjeto := func(usuario, projeto uuid.UUID, tabela string) int {
-		var n int
-		err := storage.InProjectPgxTx(ctx, pool, usuario, projeto, func(tx pgx.Tx, _ tenancy.ProjectScope) error {
-			// tabela é sempre um literal do próprio teste.
-			return tx.QueryRow(ctx, `SELECT count(*) FROM `+tabela).Scan(&n)
-		})
-		if err != nil {
-			t.Fatalf("contar %s no escopo de %s: %v", tabela, projeto, err)
-		}
-		return n
-	}
 	for _, tabela := range []string{"status_pages", "status_page_items"} {
 		for _, caso := range []struct {
 			nome string
 			n    int
 			quer int
 		}{
-			{"member no escopo de A", contarNoProjeto(m, a, tabela), 1},
-			{"titular no escopo de B", contarNoProjeto(u, b, tabela), 0},
-			{"outro titular no escopo do projeto dele", contarNoProjeto(w, c, tabela), 1},
+			{"member no escopo de A", contarNoEscopoDoProjeto(t, pool, m, a, tabela), 1},
+			{"titular no escopo de B", contarNoEscopoDoProjeto(t, pool, u, b, tabela), 0},
+			{"outro titular no escopo do projeto dele", contarNoEscopoDoProjeto(t, pool, w, c, tabela), 1},
 			{"titular no escopo de usuário", contarComEscopo(t, pool, u, tabela), 0},
 			{"member no escopo de usuário", contarComEscopo(t, pool, m, tabela), 0},
 			{"escopo público de pagina-c", contarPublico(t, pool, "pagina-c", tabela), 1},
@@ -307,16 +294,7 @@ func TestRestrictivePolicyLeavesServiceScopesUntouched(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("InUserTx", func(t *testing.T) {
-		var n int64
-		err := storage.InUserTx(ctx, pool, u, func(q *db.Queries) error {
-			var err error
-			n, err = q.CountTargets(ctx, u)
-			return err
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if n != 0 {
+		if n := alvosNoEscopoDoUsuario(t, pool, u); n != 0 {
 			t.Errorf("InUserTx vê %d alvos; queria 0", n)
 		}
 	})
