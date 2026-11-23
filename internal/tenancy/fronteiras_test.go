@@ -10,15 +10,48 @@ import (
 	"testing"
 )
 
-// TestTenancyImportsNoInfrastructure garante que o contexto continua puro:
-// só biblioteca padrão, uuid e o relógio do projeto.
-func TestTenancyImportsNoInfrastructure(t *testing.T) {
-	permitidos := map[string]bool{
-		"github.com/google/uuid":                     true,
-		"github.com/BipoXDXD/stillon/internal/clock": true,
+// permitidos são os únicos pacotes fora da biblioteca padrão que o tenancy
+// pode importar: uuid, o relógio e a regra de texto enganoso (internal/rotulo,
+// só biblioteca padrão).
+var permitidos = map[string]bool{
+	"github.com/google/uuid":                      true,
+	"github.com/BipoXDXD/stillon/internal/clock":  true,
+	"github.com/BipoXDXD/stillon/internal/rotulo": true,
+}
+
+// Da biblioteca padrão, a infraestrutura também fica de fora.
+var proibidos = []string{"net/http", "database/sql"}
+
+// motivoDoImport diz por que o tenancy não pode importar caminho, ou "" se pode.
+func motivoDoImport(caminho string) string {
+	for _, pr := range proibidos {
+		if caminho == pr || strings.HasPrefix(caminho, pr+"/") {
+			return "tenancy não conhece HTTP nem banco"
+		}
 	}
-	// Da biblioteca padrão, a infraestrutura também fica de fora.
-	proibidos := []string{"net/http", "database/sql"}
+	primeiro := strings.SplitN(caminho, "/", 2)[0]
+	padrao := !strings.Contains(primeiro, ".")
+	if !padrao && !permitidos[caminho] {
+		return "tenancy só pode usar a biblioteca padrão, uuid, internal/clock e internal/rotulo"
+	}
+	return ""
+}
+
+// TestTenancyImportsNoInfrastructure garante que o contexto continua puro:
+// só biblioteca padrão, uuid, o relógio e a regra de texto enganoso.
+func TestTenancyImportsNoInfrastructure(t *testing.T) {
+	// Caso positivo embutido: a regra ainda recusa a infraestrutura e aceita
+	// o que foi liberado; sem ele, uma regra quebrada passaria calada.
+	for caminho, recusa := range map[string]bool{
+		"github.com/BipoXDXD/stillon/internal/storage": true,
+		"net/http": true,
+		"github.com/BipoXDXD/stillon/internal/rotulo": false,
+		"strings": false,
+	} {
+		if got := motivoDoImport(caminho) != ""; got != recusa {
+			t.Errorf("motivoDoImport(%q) recusa = %v; quer %v", caminho, got, recusa)
+		}
+	}
 	arquivos, err := filepath.Glob("*.go")
 	if err != nil {
 		t.Fatal(err)
@@ -40,15 +73,8 @@ func TestTenancyImportsNoInfrastructure(t *testing.T) {
 		vistos++
 		for _, imp := range f.Imports {
 			caminho, _ := strconv.Unquote(imp.Path.Value)
-			primeiro := strings.SplitN(caminho, "/", 2)[0]
-			padrao := !strings.Contains(primeiro, ".")
-			for _, pr := range proibidos {
-				if caminho == pr || strings.HasPrefix(caminho, pr+"/") {
-					t.Errorf("%s importa %q: tenancy não conhece HTTP nem banco", arq, caminho)
-				}
-			}
-			if !padrao && !permitidos[caminho] {
-				t.Errorf("%s importa %q: tenancy só pode usar a biblioteca padrão, uuid e internal/clock", arq, caminho)
+			if motivo := motivoDoImport(caminho); motivo != "" {
+				t.Errorf("%s importa %q: %s", arq, caminho, motivo)
 			}
 		}
 	}
