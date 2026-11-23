@@ -1232,6 +1232,9 @@ test('teclado no seletor de projeto: abrir, escolher, Esc e o diálogo sem armad
   }
   expect(paradas.filter((p) => p.startsWith('FORA')), `paradas: ${paradas.join(' | ')}`).toEqual([])
   expect(paradas.slice(0, 2)).toEqual(['button "Cancelar"', 'button "Criar projeto"'])
+  // A terceira parada volta ao campo, e a volta recomeça igual.
+  expect(paradas[2], `paradas: ${paradas.join(' | ')}`).toMatch(/^input /)
+  expect(paradas.slice(3, 5)).toEqual(['button "Cancelar"', 'button "Criar projeto"'])
   await page.keyboard.press('Escape')
   await expect(dialogo).toBeHidden()
   await expect(botao).toBeFocused()

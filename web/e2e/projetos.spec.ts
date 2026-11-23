@@ -60,8 +60,8 @@ test('criar, trocar e isolar: o alvo de um projeto não aparece no outro', async
   test.setTimeout(120_000)
   const encerrar = await cadenciarRecursos(page, performance.now() + info.timeout)
   try {
-    const marca = Date.now()
-    const nomeDoProjeto = `E2E B ${marca}`
+    const marca = `${Date.now()}-${randomUUID().slice(0, 8)}`
+    let nomeDoProjeto = `E2E B ${marca}`
     const nomeDoAlvo = `E2E alvo de B ${marca}`
 
     // O token da API, para a limpeza e para o 404 do fim.
@@ -90,14 +90,23 @@ test('criar, trocar e isolar: o alvo de um projeto não aparece no outro', async
     await expect(page).toHaveURL(new RegExp(`/projects/${padrao?.id}/$`))
     await expect(seletor(page)).toHaveAccessibleName(`Projeto: ${padrao?.name}`)
 
-    // 2. Criar B pelo seletor: o painel abre nele.
-    await seletor(page).click()
-    await page.getByRole('menu').getByRole('menuitem', { name: 'Novo projeto' }).click()
-    const dialogo = page.getByRole('dialog', { name: 'Novo projeto' })
-    await dialogo.getByLabel('Nome do projeto').fill(nomeDoProjeto)
-    await dialogo.getByRole('button', { name: 'Criar projeto' }).click()
-    await expect(dialogo).toBeHidden()
-    await expect(seletor(page)).toHaveAccessibleName(`Projeto: ${nomeDoProjeto}`)
+    // 2. Criar B pelo seletor: o painel abre nele. A API não apaga projeto e
+    //    o titular tem no máximo 3 (MaxProjectsPerTitular): numa pilha
+    //    reaproveitada, o "E2E B" de uma execução anterior é reusado (o
+    //    seletor troca para ele), e só a primeira execução cria.
+    const anterior = items.find((p) => !p.is_default && p.role === 'owner' && p.name.startsWith('E2E B '))
+    if (anterior) {
+      nomeDoProjeto = anterior.name
+      await trocarPara(page, nomeDoProjeto)
+    } else {
+      await seletor(page).click()
+      await page.getByRole('menu').getByRole('menuitem', { name: 'Novo projeto' }).click()
+      const dialogo = page.getByRole('dialog', { name: 'Novo projeto' })
+      await dialogo.getByLabel('Nome do projeto').fill(nomeDoProjeto)
+      await dialogo.getByRole('button', { name: 'Criar projeto' }).click()
+      await expect(dialogo).toBeHidden()
+      await expect(seletor(page)).toHaveAccessibleName(`Projeto: ${nomeDoProjeto}`)
+    }
     await expect(page).toHaveURL(new RegExp(`/projects/(${UUID})/$`))
     const projetoB = new URL(page.url()).pathname.split('/')[2] ?? ''
     expect(projetoB).not.toBe(padrao?.id)
