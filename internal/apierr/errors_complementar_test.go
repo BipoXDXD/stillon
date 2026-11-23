@@ -128,3 +128,23 @@ func TestFalhaDeCodificacaoJSONFicaVisivelNoLog(t *testing.T) {
 		t.Fatalf("registro da falha = %s", log.String())
 	}
 }
+
+// A status page é uma por projeto (00046): o 409 fala do projeto, não da
+// conta.
+func TestStatusPageRepetidaFalaDoProjeto(t *testing.T) {
+	resposta := httptest.NewRecorder()
+	apierr.WriteError(resposta, httptest.NewRequest(http.MethodPost, "/", nil), apierr.CodeStatusPageExists)
+	var envelope struct {
+		Error struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(resposta.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("resposta não é JSON válido: %v", err)
+	}
+	if resposta.Code != http.StatusConflict || envelope.Error.Code != "status_page_exists" ||
+		envelope.Error.Message != "Este projeto já tem uma status page." {
+		t.Errorf("status = %d, envelope = %s", resposta.Code, resposta.Body.String())
+	}
+}

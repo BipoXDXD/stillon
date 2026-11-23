@@ -44,6 +44,7 @@ const (
 	CodeContentHostLimit    ErrorCode = "content_rule_host_limit_reached"
 	CodeMethodNotAllowed    ErrorCode = "method_not_allowed"
 	CodeScheduleUnsupported ErrorCode = "schedule_unsupported"
+	CodeProjectLimit        ErrorCode = "project_limit_reached"
 )
 
 // A mensagem vem sempre desta tabela, nunca do erro subjacente.
@@ -70,9 +71,9 @@ var errorTable = map[ErrorCode]struct {
 	// 502: a falha foi do destino (Discord ou provedor de e-mail), não do
 	// pedido nem deste servidor.
 	CodeDeliveryFailed: {http.StatusBadGateway, "Não foi possível entregar a mensagem de verificação."},
-	// Uma status page por projeto (e por usuário, até o contract); a segunda
-	// é conflito.
-	CodeStatusPageExists: {http.StatusConflict, "Você já tem uma status page."},
+	// Uma status page por projeto (00046); a segunda no mesmo projeto é
+	// conflito.
+	CodeStatusPageExists: {http.StatusConflict, "Este projeto já tem uma status page."},
 	CodeSlugTaken:        {http.StatusConflict, "Este endereço já está em uso."},
 	// O teto de alvos por titular, somando os projetos dele.
 	CodeTargetLimit:    {http.StatusConflict, "Limite de alvos atingido."},
@@ -86,6 +87,8 @@ var errorTable = map[ErrorCode]struct {
 	// O heartbeat foi gravado por uma versão posterior, com um agendamento que
 	// esta não sabe editar: conflito com o estado do recurso, não pedido inválido.
 	CodeScheduleUnsupported: {http.StatusConflict, "Agendamento não suportado nesta versão."},
+	// O teto de projetos de que a conta é titular (o padrão conta).
+	CodeProjectLimit: {http.StatusConflict, "Limite de projetos atingido."},
 }
 
 // FieldError aponta o campo culpado de um 400. Field e Reason vêm de

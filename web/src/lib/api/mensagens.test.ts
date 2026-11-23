@@ -77,4 +77,8 @@ describe('regra de conteúdo', () => {
       'Limite de regras de conteúdo para este host atingido.',
     )
   })
+
+  it('o 409 da status page repetida fala do projeto, não da conta', () => {
+    expect(mensagemDe(new ApiError(409, 'status_page_exists', ''))).toBe('Este projeto já tem uma status page.')
+  })
 })
