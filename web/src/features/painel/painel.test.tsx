@@ -2,11 +2,12 @@ import { onlineManager } from '@tanstack/react-query'
 import { act, screen, waitFor, within } from '@testing-library/react'
 import { http, HttpResponse } from 'msw'
 import { afterEach, describe, expect, it } from 'vitest'
-import { canal, heartbeat, incidente, itemDoResumo } from '@/test/fixtures'
+import { canal, heartbeat, incidente, itemDoResumo, projeto } from '@/test/fixtures'
+import { PROJETO_PADRAO } from '@/test/api-falsa'
 import { renderizarPainel } from '@/test/renderizar'
 import { servidor } from '@/test/setup'
 import { chaves } from '@/lib/api/consultas'
-import { Heartbeat, ItemDoResumo } from '@/lib/api/schemas'
+import { Heartbeat, ItemDoResumo, ListaDeProjetos } from '@/lib/api/schemas'
 import { anunciaveis, mapaDeEstados, transicoes } from './transicoes'
 
 const resumido = (p: Parameters<typeof itemDoResumo>[0]) => anunciaveis([ItemDoResumo.parse(itemDoResumo(p))], [])
@@ -45,7 +46,7 @@ describe('painel', () => {
   it('sem alvos, a manchete diz que não há o que vigiar e oferece cadastrar o primeiro', async () => {
     await renderizarPainel('/')
     expect(await screen.findByRole('heading', { level: 2, name: 'Nenhum serviço vigiado ainda.' })).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: 'Cadastrar o primeiro alvo' })).toHaveAttribute('href', '/targets/new')
+    expect(screen.getByRole('link', { name: 'Cadastrar o primeiro alvo' })).toHaveAttribute('href', '/projects/proj-padrao/targets/new')
     expect(screen.queryByText(/^Atualizado às/)).not.toBeInTheDocument()
   })
 
@@ -133,7 +134,7 @@ describe('painel', () => {
     expect(within(await tabela()).getAllByRole('rowgroup')).toHaveLength(2)
     expect(within(await tabela()).queryByRole('heading')).not.toBeInTheDocument()
     // O link do detalhe leva a lista (a ordem) junto, para o Anterior/Próximo.
-    expect(within(await linhaDe('Site')).getByRole('link', { name: 'Site' })).toHaveAttribute('href', '/targets/s?ordem=nome')
+    expect(within(await linhaDe('Site')).getByRole('link', { name: 'Site' })).toHaveAttribute('href', '/projects/proj-padrao/targets/s?ordem=nome')
   })
 
   // Cor nunca sozinha: toda linha tem o nome do estado em texto, inclusive
@@ -207,11 +208,11 @@ describe('painel', () => {
     it('se a consulta dos resolvidos falha, não diz "nenhum"', async () => {
       const r = await renderizarPainel('/')
       r.falsa.estado.resumo = [itemDoResumo()]
-      r.falsa.estado.forcar.set('GET /incidents', { status: 503, code: 'unavailable' })
+      r.falsa.estado.forcar.set('GET /projects/:projectId/incidents', { status: 503, code: 'unavailable' })
       await r.cliente.refetchQueries()
       await screen.findByRole('heading', { level: 2, name: 'Tudo no ar.' })
       await waitFor(() =>
-        expect(r.cliente.getQueryCache().find({ queryKey: ['incidents', 'resolved'], exact: false })?.state.status).toBe('error'),
+        expect(r.cliente.getQueryCache().find({ queryKey: ['projeto', PROJETO_PADRAO, 'incidents', 'resolved'], exact: false })?.state.status).toBe('error'),
       )
       expect(screen.queryByText('Nenhum incidente registrado.')).not.toBeInTheDocument()
       expect(screen.queryByText(/^Último incidente resolvido/)).not.toBeInTheDocument()
@@ -230,12 +231,12 @@ describe('painel', () => {
     const banco = await linhaDe('Banco')
     expect(within(banco).getAllByRole('cell')[0]).toHaveClass('acento-fora')
     expect((await within(banco).findAllByText(/^Conexão recusada · há /)).length).toBeGreaterThan(0)
-    expect(within(banco).getByRole('link', { name: 'Banco' })).toHaveAttribute('href', '/targets/b')
-    expect(within(banco).getByRole('link', { name: 'Ver incidente de Banco' })).toHaveAttribute('href', '/incidents?status=open')
+    expect(within(banco).getByRole('link', { name: 'Banco' })).toHaveAttribute('href', '/projects/proj-padrao/targets/b')
+    expect(within(banco).getByRole('link', { name: 'Ver incidente de Banco' })).toHaveAttribute('href', '/projects/proj-padrao/incidents?status=open')
 
     const lento = await linhaDe('Lento')
     expect(within(lento).getAllByRole('cell')[0]).toHaveClass('acento-degradado')
-    expect(within(lento).getAllByRole('link').map((a) => a.getAttribute('href'))).toEqual(['/targets/l'])
+    expect(within(lento).getAllByRole('link').map((a) => a.getAttribute('href'))).toEqual(['/projects/proj-padrao/targets/l'])
 
     // O estado bom fica calmo: sem acento (spec, O que muda).
     expect(within(await linhaDe('API')).getAllByRole('cell')[0]).not.toHaveClass('acento-fora', 'acento-degradado')
@@ -257,12 +258,12 @@ describe('painel', () => {
     let soltar!: () => void
     const segurado = new Promise<void>((ok) => (soltar = ok))
     servidor.use(
-      http.get('*/api/v1/targets/summary', async () => {
+      http.get('*/api/v1/projects/:projectId/targets/summary', async () => {
         await segurado
         return HttpResponse.json({ items: [] })
       }),
     )
-    void r.cliente.resetQueries({ queryKey: ['targets', 'summary'] })
+    void r.cliente.resetQueries({ queryKey: ['projeto', PROJETO_PADRAO, 'targets', 'summary'] })
     const ocupado = (await screen.findByText('Carregando…')).closest('[aria-busy="true"]') as HTMLElement
     expect(ocupado.querySelectorAll('[aria-hidden="true"]')).toHaveLength(10)
     soltar()
@@ -290,8 +291,8 @@ describe('painel', () => {
     r.falsa.estado.resumo = [itemDoResumo({ id: 'a', name: 'API' })]
     await r.cliente.refetchQueries()
     await screen.findByRole('link', { name: 'API' })
-    r.falsa.estado.forcar.set('GET /targets/summary', { status: 503, code: 'unavailable' })
-    await r.cliente.refetchQueries({ queryKey: ['targets', 'summary'] })
+    r.falsa.estado.forcar.set('GET /projects/:projectId/targets/summary', { status: 503, code: 'unavailable' })
+    await r.cliente.refetchQueries({ queryKey: ['projeto', PROJETO_PADRAO, 'targets', 'summary'] })
     expect(await screen.findByText(/Não foi possível atualizar agora/)).toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'API' })).toBeInTheDocument()
   })
@@ -338,7 +339,7 @@ describe('avisos de canais', () => {
     r.falsa.estado.resumo = [itemDoResumo()]
     await r.cliente.refetchQueries()
     expect(await screen.findByText('Nenhum canal de notificação cadastrado. Os incidentes não enviam avisos.')).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: 'Configurar canais' })).toHaveAttribute('href', '/channels')
+    expect(screen.getByRole('link', { name: 'Configurar canais' })).toHaveAttribute('href', '/projects/proj-padrao/channels')
     // O WebKit arredonda a largura do inline-block para baixo e quebrava em duas linhas.
     expect(screen.getByRole('link', { name: 'Configurar canais' })).toHaveClass('whitespace-nowrap')
     expect(screen.getByRole('link', { name: 'API' })).toBeInTheDocument()
@@ -351,7 +352,7 @@ describe('avisos de canais', () => {
     expect(await screen.findByText('1 canal pausado. Os avisos desse canal são descartados.')).toBeInTheDocument()
     expect(screen.getByText('Nenhum canal verificado está ativo para receber avisos.')).toBeInTheDocument()
     r.falsa.estado.canais = [canal(), canal({ id: 'c2', enabled: false })]
-    await r.cliente.refetchQueries({ queryKey: ['channels'] })
+    await r.cliente.refetchQueries({ queryKey: ['projeto', PROJETO_PADRAO, 'channels'] })
     await waitFor(() => expect(screen.queryByText('Nenhum canal verificado está ativo para receber avisos.')).not.toBeInTheDocument())
     expect(screen.getByText('1 canal pausado. Os avisos desse canal são descartados.')).toBeInTheDocument()
   })
@@ -360,8 +361,8 @@ describe('avisos de canais', () => {
     const r = await renderizarPainel('/')
     r.falsa.estado.resumo = [itemDoResumo()]
     await r.cliente.refetchQueries()
-    r.falsa.estado.forcar.set('GET /channels', { status: 503, code: 'unavailable' })
-    await r.cliente.refetchQueries({ queryKey: ['channels'] })
+    r.falsa.estado.forcar.set('GET /projects/:projectId/channels', { status: 503, code: 'unavailable' })
+    await r.cliente.refetchQueries({ queryKey: ['projeto', PROJETO_PADRAO, 'channels'] })
     expect(await screen.findByText('Não foi possível conferir os canais de notificação agora.')).toBeInTheDocument()
     expect(screen.queryByText('Nenhum canal de notificação cadastrado. Os incidentes não enviam avisos.')).not.toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'API' })).toBeInTheDocument()
@@ -488,7 +489,10 @@ describe('queda de rede', () => {
     const r = await renderizarPainel('/')
 
     act(() => {
-      r.cliente.setQueryData(chaves.resumo, { items: [ItemDoResumo.parse(itemDoResumo({ id: 'a', name: 'API' }))] })
+      // A lista de projetos também guardada: sem ela, a raiz ainda não sabe
+      // a que projeto ir.
+      r.cliente.setQueryData(chaves.projetos, ListaDeProjetos.parse({ items: [projeto()] }))
+      r.cliente.setQueryData(chaves.doProjeto(PROJETO_PADRAO).resumo, { items: [ItemDoResumo.parse(itemDoResumo({ id: 'a', name: 'API' }))] })
     })
 
     expect(await linhaDe('API')).toBeInTheDocument()

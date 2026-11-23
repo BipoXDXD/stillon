@@ -32,3 +32,31 @@ it('uma aba que muda depois da montagem não rouba o foco', () => {
   expect(document.title).toBe('Alvo renomeado — StillOn')
   expect(screen.getByRole('button', { name: 'Outro lugar' })).toHaveFocus()
 })
+
+// O <main> com o foco é a reserva de quem sumiu com ele (o splash, o "Tentar
+// de novo") enquanto a tela ainda não tinha <h1>, como na espera da lista de
+// projetos. O título que monta nele pega o foco, mesmo na primeira tela; com o
+// foco no <body>, a primeira tela continua sem ele. Sabotagem: tirar o
+// `|| activeElement é MAIN` do Titulo.
+it('na primeira tela, o título pega o foco estacionado no <main>', () => {
+  esquecerAPrimeiraTela()
+  const tela = render(<main tabIndex={-1} />)
+  screen.getByRole('main').focus()
+  tela.rerender(
+    <main tabIndex={-1}>
+      <Titulo aba="Novo alvo">Novo alvo</Titulo>
+    </main>,
+  )
+  expect(screen.getByRole('heading', { name: 'Novo alvo' })).toHaveFocus()
+})
+
+it('na primeira tela, com o foco no <body>, o título não o pega', () => {
+  esquecerAPrimeiraTela()
+  render(
+    <main tabIndex={-1}>
+      <Titulo aba="Painel">Painel</Titulo>
+    </main>,
+  )
+  expect(screen.getByRole('heading', { name: 'Painel' })).not.toHaveFocus()
+  expect(document.body).toHaveFocus()
+})

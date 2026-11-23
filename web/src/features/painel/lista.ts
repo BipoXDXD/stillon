@@ -6,18 +6,20 @@ import { comOrdem, lerOrdem, ordenarLinhas, type Ordem } from './ordem'
 // A lista do painel, na ordem da tela: a mesma regra para a tabela e para o
 // Anterior/Próximo do detalhe, que assim nunca discordam. Os itens chegam já
 // filtrados por tag e estado (a API filtra); a busca e os filtros dos
-// heartbeats valem aqui.
+// heartbeats valem aqui. prefixo: o começo dos caminhos do projeto, nos links
+// das linhas.
 export function linhasDaLista(
   dados: { itens: readonly ItemDoResumo[]; heartbeats: readonly Heartbeat[] },
   filtros: Filtros,
   ordem: Ordem,
   agora: Date,
+  prefixo: string,
   incidenteDe: (it: ItemDoResumo) => Incidente | undefined = () => undefined,
 ): LinhaDeMonitor[] {
   return ordenarLinhas(
     [
-      ...dados.itens.filter((it) => casaComBusca(it, filtros.busca)).map((it) => linhaDoAlvo(it, incidenteDe(it), agora)),
-      ...dados.heartbeats.filter((hb) => heartbeatNosFiltros(hb, filtros)).map((hb) => linhaDoHeartbeat(hb, agora)),
+      ...dados.itens.filter((it) => casaComBusca(it, filtros.busca)).map((it) => linhaDoAlvo(it, incidenteDe(it), agora, prefixo)),
+      ...dados.heartbeats.filter((hb) => heartbeatNosFiltros(hb, filtros)).map((hb) => linhaDoHeartbeat(hb, agora, prefixo)),
     ],
     ordem,
   )

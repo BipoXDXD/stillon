@@ -1,7 +1,7 @@
 import { act, screen, waitFor } from '@testing-library/react'
 import { http, HttpResponse } from 'msw'
 import { afterEach, describe, expect, it } from 'vitest'
-import { RECUPERACAO_OK, TOTP_OK } from '@/test/api-falsa'
+import { PROJETO_PADRAO, RECUPERACAO_OK, TOTP_OK } from '@/test/api-falsa'
 import { novaSessao } from '@/test/ambiente'
 import { servidor } from '@/test/setup'
 import { EMAIL, renderizarPainel, SENHA } from '@/test/renderizar'
@@ -108,7 +108,7 @@ describe('entrar', () => {
     await screen.findByRole('heading', { name: /^(Painel|Entrar no StillOn)$/ })
     expect(falsa.chamadas('POST /auth/refresh')).toBe(1)
     expect(screen.getByRole('heading', { name: 'Painel' })).toBeInTheDocument()
-    expect(router.state.location.pathname).toBe('/')
+    expect(router.state.location.pathname).toBe(`/projects/${PROJETO_PADRAO}/`)
   })
 
   it('senha certa leva ao destino guardado', async () => {

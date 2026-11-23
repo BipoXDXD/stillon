@@ -1,7 +1,7 @@
 import { screen, waitFor, within } from '@testing-library/react'
 import { http, HttpResponse } from 'msw'
 import { describe, expect, it, vi } from 'vitest'
-import { PING_URL } from '@/test/api-falsa'
+import { PING_URL, PROJETO_PADRAO } from '@/test/api-falsa'
 import { heartbeat } from '@/test/fixtures'
 import { renderizarPainel } from '@/test/renderizar'
 import { ESPERA_DA_PREVIA_MS } from './PreviaDoCron'
@@ -27,7 +27,7 @@ async function detalheCom(p: Parameters<typeof heartbeat>[0] = {}, o: { navegado
 describe('cadastro', () => {
   it('o painel oferece cadastrar um heartbeat', async () => {
     await renderizarPainel('/')
-    expect(await screen.findByRole('link', { name: 'Cadastrar heartbeat' })).toHaveAttribute('href', '/heartbeats/new')
+    expect(await screen.findByRole('link', { name: 'Cadastrar heartbeat' })).toHaveAttribute('href', '/projects/proj-padrao/heartbeats/new')
   })
 
   // Sabotagem: mandar period_sec em minutos, ou não mostrar o diálogo.
@@ -39,7 +39,7 @@ describe('cadastro', () => {
     await r.usuario.selectOptions(screen.getByLabelText('Unidade de período'), 'horas')
     await r.usuario.click(screen.getByRole('button', { name: 'Cadastrar' }))
     const d = await dialogo()
-    expect(r.falsa.corpos('POST /heartbeats')).toEqual([
+    expect(r.falsa.corpos('POST /projects/:projectId/heartbeats')).toEqual([
       { name: 'Backup', schedule: { kind: 'period', period_sec: 21600 }, grace_sec: 300 },
     ])
     expect(within(d).getByText(PING_URL)).toBeInTheDocument()
@@ -129,7 +129,7 @@ describe('cadastro', () => {
     expect(screen.getByRole('dialog', { name: 'Guarde a URL de ping' })).toBeInTheDocument()
     await r.usuario.click(screen.getByRole('button', { name: 'Já guardei' }))
     await screen.findByRole('heading', { level: 1, name: 'Backup' })
-    expect(r.router.state.location.pathname).toBe('/heartbeats/hb-1')
+    expect(r.router.state.location.pathname).toBe(`/projects/${PROJETO_PADRAO}/heartbeats/hb-1`)
     expect(screen.queryByText(PING_URL)).not.toBeInTheDocument()
   })
 
@@ -141,10 +141,10 @@ describe('cadastro', () => {
     await dialogo()
     await r.router.navigate(-1)
     await waitFor(() => expect(screen.getAllByText('Guarde a URL antes de sair: ela não aparece de novo.').length).toBeGreaterThan(0))
-    expect(r.router.state.location.pathname).toBe('/heartbeats/new')
+    expect(r.router.state.location.pathname).toBe(`/projects/${PROJETO_PADRAO}/heartbeats/new`)
     expect(screen.getByRole('dialog', { name: 'Guarde a URL de ping' })).toBeInTheDocument()
     await r.usuario.click(screen.getByRole('button', { name: 'Já guardei' }))
-    await waitFor(() => expect(r.router.state.location.pathname).toBe('/heartbeats/hb-1'))
+    await waitFor(() => expect(r.router.state.location.pathname).toBe(`/projects/${PROJETO_PADRAO}/heartbeats/hb-1`))
   })
 
   it('o Voltar também espera a URL nova na rotação', async () => {
@@ -154,10 +154,10 @@ describe('cadastro', () => {
     await dialogo()
     await r.router.navigate(-1)
     await waitFor(() => expect(screen.getAllByText('Guarde a URL antes de sair: ela não aparece de novo.').length).toBeGreaterThan(0))
-    expect(r.router.state.location.pathname).toBe('/heartbeats/h1')
+    expect(r.router.state.location.pathname).toBe(`/projects/${PROJETO_PADRAO}/heartbeats/h1`)
     await r.usuario.click(screen.getByRole('button', { name: 'Já guardei' }))
     await r.router.navigate(-1)
-    await waitFor(() => expect(r.router.state.location.pathname).toBe('/'))
+    await waitFor(() => expect(r.router.state.location.pathname).toBe(`/projects/${PROJETO_PADRAO}/`))
   })
 
   it('a ajuda do cron diz como escrever o domingo', async () => {
@@ -214,7 +214,7 @@ describe('cadastro', () => {
 
   it('cadastra com a descrição, e o erro do servidor volta ao campo', async () => {
     const r = await renderizarPainel('/heartbeats/new')
-    r.falsa.estado.forcar.set('POST /heartbeats', { status: 400, code: 'validation_failed', fields: [{ field: 'description[1]', reason: 'invalid' }] })
+    r.falsa.estado.forcar.set('POST /projects/:projectId/heartbeats', { status: 400, code: 'validation_failed', fields: [{ field: 'description[1]', reason: 'invalid' }] })
     await r.usuario.type(await screen.findByLabelText('Nome'), 'Backup')
     await r.usuario.type(screen.getByLabelText('Descrição'), 'Roda no NAS{enter}Ver o log')
     await r.usuario.click(screen.getByRole('button', { name: 'Cadastrar' }))
@@ -224,19 +224,19 @@ describe('cadastro', () => {
     r.falsa.estado.forcar.clear()
     await r.usuario.click(screen.getByRole('button', { name: 'Cadastrar' }))
     await dialogo()
-    expect(r.falsa.corpos('POST /heartbeats').at(-1)).toMatchObject({ description: 'Roda no NAS\nVer o log' })
+    expect(r.falsa.corpos('POST /projects/:projectId/heartbeats').at(-1)).toMatchObject({ description: 'Roda no NAS\nVer o log' })
   })
 
   // O envio tira as linhas em branco do começo, e a linha certa é a da tela.
   // Sabotagem: somar só o 1 do índice → "linha 1", que na tela está em branco.
   it('a linha do erro é a que o dono vê, mesmo com linhas em branco no começo', async () => {
     const r = await renderizarPainel('/heartbeats/new')
-    r.falsa.estado.forcar.set('POST /heartbeats', { status: 400, code: 'validation_failed', fields: [{ field: 'description[0]', reason: 'invalid' }] })
+    r.falsa.estado.forcar.set('POST /projects/:projectId/heartbeats', { status: 400, code: 'validation_failed', fields: [{ field: 'description[0]', reason: 'invalid' }] })
     await r.usuario.type(await screen.findByLabelText('Nome'), 'Backup')
     await r.usuario.type(screen.getByLabelText('Descrição'), '{enter}{enter}Roda no NAS')
     await r.usuario.click(screen.getByRole('button', { name: 'Cadastrar' }))
     expect(await screen.findByText('Tem um caractere que não pode ser mostrado na linha 3.')).toBeInTheDocument()
-    expect(r.falsa.corpos('POST /heartbeats').at(-1)).toMatchObject({ description: 'Roda no NAS' })
+    expect(r.falsa.corpos('POST /projects/:projectId/heartbeats').at(-1)).toMatchObject({ description: 'Roda no NAS' })
   })
 
   it('cadastra por cron, com o fuso', async () => {
@@ -248,13 +248,13 @@ describe('cadastro', () => {
     await r.usuario.type(screen.getByLabelText('Fuso'), 'America/Sao_Paulo')
     await r.usuario.click(screen.getByRole('button', { name: 'Cadastrar' }))
     await dialogo()
-    expect(r.falsa.corpos('POST /heartbeats')[0]?.schedule).toEqual({ kind: 'cron', expr: '0 3 * * *', timezone: 'America/Sao_Paulo' })
+    expect(r.falsa.corpos('POST /projects/:projectId/heartbeats')[0]?.schedule).toEqual({ kind: 'cron', expr: '0 3 * * *', timezone: 'America/Sao_Paulo' })
   })
 
   // Sabotagem: não mapear expr em campoDoServidor → o erro vai para o topo.
   it('o erro do servidor vai para o campo', async () => {
     const r = await renderizarPainel('/heartbeats/new')
-    r.falsa.estado.forcar.set('POST /heartbeats', { status: 400, code: 'validation_failed', fields: [{ field: 'expr', reason: 'invalid' }] })
+    r.falsa.estado.forcar.set('POST /projects/:projectId/heartbeats', { status: 400, code: 'validation_failed', fields: [{ field: 'expr', reason: 'invalid' }] })
     await r.usuario.type(await screen.findByLabelText('Nome'), 'Backup')
     await r.usuario.click(screen.getByRole('radio', { name: 'Expressão cron' }))
     await r.usuario.type(screen.getByLabelText('Expressão'), 'isso não é cron')
@@ -267,7 +267,7 @@ describe('cadastro', () => {
 
   it('o teto de 100 aparece como erro do formulário', async () => {
     const r = await renderizarPainel('/heartbeats/new')
-    r.falsa.estado.forcar.set('POST /heartbeats', { status: 409, code: 'heartbeat_limit_reached' })
+    r.falsa.estado.forcar.set('POST /projects/:projectId/heartbeats', { status: 409, code: 'heartbeat_limit_reached' })
     await cadastrar(r)
     expect(await screen.findByRole('alert')).toHaveTextContent('Limite de 100 heartbeats atingido.')
   })
@@ -276,7 +276,7 @@ describe('cadastro', () => {
     const r = await renderizarPainel('/heartbeats/new')
     await r.usuario.click(await screen.findByRole('button', { name: 'Cadastrar' }))
     expect(await screen.findByText('Informe um nome.')).toBeInTheDocument()
-    expect(r.falsa.chamadas('POST /heartbeats')).toBe(0)
+    expect(r.falsa.chamadas('POST /projects/:projectId/heartbeats')).toBe(0)
   })
 })
 
@@ -336,7 +336,7 @@ describe('retomada por ping no Avançado', () => {
     await r.usuario.click(caixa)
     await r.usuario.click(screen.getByRole('button', { name: 'Cadastrar' }))
     await dialogo()
-    expect(r.falsa.corpos('POST /heartbeats')).toEqual([
+    expect(r.falsa.corpos('POST /projects/:projectId/heartbeats')).toEqual([
       { name: 'Backup', schedule: { kind: 'period', period_sec: 86400 }, grace_sec: 300, ping_resumes: true },
     ])
   })
@@ -344,7 +344,7 @@ describe('retomada por ping no Avançado', () => {
   // Sabotagem: open só pelo estado inicial → o erro fica escondido no fechado.
   it('o erro do servidor no campo abre o Avançado e marca a caixa', async () => {
     const r = await renderizarPainel('/heartbeats/new')
-    r.falsa.estado.forcar.set('POST /heartbeats', { status: 400, code: 'validation_failed', fields: [{ field: 'ping_resumes', reason: 'invalid' }] })
+    r.falsa.estado.forcar.set('POST /projects/:projectId/heartbeats', { status: 400, code: 'validation_failed', fields: [{ field: 'ping_resumes', reason: 'invalid' }] })
     await cadastrar(r)
     expect(await screen.findByText('Valor inválido.')).toBeInTheDocument()
     expect(avancado().open).toBe(true)
@@ -362,7 +362,7 @@ describe('retomada por ping no Avançado', () => {
     await r.usuario.click(caixa)
     await r.usuario.click(screen.getByRole('button', { name: 'Salvar' }))
     await screen.findByRole('heading', { level: 1, name: 'Backup' })
-    expect(r.falsa.corpos('PATCH /heartbeats/:id')).toEqual([{ ping_resumes: false }])
+    expect(r.falsa.corpos('PATCH /projects/:projectId/heartbeats/:id')).toEqual([{ ping_resumes: false }])
   })
 
   it('na edição de quem não retoma, o Avançado começa fechado', async () => {
@@ -379,7 +379,7 @@ describe('edição', () => {
     await r.usuario.click(screen.getByRole('link', { name: 'Editar' }))
     await r.usuario.click(await screen.findByRole('button', { name: 'Salvar' }))
     await screen.findByRole('heading', { level: 1, name: 'Backup' })
-    expect(r.falsa.chamadas('PATCH /heartbeats/:id')).toBe(0)
+    expect(r.falsa.chamadas('PATCH /projects/:projectId/heartbeats/:id')).toBe(0)
   })
 
   // Sabotagem: mandar o formulário inteiro no PATCH.
@@ -391,7 +391,7 @@ describe('edição', () => {
     await r.usuario.type(nome, ' 2')
     await r.usuario.click(screen.getByRole('button', { name: 'Salvar' }))
     await screen.findByRole('heading', { level: 1, name: 'Backup 2' })
-    expect(r.falsa.corpos('PATCH /heartbeats/:id')).toEqual([{ name: 'Backup 2' }])
+    expect(r.falsa.corpos('PATCH /projects/:projectId/heartbeats/:id')).toEqual([{ name: 'Backup 2' }])
   })
 })
 
@@ -403,7 +403,7 @@ describe('edição da descrição', () => {
     await r.usuario.clear(await screen.findByLabelText('Descrição'))
     await r.usuario.click(screen.getByRole('button', { name: 'Salvar' }))
     await screen.findByRole('heading', { level: 1, name: 'Backup' })
-    expect(r.falsa.corpos('PATCH /heartbeats/:id')).toEqual([{ description: '' }])
+    expect(r.falsa.corpos('PATCH /projects/:projectId/heartbeats/:id')).toEqual([{ description: '' }])
     await waitFor(() => expect(screen.queryByText('Roda no NAS')).not.toBeInTheDocument())
   })
 })
@@ -413,15 +413,15 @@ describe('ações do detalhe', () => {
   it('pausar pede confirmação e retomar não', async () => {
     const r = await detalheCom()
     await r.usuario.click(screen.getByRole('button', { name: 'Pausar' }))
-    expect(r.falsa.chamadas('PATCH /heartbeats/:id')).toBe(0)
+    expect(r.falsa.chamadas('PATCH /projects/:projectId/heartbeats/:id')).toBe(0)
     await r.usuario.click(await screen.findByRole('button', { name: 'Pausar heartbeat' }))
     await screen.findByRole('button', { name: 'Retomar' })
-    expect(r.falsa.corpos('PATCH /heartbeats/:id')).toEqual([{ enabled: false }])
+    expect(r.falsa.corpos('PATCH /projects/:projectId/heartbeats/:id')).toEqual([{ enabled: false }])
     expect(screen.getByText('Pausado')).toBeInTheDocument()
 
     await r.usuario.click(screen.getByRole('button', { name: 'Retomar' }))
     await screen.findByRole('button', { name: 'Pausar' })
-    expect(r.falsa.corpos('PATCH /heartbeats/:id')).toEqual([{ enabled: false }, { enabled: true }])
+    expect(r.falsa.corpos('PATCH /projects/:projectId/heartbeats/:id')).toEqual([{ enabled: false }, { enabled: true }])
   })
 
   // O estado depois de retomar vem do servidor (statusOf). Sabotagem: a API
@@ -449,13 +449,13 @@ describe('ações do detalhe', () => {
       soltar = resolve
     })
     servidor.use(
-      http.get('*/api/v1/heartbeats/h1/events', async () => {
+      http.get('*/api/v1/projects/:projectId/heartbeats/h1/events', async () => {
         await atualizacao
         return HttpResponse.json({ items: [], next_cursor: null })
       }),
     )
     await r.usuario.click(screen.getByRole('button', { name: 'Retomar' }))
-    await waitFor(() => expect(r.falsa.chamadas('PATCH /heartbeats/:id')).toBe(1))
+    await waitFor(() => expect(r.falsa.chamadas('PATCH /projects/:projectId/heartbeats/:id')).toBe(1))
 
     await r.usuario.click(screen.getByRole('button', { name: 'Gerar nova URL' }))
     const confirmacao = await screen.findByRole('alertdialog', { name: 'Gerar uma nova URL de ping?' })
@@ -472,7 +472,7 @@ describe('ações do detalhe', () => {
     const r = await detalheCom()
     await r.usuario.click(screen.getByRole('button', { name: 'Apagar' }))
     await r.usuario.click(await screen.findByRole('button', { name: 'Apagar heartbeat' }))
-    await waitFor(() => expect(r.router.state.location.pathname).toBe('/'))
+    await waitFor(() => expect(r.router.state.location.pathname).toBe(`/projects/${PROJETO_PADRAO}/`))
     await screen.findByRole('heading', { level: 2, name: 'Nenhum serviço vigiado ainda.' })
     expect(r.falsa.estado.heartbeats).toEqual([])
   })
@@ -481,7 +481,7 @@ describe('ações do detalhe', () => {
   it('gerar nova URL confirma e mostra a URL nova, uma vez', async () => {
     const r = await detalheCom()
     await r.usuario.click(screen.getByRole('button', { name: 'Gerar nova URL' }))
-    expect(r.falsa.chamadas('POST /heartbeats/:id/token/rotate')).toBe(0)
+    expect(r.falsa.chamadas('POST /projects/:projectId/heartbeats/:id/token/rotate')).toBe(0)
     await r.usuario.click(await screen.findByRole('button', { name: 'Gerar nova URL' }))
     const d = await dialogo()
     expect(within(d).getByText(`${PING_URL}-novo`)).toBeInTheDocument()
@@ -491,7 +491,7 @@ describe('ações do detalhe', () => {
 
   it('erro na ação aparece na tela e mantém o heartbeat', async () => {
     const r = await detalheCom()
-    r.falsa.estado.forcar.set('POST /heartbeats/:id/token/rotate', { status: 500, code: 'internal_error' })
+    r.falsa.estado.forcar.set('POST /projects/:projectId/heartbeats/:id/token/rotate', { status: 500, code: 'internal_error' })
     await r.usuario.click(screen.getByRole('button', { name: 'Gerar nova URL' }))
     await r.usuario.click(await screen.findByRole('button', { name: 'Gerar nova URL' }))
     expect(await screen.findByRole('alert')).toHaveTextContent('Erro interno do servidor.')
@@ -504,14 +504,14 @@ describe('ações do detalhe', () => {
     r.falsa.estado.heartbeats = []
     await r.usuario.click(screen.getByRole('button', { name: 'Pausar' }))
     await r.usuario.click(await screen.findByRole('button', { name: 'Pausar heartbeat' }))
-    await waitFor(() => expect(r.router.state.location.pathname).toBe('/'))
+    await waitFor(() => expect(r.router.state.location.pathname).toBe(`/projects/${PROJETO_PADRAO}/`))
     expect((await screen.findAllByText('O heartbeat já tinha sido apagado, talvez em outra aba.')).length).toBeGreaterThan(0)
   })
 
   it('apagado em outra aba: o poll também volta ao painel', async () => {
     const r = await detalheCom()
     r.falsa.estado.heartbeats = []
-    await r.cliente.refetchQueries({ queryKey: ['heartbeats', 'h1'] })
-    await waitFor(() => expect(r.router.state.location.pathname).toBe('/'))
+    await r.cliente.refetchQueries({ queryKey: ['projeto', PROJETO_PADRAO, 'heartbeats', 'h1'] })
+    await waitFor(() => expect(r.router.state.location.pathname).toBe(`/projects/${PROJETO_PADRAO}/`))
   })
 })

@@ -1,7 +1,7 @@
 import { useQueryClient } from '@tanstack/react-query'
 import { useEffect, useEffectEvent, useId, useRef, useState } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router'
-import { useApi } from '@/app/contexto'
+import { useApiDoProjeto, useRotaDoProjeto } from '@/app/projeto'
 import { useAnunciar } from '@/components/Anunciador'
 import { EstadoDaConsulta } from '@/components/EstadoDaConsulta'
 import { SeloDeEstado } from '@/components/SeloDeEstado'
@@ -12,7 +12,7 @@ import { Botao } from '@/components/ui/botao'
 import { ErroDoFormulario } from '@/components/ui/campo'
 import { ControleSegmentado, type OpcaoSegmentada } from '@/components/ui/controle-segmentado'
 import { Confirmar } from '@/components/ui/dialogo'
-import { chaves, useAlvo, useIncidentes, useSerie } from '@/lib/api/consultas'
+import { useAlvo, useChavesDoProjeto, useIncidentes, useSerie } from '@/lib/api/consultas'
 import { naoEncontrado } from '@/lib/api/http'
 import { mensagemDe, textoDoErroDeCheck } from '@/lib/api/mensagens'
 import type { Serie } from '@/lib/api/schemas'
@@ -112,9 +112,11 @@ function DetalheDoAlvo({ id }: { id: string }) {
   const [params, setParams] = useSearchParams()
   const janelaDaUrl = params.get('janela')
   const janela: Janela = ehJanela(janelaDaUrl) ? janelaDaUrl : '24h'
-  const api = useApi()
+  const api = useApiDoProjeto()
+  const chave = useChavesDoProjeto()
   const qc = useQueryClient()
   const navegar = useNavigate()
+  const noProjeto = useRotaDoProjeto()
   const avisar = useAvisar()
   const alvo = useAlvo(id)
   const serie = useSerie(id, janela)
@@ -145,10 +147,10 @@ function DetalheDoAlvo({ id }: { id: string }) {
   // resumo e os incidentes (o contador da navegação) se atualizam.
   async function sairDoAlvo(aviso: string) {
     avisar(aviso)
-    await navegar('/', { flushSync: true })
-    qc.removeQueries({ queryKey: chaves.alvo(id) })
-    void qc.invalidateQueries({ queryKey: chaves.todosOsAlvos })
-    void qc.invalidateQueries({ queryKey: chaves.todosOsIncidentes })
+    await navegar(noProjeto('/'), { flushSync: true })
+    qc.removeQueries({ queryKey: chave.alvo(id) })
+    void qc.invalidateQueries({ queryKey: chave.todosOsAlvos })
+    void qc.invalidateQueries({ queryKey: chave.todosOsIncidentes })
   }
 
   // O alvo foi apagado em outra aba.
@@ -177,7 +179,7 @@ function DetalheDoAlvo({ id }: { id: string }) {
     setErro(null)
     try {
       await api.alterarAlvo(id, { enabled: ativo })
-      await qc.invalidateQueries({ queryKey: chaves.todosOsAlvos })
+      await qc.invalidateQueries({ queryKey: chave.todosOsAlvos })
     } catch (e) {
       if (naoEncontrado(e)) await sumiu()
       else setErro(mensagemDe(e))
@@ -220,7 +222,7 @@ function DetalheDoAlvo({ id }: { id: string }) {
               </div>
               <div className="flex flex-wrap gap-2">
                 <Botao tipo="secundario" asChild>
-                  <Link to={`/targets/${id}/edit`}>Editar</Link>
+                  <Link to={noProjeto(`/targets/${id}/edit`)}>Editar</Link>
                 </Botao>
                 <Botao tipo="terciario" aria-disabled={alternando || undefined} onClick={() => void alternar(!a.enabled)}>
                   {a.enabled ? 'Pausar' : 'Retomar'}

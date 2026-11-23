@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest'
 import { z } from 'zod'
 import { me, pagina } from '@/test/fixtures'
 import { textoDoErroDeCanal } from './mensagens'
-import { Canal, Me, PaginaDeStatus, TiposConhecidosDeCanal } from './schemas'
+import { Canal, Me, PaginaDeStatus, Projeto, TiposConhecidosDeCanal } from './schemas'
 
 // O JSON real de channelResponse, escrito e conferido pelo teste Go
 // TestChannelResponseKeepsThePanelContract
@@ -110,5 +110,38 @@ describe('o schema Canal aceita o que a API devolve', () => {
     expect(valores((c) => c.enabled)).toEqual(ambos)
     expect(valores((c) => c.last_error === null)).toEqual(ambos)
     expect(valores((c) => c.last_failure_at === null)).toEqual(ambos)
+  })
+})
+
+// O JSON real de projectResponse, escrito e conferido pelo teste Go
+// TestProjectResponseKeepsThePanelContract
+// (internal/httpapi/projetos_contrato_internal_test.go).
+const ARQUIVO_DE_PROJETOS = resolve(
+  import.meta.dirname,
+  '../../../../internal/httpapi/testdata/contrato-projetos.json',
+)
+const CASOS_DE_PROJETOS = z
+  .array(z.strictObject({ caso: z.string().min(1), resposta: z.record(z.string(), z.unknown()) }))
+  .parse(JSON.parse(readFileSync(ARQUIVO_DE_PROJETOS, 'utf8')))
+const RESPOSTAS_DE_PROJETOS = CASOS_DE_PROJETOS.map((c) => [c.caso, c.resposta] as const)
+
+describe('o schema Projeto aceita o que a API devolve', () => {
+  it.each(RESPOSTAS_DE_PROJETOS)('%s', (_caso, resposta) => {
+    const lido = Projeto.safeParse(resposta)
+    expect(lido.success ? [] : lido.error.issues).toEqual([])
+  })
+
+  it.each(RESPOSTAS_DE_PROJETOS)('%s: traz exatamente os campos do schema', (_caso, resposta) => {
+    expect(Object.keys(resposta).sort()).toEqual(Object.keys(Projeto.shape).sort())
+  })
+
+  it.each(RESPOSTAS_DE_PROJETOS)('%s: a data vem em RFC 3339', (_caso, resposta) => {
+    const lida = z.object({ created_at: Rfc3339 }).safeParse(resposta)
+    expect(lida.success ? [] : lida.error.issues).toEqual([])
+  })
+
+  it('os casos cobrem o projeto padrão e um criado pela API', () => {
+    const projetos = CASOS_DE_PROJETOS.map((c) => Projeto.parse(c.resposta))
+    expect(new Set(projetos.map((p) => p.is_default))).toEqual(new Set([true, false]))
   })
 })

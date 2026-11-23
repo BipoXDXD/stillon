@@ -179,6 +179,15 @@ test('login, cadastro de alvo, status, F5, detalhe, apagar, encerrar a sessão e
       /^(rgb|oklch)\(/,
     )
 
+    // 6b. O detalhe mora no projeto padrão, e o link de antes dos projetos
+    //     (/targets/{id}) chega ao mesmo lugar pelo redirecionamento.
+    const UUID = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
+    await expect(page).toHaveURL(new RegExp(`/projects/${UUID}/targets/${UUID}$`))
+    const [, , projetoPadrao, , idDoAlvo] = new URL(page.url()).pathname.split('/')
+    await page.goto(`/targets/${idDoAlvo}`)
+    await expect(page.getByRole('heading', { name: nomeDoAlvo })).toBeVisible()
+    await expect(page).toHaveURL(new RegExp(`/projects/${projetoPadrao}/targets/${idDoAlvo}$`))
+
     // 7. Um diálogo (Radix + react-remove-scroll, que injeta <style>) trava a
     //    rolagem: o nonce funcionou. E o alvo sai: o teto é de 100 alvos, e
     //    o E2E roda de novo contra a mesma pilha externa (reconciliação, item 4).
