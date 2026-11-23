@@ -11,6 +11,7 @@ import (
 	"context"
 	"log/slog"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/BipoXDXD/stillon/internal/auth"
@@ -21,12 +22,16 @@ import (
 // TetoDiario é o máximo de e-mails de conta por dia UTC, somadas as réplicas.
 const TetoDiario = 50
 
+// PrazoDreno é o orçamento do encerramento de Rodar (o envio em curso mais
+// o dreno), contado do cancelamento: quem desliga o processo o desconta do
+// próprio prazo de encerramento.
+const PrazoDreno = 10 * time.Second
+
 const (
 	baldeDestino   = "conta_destino"
 	aCadaDestino   = 20 * time.Minute
 	rajadaDestino  = 3
 	capacidadeFila = 100
-	prazoDreno     = 10 * time.Second
 	prazoEnvio     = 15 * time.Second
 )
 
@@ -62,6 +67,11 @@ type Enviador struct {
 	// prazoDreno é o orçamento do encerramento inteiro, contado do
 	// cancelamento de ctx. Campo só para o teste o encurtar.
 	prazoDreno time.Duration
+
+	// mu protege parado: depois de Rodar voltar, ninguém consome a fila, e
+	// SendAccountEmail registra a perda em vez de enfileirar.
+	mu     sync.Mutex
+	parado bool
 }
 
 // New monta o enviador. chave é a do HMAC (IP_HASH_KEY): o endereço não
@@ -69,13 +79,20 @@ type Enviador struct {
 func New(t Transporte, teto Teto, o Orcamentos, chave []byte, log *slog.Logger) *Enviador {
 	return &Enviador{
 		transporte: t, teto: teto, orcamentos: o, chave: chave, log: log,
-		fila: make(chan mensagem, capacidadeFila), prazoDreno: prazoDreno,
+		fila: make(chan mensagem, capacidadeFila), prazoDreno: PrazoDreno,
 	}
 }
 
 // SendAccountEmail enfileira e volta nil. Com a fila cheia, descarta e
-// registra no log: nunca bloqueia quem responde à requisição.
+// registra no log: nunca bloqueia quem responde à requisição. Depois do
+// encerramento de Rodar, também descarta e registra.
 func (e *Enviador) SendAccountEmail(_ context.Context, to, subject, body string) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.parado {
+		e.log.Warn("e-mail de conta suprimido", "motivo", "encerrado")
+		return nil
+	}
 	select {
 	case e.fila <- mensagem{to, subject, body}:
 	default:
@@ -85,9 +102,9 @@ func (e *Enviador) SendAccountEmail(_ context.Context, to, subject, body string)
 }
 
 // Rodar consome a fila até ctx encerrar e então drena o que restou. O
-// encerramento inteiro (o envio em curso mais o dreno) cabe em prazoDreno,
+// encerramento inteiro (o envio em curso mais o dreno) cabe em PrazoDreno,
 // contado do cancelamento de ctx: os envios usam um contexto que não morre
-// com ctx, mas que vence prazoDreno depois dele. Cada envio tem ainda o
+// com ctx, mas que vence PrazoDreno depois dele. Cada envio tem ainda o
 // prazo próprio de prazoEnvio.
 func (e *Enviador) Rodar(ctx context.Context) {
 	limite, cancelar := context.WithCancel(context.WithoutCancel(ctx))
@@ -101,15 +118,22 @@ func (e *Enviador) Rodar(ctx context.Context) {
 		case <-ctx.Done():
 		}
 	}
+dreno:
 	for limite.Err() == nil {
 		select {
 		case m := <-e.fila:
 			e.entregar(limite, m)
 		default:
-			return
+			break dreno
 		}
 	}
-	if n := len(e.fila); n > 0 {
+	// O que ainda estiver na fila conta como descartado. Sob mu, nenhum
+	// SendAccountEmail entra entre a contagem e o parado.
+	e.mu.Lock()
+	e.parado = true
+	n := len(e.fila)
+	e.mu.Unlock()
+	if n > 0 {
 		e.log.Warn("e-mails de conta descartados no encerramento", "quantidade", n)
 	}
 }

@@ -642,8 +642,10 @@ func TestSignupEnabled(t *testing.T) {
 		t.Run(c.nome, func(t *testing.T) {
 			env := validEnv()
 			if c.turnstile {
-				env["TURNSTILE_SITE_KEY"] = "1x00000000000000000000AA"
-				env["TURNSTILE_SECRET_KEY"] = "1x0000000000000000000000000000000AA"
+				// validEnv é produção: as chaves de teste da Cloudflare
+				// seriam recusadas (TestProducaoRecusaChavesDeTesteDoTurnstile).
+				env["TURNSTILE_SITE_KEY"] = "0x4AAAAAAAsinteticaSite"
+				env["TURNSTILE_SECRET_KEY"] = "0x4AAAAAAAsinteticaSecret"
 			}
 			if c.email {
 				env["RESEND_API_KEY"], env["EMAIL_FROM"] = "re_123", "alertas@stillon.example"
@@ -656,6 +658,47 @@ func TestSignupEnabled(t *testing.T) {
 				t.Errorf("SignupEnabled = %v, queria %v", cfg.SignupEnabled(), c.ligado)
 			}
 		})
+	}
+}
+
+// As chaves de teste públicas da Cloudflare passam qualquer desafio (ou
+// nenhum): em produção, o cadastro ficaria aberto a robôs. O boot recusa,
+// com o e-mail ligado ou não, e cada chave conta sozinha.
+func TestProducaoRecusaChavesDeTesteDoTurnstile(t *testing.T) {
+	casos := map[string][2]string{
+		"site key que passa":     {"1x00000000000000000000AA", "0x4AAAAAAAsinteticaSecret"},
+		"site key que falha":     {"2x00000000000000000000AB", "0x4AAAAAAAsinteticaSecret"},
+		"site key interativa":    {"3x00000000000000000000FF", "0x4AAAAAAAsinteticaSecret"},
+		"secret que passa":       {"0x4AAAAAAAsinteticaSite", "1x0000000000000000000000000000000AA"},
+		"secret que falha":       {"0x4AAAAAAAsinteticaSite", "2x0000000000000000000000000000000AA"},
+		"secret de token gasto":  {"0x4AAAAAAAsinteticaSite", "3x0000000000000000000000000000000AA"},
+		"par de teste com folga": {" 1x00000000000000000000AA ", " 1x0000000000000000000000000000000AA "},
+	}
+	for nome, par := range casos {
+		t.Run(nome, func(t *testing.T) {
+			env := validEnv()
+			env["RESEND_API_KEY"], env["EMAIL_FROM"] = "re_123", "alertas@stillon.example"
+			env["TURNSTILE_SITE_KEY"], env["TURNSTILE_SECRET_KEY"] = par[0], par[1]
+			_, err := Load(getenvFrom(env))
+			if err == nil || !strings.Contains(err.Error(), "chave de teste do Turnstile") {
+				t.Fatalf("aceito em produção (err = %v)", err)
+			}
+		})
+	}
+}
+
+// Em dev (http em localhost), as chaves de teste são o padrão do compose.yaml.
+func TestDevAceitaChavesDeTesteDoTurnstile(t *testing.T) {
+	env := validEnv()
+	env["PUBLIC_BASE_URL"] = "http://localhost:8080"
+	env["RESEND_API_KEY"], env["EMAIL_FROM"] = "re_123", "alertas@stillon.example"
+	env["TURNSTILE_SITE_KEY"], env["TURNSTILE_SECRET_KEY"] = "1x00000000000000000000AA", "1x0000000000000000000000000000000AA"
+	cfg, err := Load(getenvFrom(env))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.SignupEnabled() {
+		t.Error("SignupEnabled = false com o par de teste em dev, queria true")
 	}
 }
 

@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"golang.org/x/sync/errgroup"
+
+	"github.com/BipoXDXD/stillon/internal/contaemail"
 )
 
 // Um pedido preso além do grace não transforma o SIGTERM em falha: o
@@ -70,5 +72,89 @@ func pedidoChegou(preso <-chan struct{}) bool {
 		return true
 	default:
 		return false
+	}
+}
+
+// filaFalsa registra quando o contexto de Rodar acaba.
+type filaFalsa struct{ cancelada chan struct{} }
+
+func (f *filaFalsa) Rodar(ctx context.Context) {
+	<-ctx.Done()
+	close(f.cancelada)
+}
+
+func filaCancelada(f *filaFalsa, d time.Duration) bool {
+	select {
+	case <-f.cancelada:
+		return true
+	case <-time.After(d):
+		return false
+	}
+}
+
+// A fila dos e-mails de conta só começa a encerrar depois que a API parou
+// de aceitar pedidos: um forgot respondido no fim ainda tem o e-mail drenado.
+func TestFilaDeContaEncerraDepoisDaAPI(t *testing.T) {
+	f := &filaFalsa{cancelada: make(chan struct{})}
+	apiParou := make(chan struct{})
+	ctx, cancel := context.WithCancel(context.Background())
+	var g errgroup.Group
+	rodarFilaDeConta(ctx, &g, f, apiParou, contaemail.PrazoDreno+time.Hour)
+
+	cancel()
+	if filaCancelada(f, 200*time.Millisecond) {
+		t.Fatal("a fila encerrou antes de a API parar")
+	}
+	close(apiParou)
+	if !filaCancelada(f, 5*time.Second) {
+		t.Fatal("a fila não encerrou depois de a API parar")
+	}
+	if err := g.Wait(); err != nil {
+		t.Errorf("g.Wait = %v, queria nil", err)
+	}
+}
+
+// Com a API presa no encerramento, a fila encerra assim mesmo a tempo de o
+// dreno (PrazoDreno) caber no ShutdownGrace contado do sinal.
+func TestFilaDeContaCabeNoShutdownGrace(t *testing.T) {
+	f := &filaFalsa{cancelada: make(chan struct{})}
+	const folga = 100 * time.Millisecond
+	ctx, cancel := context.WithCancel(context.Background())
+	var g errgroup.Group
+	rodarFilaDeConta(ctx, &g, f, make(chan struct{}), contaemail.PrazoDreno+folga)
+
+	inicio := time.Now()
+	cancel()
+	if !filaCancelada(f, 5*time.Second) {
+		t.Fatal("a fila esperou a API presa além do ShutdownGrace")
+	}
+	if d := time.Since(inicio); d < folga {
+		t.Errorf("a fila encerrou %v depois do sinal, antes da folga de %v para a API", d, folga)
+	}
+	if err := g.Wait(); err != nil {
+		t.Errorf("g.Wait = %v, queria nil", err)
+	}
+}
+
+// servir avisa quando o servidor terminou de encerrar: é o sinal que a fila
+// dos e-mails de conta espera.
+func TestServirAvisaQuandoEncerrou(t *testing.T) {
+	srv := &http.Server{Addr: portaLivre(t), Handler: http.NotFoundHandler()}
+	ctx, cancel := context.WithCancel(context.Background())
+	var g errgroup.Group
+	encerrou := servir(ctx, &g, srv, "teste", time.Second)
+	select {
+	case <-encerrou:
+		t.Fatal("servir avisou o encerramento antes do cancelamento")
+	case <-time.After(100 * time.Millisecond):
+	}
+	cancel()
+	select {
+	case <-encerrou:
+	case <-time.After(5 * time.Second):
+		t.Fatal("servir não avisou o encerramento")
+	}
+	if err := g.Wait(); err != nil {
+		t.Errorf("g.Wait = %v, queria nil", err)
 	}
 }
