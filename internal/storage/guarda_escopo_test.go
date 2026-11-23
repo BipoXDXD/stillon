@@ -29,6 +29,11 @@ const donoDoEscopoDeProjeto = "internal/storage/scope.go"
 // storage.InProjectTx, que confere a pertença antes de ligar o projeto.
 var chamadoresDeScopeToUser = []string{
 	"internal/account/account.go",
+	// signup: o usuário nasce na transação e o escopo é ligado para o Projeto
+	// padrão e o token.
+	"internal/account/cadastro.go",
+	// reset: o dono só é conhecido depois de consumir o token.
+	"internal/account/recuperacao.go",
 	"internal/auth/store.go",
 	"internal/auth/totp.go",
 	"internal/storage/scope.go",

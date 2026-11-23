@@ -47,53 +47,66 @@ func novo(t *testing.T) (*account.Service, *pgxpool.Pool) {
 	return comHasherBarato(svc), pool
 }
 
-// Dois `stillon user create` ao mesmo tempo não criam dois donos. O gancho
-// segura cada criação entre a contagem e a inserção até as duas chegarem ali,
-// ou por meio segundo: com a trava, a segunda não chega à contagem enquanto a
-// primeira não comitar, e espera o meio segundo sozinha; sem a trava, as duas
-// contam zero e as duas inserem.
-func TestConcurrentCreateMakesOneUser(t *testing.T) {
-	svc, pool := novo(t)
-	var chegaram sync.WaitGroup
-	chegaram.Add(2)
-	todas := make(chan struct{})
-	go func() { chegaram.Wait(); close(todas) }()
-	svc.SetDepoisDeContar(func() {
-		chegaram.Done()
-		select {
-		case <-todas:
-		case <-time.After(500 * time.Millisecond):
-		}
-	})
-
-	erros := make([]error, 2)
-	var wg sync.WaitGroup
-	for i, email := range []string{"a@exemplo.com", "b@exemplo.com"} {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			_, erros[i] = svc.CreateUser(context.Background(), email, senha)
-		}()
-	}
-	wg.Wait()
-
-	var ok, recusadas int
-	for _, err := range erros {
-		switch {
-		case err == nil:
-			ok++
-		case errors.Is(err, account.ErrUserExists):
-			recusadas++
-		default:
-			t.Fatalf("erro inesperado: %v", err)
-		}
-	}
+// projetosPadraoDe conta, fora da RLS, os Projetos padrão do titular.
+func projetosPadraoDe(t *testing.T, titular uuid.UUID) int {
+	t.Helper()
 	var n int
-	if err := pool.QueryRow(context.Background(), `SELECT count(*) FROM users`).Scan(&n); err != nil {
+	if err := testdb.Admin(t).QueryRow(context.Background(),
+		`SELECT count(*) FROM projects WHERE titular_id = $1 AND is_default`, titular).Scan(&n); err != nil {
 		t.Fatal(err)
 	}
-	if ok != 1 || recusadas != 1 || n != 1 {
-		t.Errorf("%d criações, %d recusas, %d usuários; queria 1, 1 e 1", ok, recusadas, n)
+	return n
+}
+
+// Sem a trava de usuário único: e-mails diferentes dão duas contas, cada uma
+// com o seu Projeto padrão.
+func TestCreateUserAceitaSegundaConta(t *testing.T) {
+	svc, pool := novo(t)
+	ctx := context.Background()
+	ids := make([]uuid.UUID, 0, 2)
+	for _, email := range []string{"a@exemplo.com", "b@exemplo.com"} {
+		id, err := svc.CreateUser(ctx, email, senha)
+		if err != nil {
+			t.Fatalf("%s: %v", email, err)
+		}
+		ids = append(ids, id)
+	}
+	var n int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM users`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 2 || ids[0] == ids[1] {
+		t.Fatalf("%d usuários, ids %v; queria 2 distintos", n, ids)
+	}
+	for _, id := range ids {
+		if p := projetosPadraoDe(t, id); p != 1 {
+			t.Errorf("usuário %v com %d Projetos padrão, queria 1", id, p)
+		}
+	}
+}
+
+// E-mail repetido, também com outra caixa (citext), é ErrEmailTaken e não
+// cria nada.
+func TestCreateUserRecusaEmailRepetido(t *testing.T) {
+	svc, pool := novo(t)
+	ctx := context.Background()
+	if _, err := svc.CreateUser(ctx, "dono@exemplo.com", senha); err != nil {
+		t.Fatal(err)
+	}
+	for _, email := range []string{"dono@exemplo.com", "Dono@Exemplo.COM"} {
+		if _, err := svc.CreateUser(ctx, email, senha); !errors.Is(err, account.ErrEmailTaken) {
+			t.Errorf("%s: err = %v, queria ErrEmailTaken", email, err)
+		}
+	}
+	var usuarios, projetos int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM users`).Scan(&usuarios); err != nil {
+		t.Fatal(err)
+	}
+	if err := testdb.Admin(t).QueryRow(ctx, `SELECT count(*) FROM projects`).Scan(&projetos); err != nil {
+		t.Fatal(err)
+	}
+	if usuarios != 1 || projetos != 1 {
+		t.Errorf("%d usuários e %d projetos depois das recusas, queria 1 e 1", usuarios, projetos)
 	}
 }
 
