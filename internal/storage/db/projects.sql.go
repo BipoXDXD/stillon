@@ -12,6 +12,19 @@ import (
 	"github.com/google/uuid"
 )
 
+const countTitularProjects = `-- name: CountTitularProjects :one
+SELECT count(*) FROM projects WHERE titular_id = $1
+`
+
+// projects_member_select mostra ao titular todos os projetos dele por
+// titular_id, inclusive os que não têm vínculo dele.
+func (q *Queries) CountTitularProjects(ctx context.Context, titularID uuid.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, countTitularProjects, titularID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const ensureDefaultProject = `-- name: EnsureDefaultProject :exec
 
 INSERT INTO projects (id, name, titular_id, is_default, created_at)
@@ -68,6 +81,60 @@ func (q *Queries) GetDefaultProjectID(ctx context.Context, titularID uuid.UUID) 
 	return id, err
 }
 
+const insertProject = `-- name: InsertProject :one
+INSERT INTO projects (id, name, titular_id, is_default, created_at)
+VALUES ($1, $2, $3, false, $4)
+RETURNING id, name, is_default, created_at
+`
+
+type InsertProjectParams struct {
+	ID        uuid.UUID
+	Name      string
+	TitularID uuid.UUID
+	Now       time.Time
+}
+
+type InsertProjectRow struct {
+	ID        uuid.UUID
+	Name      string
+	IsDefault bool
+	CreatedAt time.Time
+}
+
+// Sem ON CONFLICT: projeto novo que colide falha alto (ao contrário do padrão).
+func (q *Queries) InsertProject(ctx context.Context, arg InsertProjectParams) (InsertProjectRow, error) {
+	row := q.db.QueryRow(ctx, insertProject,
+		arg.ID,
+		arg.Name,
+		arg.TitularID,
+		arg.Now,
+	)
+	var i InsertProjectRow
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.IsDefault,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const insertProjectOwner = `-- name: InsertProjectOwner :exec
+INSERT INTO project_members (project_id, user_id, role, created_at)
+VALUES ($1, $2, 'owner', $3)
+`
+
+type InsertProjectOwnerParams struct {
+	ProjectID uuid.UUID
+	UserID    uuid.UUID
+	Now       time.Time
+}
+
+func (q *Queries) InsertProjectOwner(ctx context.Context, arg InsertProjectOwnerParams) error {
+	_, err := q.db.Exec(ctx, insertProjectOwner, arg.ProjectID, arg.UserID, arg.Now)
+	return err
+}
+
 const listMyProjects = `-- name: ListMyProjects :many
 SELECT p.id, p.name, p.is_default, m.role, p.created_at
   FROM project_members m
@@ -113,4 +180,17 @@ func (q *Queries) ListMyProjects(ctx context.Context, userID uuid.UUID) ([]ListM
 		return nil, err
 	}
 	return items, nil
+}
+
+const lockTitularProjects = `-- name: LockTitularProjects :exec
+SELECT pg_advisory_xact_lock(hashtextextended('stillon.projects:' || $1::uuid::text, 0))
+`
+
+// Criação de projeto pela API (tenancy.Service.Create). A trava, a contagem e
+// os dois INSERTs rodam numa só transação no escopo do titular: a trava
+// serializa as criações do mesmo titular, e a contagem já vê o que a anterior
+// gravou (READ COMMITTED lê de novo depois de esperar a trava).
+func (q *Queries) LockTitularProjects(ctx context.Context, titularID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, lockTitularProjects, titularID)
+	return err
 }

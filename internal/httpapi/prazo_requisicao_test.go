@@ -43,6 +43,10 @@ func (repoFalso) ListForUser(context.Context, uuid.UUID) ([]tenancy.ProjectSumma
 	return nil, errRepoFalso
 }
 
+func (repoFalso) Create(context.Context, tenancy.NewProject) (tenancy.ProjectSummary, error) {
+	return tenancy.ProjectSummary{}, errRepoFalso
+}
+
 // rotasSemBanco monta Routes sem Postgres: o /readyz só chama o ping
 // injetado, e o ping vê o contexto que a cadeia de middlewares lhe deu.
 func rotasSemBanco(t *testing.T, cfg *config.Config, ping func(context.Context) error) http.Handler {

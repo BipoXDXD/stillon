@@ -125,3 +125,47 @@ func (s *Store) ListForUser(ctx context.Context, userID uuid.UUID) ([]tenancy.Pr
 	}
 	return out, nil
 }
+
+// Create grava o projeto e o vínculo owner do titular numa só transação, no
+// escopo dele. A trava stillon.projects:<titular> vem antes da contagem: sem
+// ela, duas criações simultâneas contariam o mesmo total e passariam do teto.
+// O vínculo vai na mesma transação porque o banco não garante que todo
+// projeto tenha owner (Membership recusaria um projeto órfão).
+func (s *Store) Create(ctx context.Context, p tenancy.NewProject) (tenancy.ProjectSummary, error) {
+	var linha db.InsertProjectRow
+	err := storage.InUserTx(ctx, s.pool, p.TitularID, func(q *db.Queries) error {
+		if err := q.LockTitularProjects(ctx, p.TitularID); err != nil {
+			return fmt.Errorf("travar projetos do titular: %w", err)
+		}
+		operador, err := q.UserIsOperator(ctx, p.TitularID)
+		if err != nil {
+			return fmt.Errorf("ler se o titular é operador: %w", err)
+		}
+		total, err := q.CountTitularProjects(ctx, p.TitularID)
+		if err != nil {
+			return fmt.Errorf("contar projetos do titular: %w", err)
+		}
+		if total >= int64(tenancy.ProjectLimit(operador)) {
+			return tenancy.ErrProjectLimit
+		}
+		linha, err = q.InsertProject(ctx, db.InsertProjectParams{
+			ID: p.ID, Name: p.Name, TitularID: p.TitularID, Now: p.Now,
+		})
+		if err != nil {
+			return fmt.Errorf("criar projeto: %w", err)
+		}
+		if err := q.InsertProjectOwner(ctx, db.InsertProjectOwnerParams{
+			ProjectID: p.ID, UserID: p.TitularID, Now: p.Now,
+		}); err != nil {
+			return fmt.Errorf("vincular owner ao projeto: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return tenancy.ProjectSummary{}, err
+	}
+	return tenancy.ProjectSummary{
+		ID: linha.ID, Name: linha.Name, IsDefault: linha.IsDefault,
+		Role: tenancy.RoleOwner, CreatedAt: linha.CreatedAt,
+	}, nil
+}

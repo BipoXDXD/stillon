@@ -16,6 +16,14 @@ type ProjectSummary struct {
 	CreatedAt time.Time
 }
 
+// NewProject é o projeto a criar pela API: nunca o padrão.
+type NewProject struct {
+	ID        uuid.UUID
+	Name      string // já normalizado por ParseProjectName
+	TitularID uuid.UUID
+	Now       time.Time
+}
+
 // ProjectRepository é a porta de persistência dos projetos. O adaptador do
 // Postgres fica em tenancy/pgstore; o domínio não conhece o banco.
 type ProjectRepository interface {
@@ -27,4 +35,8 @@ type ProjectRepository interface {
 	EnsureDefault(ctx context.Context, userID uuid.UUID, now time.Time) (ProjectScope, error)
 	// ListForUser lista os projetos de que userID é membro, o padrão primeiro.
 	ListForUser(ctx context.Context, userID uuid.UUID) ([]ProjectSummary, error)
+	// Create grava o projeto (is_default = false) e o vínculo owner do titular
+	// na MESMA transação, sob a trava do titular; ErrProjectLimit quando
+	// ProjectLimit(is_operator) já foi atingido.
+	Create(ctx context.Context, p NewProject) (ProjectSummary, error)
 }
