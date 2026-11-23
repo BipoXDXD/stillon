@@ -138,6 +138,17 @@ func Routes(ctx context.Context, cfg *config.Config, d Deps) http.Handler {
 	ah := NewAccountHandlers(d.Accounts, proxiesDe(cfg), secureCookie, provas)
 	ph := NewProjectHandlers(d.Projects)
 	authn := middleware.Authn(cfg.JWTSecret, d.Clock)
+	// criacao é a trava "sem e-mail confirmado não cria" (403
+	// email_not_verified), em todo POST que cria targets, heartbeats (inclusive
+	// o clone), canais, páginas de status e projetos, nas duas variantes, e no
+	// enroll do 2FA: quem cadastrasse o e-mail da vítima e ligasse o 2FA a
+	// trancaria para fora, porque a redefinição de senha mantém o fator. Vem
+	// por último, colada no handler: depois da sessão viva e do projeto, então
+	// quem não é membro continua vendo o 404 do projeto, e não o 403. Ler,
+	// editar e apagar ficam liberados. TestContaNaoConfirmadaNaoCriaPorNenhumaRota
+	// enumera as rotas registradas: POST novo sem a trava reprova lá.
+	exigeEmail := middleware.ExigeEmailConfirmado(d.EmailConfirmado)
+	criacao := func(fn http.HandlerFunc) http.HandlerFunc { return exigeEmail(fn).ServeHTTP }
 
 	mux := http.NewServeMux()
 
@@ -187,7 +198,9 @@ func Routes(ctx context.Context, cfg *config.Config, d Deps) http.Handler {
 
 	// Todas exigem a família do token viva: um token de sessão encerrada não mexe
 	// no 2FA.
-	mux.Handle("POST /api/v1/auth/totp/enroll", autenticadaComLimite(h.TOTPEnroll))
+	// O enroll passa pela trava de e-mail (criacao): conta não confirmada não
+	// liga 2FA. O confirm e o rotate dependem de um enroll, e não precisam dela.
+	mux.Handle("POST /api/v1/auth/totp/enroll", autenticadaComLimite(criacao(h.TOTPEnroll)))
 	mux.Handle("POST /api/v1/auth/totp/confirm", autenticadaComLimite(h.TOTPConfirm))
 	// Desativar é a saída que a recusa do recadastro tirou. Exige senha E posse do
 	// fator, no handler — a sessão sozinha aqui seria o bypass de volta.
@@ -232,15 +245,6 @@ func Routes(ctx context.Context, cfg *config.Config, d Deps) http.Handler {
 	recursoLegado := func(fn http.HandlerFunc) http.Handler { return authn(porUsuario(viva(padrao(fn)))) }
 	doCaminho := middleware.ProjetoDoCaminho(d.Projects)
 	noProjeto := func(fn http.HandlerFunc) http.Handler { return authn(porUsuario(viva(doCaminho(fn)))) }
-	// criacao é a trava "sem e-mail confirmado não cria" (403
-	// email_not_verified), em todo POST que cria targets, heartbeats (inclusive
-	// o clone), canais, páginas de status e projetos, nas duas variantes. Vem
-	// por último, colada no handler: depois da sessão viva e do projeto, então
-	// quem não é membro continua vendo o 404 do projeto, e não o 403. Ler,
-	// editar e apagar ficam liberados. TestContaNaoConfirmadaNaoCriaPorNenhumaRota
-	// enumera as rotas registradas: POST novo sem a trava reprova lá.
-	exigeEmail := middleware.ExigeEmailConfirmado(d.EmailConfirmado)
-	criacao := func(fn http.HandlerFunc) http.HandlerFunc { return exigeEmail(fn).ServeHTTP }
 
 	mux.Handle("GET /api/v1/me", protegida(ah.Me))
 	mux.Handle("GET /api/v1/sessions", protegida(ah.ListSessions))

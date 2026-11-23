@@ -12,7 +12,9 @@ import (
 )
 
 // postsQueNaoCriam são os POST registrados que não criam recurso, e por isso
-// ficam fora da trava de e-mail confirmado. Todo outro POST cria e tem de dar
+// ficam fora da trava de e-mail confirmado. O enroll do 2FA não cria recurso,
+// mas fica de fora daqui de propósito: conta não confirmada não liga 2FA (ver
+// TestContaNaoConfirmadaNaoCadastra2FA). Todo outro POST cria e tem de dar
 // 403 email_not_verified a conta não confirmada: uma rota de criação nova,
 // esquecida sem a trava, reprova TestContaNaoConfirmadaNaoCriaPorNenhumaRota.
 // Rota nova entra aqui só de propósito, com o porquê.
@@ -22,8 +24,7 @@ var postsQueNaoCriam = map[string]string{
 	"POST /api/v1/auth/logout":                                                      "encerra a sessão",
 	"POST /api/v1/auth/totp/verify":                                                 "segundo passo do login, antes de haver sessão",
 	"POST /api/v1/auth/password":                                                    "troca de senha: proteger a conta não espera a confirmação",
-	"POST /api/v1/auth/totp/enroll":                                                 "2FA: proteger a conta não espera a confirmação",
-	"POST /api/v1/auth/totp/confirm":                                                "2FA: proteger a conta não espera a confirmação",
+	"POST /api/v1/auth/totp/confirm":                                                "2FA: só confirma o cadastro que o enroll (com a trava) começou",
 	"POST /api/v1/auth/totp/disable":                                                "2FA: mexe no fator da conta, não cria recurso",
 	"POST /api/v1/auth/totp/rotate":                                                 "2FA: troca o autenticador, não cria recurso",
 	"POST /api/v1/auth/totp/rotate/confirm":                                         "2FA: confirma a troca do autenticador",
@@ -92,9 +93,9 @@ func TestContaNaoConfirmadaNaoCriaPorNenhumaRota(t *testing.T) {
 		}
 	}
 	// Projetos, alvos, heartbeats, clones, canais e páginas de status, nas duas
-	// variantes (o projeto só tem uma): 11 rotas de criação hoje.
-	if testadas < 11 {
-		t.Errorf("só %d POST de criação testados, queria ao menos 11: a enumeração deixou rotas de fora", testadas)
+	// variantes (o projeto só tem uma), mais o enroll do 2FA: 12 rotas hoje.
+	if testadas < 12 {
+		t.Errorf("só %d POST travados testados, queria ao menos 12: a enumeração deixou rotas de fora", testadas)
 	}
 }
 
@@ -137,4 +138,29 @@ func TestContaConfirmadaCria(t *testing.T) {
 	if status != http.StatusOK || !strings.Contains(corpo, `"email_verified":true`) {
 		t.Errorf("/me de conta confirmada deu %d %s, queria email_verified true", status, corpo)
 	}
+}
+
+// Conta não confirmada não liga 2FA: quem cadastrasse o e-mail da vítima e
+// ligasse o 2FA a trancaria para fora, porque a redefinição de senha mantém o
+// fator. Confirmado o e-mail, o enroll volta a funcionar.
+func TestContaNaoConfirmadaNaoCadastra2FA(t *testing.T) {
+	a, token, _, _ := contaNaoConfirmada(t)
+	status, corpo := lerCru(t, a, http.MethodPost, "/api/v1/auth/totp/enroll", token, map[string]string{"password": testPass})
+	if status != http.StatusForbidden || !strings.Contains(corpo, `"email_not_verified"`) {
+		t.Fatalf("enroll de conta não confirmada deu %d %s, queria 403 email_not_verified", status, corpo)
+	}
+	var comSegredo bool
+	if err := a.pool.QueryRow(context.Background(),
+		`SELECT totp_secret_enc IS NOT NULL OR totp_pending_secret_enc IS NOT NULL FROM users WHERE id = $1`,
+		a.userID).Scan(&comSegredo); err != nil {
+		t.Fatal(err)
+	}
+	if comSegredo {
+		t.Error("o enroll recusado gravou um segredo de 2FA")
+	}
+	if _, err := a.pool.Exec(context.Background(),
+		`UPDATE users SET email_verified_at = now() WHERE id = $1`, a.userID); err != nil {
+		t.Fatal(err)
+	}
+	iniciarCadastroHTTP(t, a, token)
 }

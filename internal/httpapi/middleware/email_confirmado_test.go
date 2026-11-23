@@ -3,6 +3,7 @@ package middleware_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/BipoXDXD/stillon/internal/account"
 	"github.com/BipoXDXD/stillon/internal/auth"
 	"github.com/BipoXDXD/stillon/internal/clock"
 	"github.com/BipoXDXD/stillon/internal/httpapi/middleware"
@@ -107,5 +109,19 @@ func TestExigeEmailConfirmadoSemUsuarioDa401(t *testing.T) {
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/coisas", nil))
 	if rec.Code != http.StatusUnauthorized || final.chegou {
 		t.Fatalf("status %d, chegou = %v; queria 401 e false", rec.Code, final.chegou)
+	}
+}
+
+// Usuário apagado entre a conferência da sessão e a trava: 401, como o /me
+// (o painel volta ao login), e não 500.
+func TestExigeEmailConfirmadoUsuarioSumidoDa401(t *testing.T) {
+	usuario := uuid.New()
+	final := &proximoVisto{}
+	rec := pedirCriacao(t, &conferidorFalso{falha: fmt.Errorf("conferir: %w", account.ErrUserNotFound)}, final, usuario)
+	if rec.Code != http.StatusUnauthorized || !strings.Contains(rec.Body.String(), `"unauthorized"`) {
+		t.Fatalf("status %d, queria 401 unauthorized: %s", rec.Code, rec.Body.String())
+	}
+	if final.chegou {
+		t.Error("o próximo handler rodou para usuário que não existe mais")
 	}
 }
