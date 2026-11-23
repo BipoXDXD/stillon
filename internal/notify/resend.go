@@ -30,7 +30,14 @@ type Resend struct {
 // cliente guardado não bloqueia nada legítimo e evita um segundo cliente
 // sem guarda no processo.
 func NewResend(apiKey crypto.Secret, from string) *Resend {
-	return &Resend{client: safedial.NewClient(0), endpoint: resendEndpoint, apiKey: apiKey, from: from}
+	return NewResendComEndpoint(apiKey, from, resendEndpoint, safedial.NewClient(0))
+}
+
+// NewResendComEndpoint troca o endpoint e o cliente, para os testes que
+// rodam o processo inteiro com um Resend falso em httptest (o safedial
+// recusa o loopback). Produção usa NewResend.
+func NewResendComEndpoint(apiKey crypto.Secret, from, endpoint string, client *http.Client) *Resend {
+	return &Resend{client: client, endpoint: endpoint, apiKey: apiKey, from: from}
 }
 
 func (*Resend) Kind() Kind { return KindEmail }

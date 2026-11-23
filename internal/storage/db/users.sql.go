@@ -12,21 +12,6 @@ import (
 	"github.com/google/uuid"
 )
 
-const countUsers = `-- name: CountUsers :one
-
-SELECT count(*) FROM users
-`
-
-// Conta do usuário. users não tem RLS: o login a
-// consulta por e-mail antes de existir usuário na transação. Toda query daqui
-// que parte de um usuário recebe o id dele.
-func (q *Queries) CountUsers(ctx context.Context) (int64, error) {
-	row := q.db.QueryRow(ctx, countUsers)
-	var count int64
-	err := row.Scan(&count)
-	return count, err
-}
-
 const deleteRecoveryCodes = `-- name: DeleteRecoveryCodes :exec
 DELETE FROM totp_recovery_codes WHERE user_id = $1
 `
@@ -82,9 +67,13 @@ func (q *Queries) GetUserHash(ctx context.Context, id uuid.UUID) (string, error)
 }
 
 const getUserIDByEmail = `-- name: GetUserIDByEmail :one
+
 SELECT id FROM users WHERE email = $1
 `
 
+// Conta do usuário. users não tem RLS: o login a
+// consulta por e-mail antes de existir usuário na transação. Toda query daqui
+// que parte de um usuário recebe o id dele.
 func (q *Queries) GetUserIDByEmail(ctx context.Context, email string) (uuid.UUID, error) {
 	row := q.db.QueryRow(ctx, getUserIDByEmail, email)
 	var id uuid.UUID
@@ -168,17 +157,6 @@ func (q *Queries) InsertUser(ctx context.Context, arg InsertUserParams) error {
 		arg.PasswordHash,
 		arg.CreatedAt,
 	)
-	return err
-}
-
-const lockUserCreation = `-- name: LockUserCreation :exec
-SELECT pg_advisory_xact_lock(hashtextextended('stillon.user_create', 0))
-`
-
-// Serializa dois `stillon user create` simultâneos: sem ela, os dois contam
-// zero usuários e os dois criam.
-func (q *Queries) LockUserCreation(ctx context.Context) error {
-	_, err := q.db.Exec(ctx, lockUserCreation)
 	return err
 }
 

@@ -24,6 +24,23 @@ func TestLinksLevamOTokenNoFragmento(t *testing.T) {
 	}
 }
 
+// PUBLIC_BASE_URL pode vir com a barra no fim: o link não ganha "//".
+func TestLinksSemBarraDuplaComBaseTerminadaEmBarra(t *testing.T) {
+	for _, base := range []string{"https://stillon.tech/", "https://stillon.tech//"} {
+		l := Links{Base: base}
+		casos := map[string]string{
+			l.ConfirmarEmail("abc"): "https://stillon.tech/confirm-email#token=abc",
+			l.RedefinirSenha("abc"): "https://stillon.tech/reset-password#token=abc",
+			l.EsqueciASenha():       "https://stillon.tech/forgot-password",
+		}
+		for got, queria := range casos {
+			if got != queria {
+				t.Errorf("base %q: link = %q, queria %q", base, got, queria)
+			}
+		}
+	}
+}
+
 func TestTokenDeContaTem256Bits(t *testing.T) {
 	token, hash, err := novoTokenDeConta()
 	if err != nil {

@@ -2,9 +2,6 @@
 -- consulta por e-mail antes de existir usuário na transação. Toda query daqui
 -- que parte de um usuário recebe o id dele.
 
--- name: CountUsers :one
-SELECT count(*) FROM users;
-
 -- name: GetUserIDByEmail :one
 SELECT id FROM users WHERE email = $1;
 
@@ -52,11 +49,6 @@ UPDATE users SET password_hash = $2, failed_attempts = 0, locked_until = NULL,
        totp_secret_enc = CASE WHEN totp_confirmed_at IS NULL THEN NULL ELSE totp_secret_enc END,
        totp_pending_secret_enc = NULL, totp_pending_family_id = NULL
  WHERE id = $1;
-
--- Serializa dois `stillon user create` simultâneos: sem ela, os dois contam
--- zero usuários e os dois criam.
--- name: LockUserCreation :exec
-SELECT pg_advisory_xact_lock(hashtextextended('stillon.user_create', 0));
 
 -- O registro de auditoria com entidade. O insertAudit do auth (sem entidade)
 -- continua escrito à mão em internal/auth/store.go.
