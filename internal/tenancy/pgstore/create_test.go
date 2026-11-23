@@ -202,6 +202,55 @@ func TestCreateProjectLimitUnderRace(t *testing.T) {
 	}
 }
 
+// A corrida acima só pega a trava ausente de vez em quando. Aqui uma conexão
+// admin segura a advisory lock com a chave literal stillon.projects:<titular>:
+// o Create tem de esperar por ela e só terminar depois do unlock. Isso fixa
+// também a chave (outra chave não esperaria).
+func TestCreateProjectWaitsForTitularLock(t *testing.T) {
+	pool := testdb.New(t)
+	u := novoUsuario(t, pool)
+	testdb.ProjetoPadrao(t, u)
+	st := pgstore.New(pool)
+	ctx := context.Background()
+
+	conn, err := testdb.Admin(t).Acquire(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	chave := `hashtextextended('stillon.projects:' || $1::uuid::text, 0)`
+	var umaVez sync.Once
+	soltar := func() {
+		umaVez.Do(func() {
+			if _, err := conn.Exec(ctx, `SELECT pg_advisory_unlock(`+chave+`)`, u); err != nil {
+				t.Error(err)
+			}
+			conn.Release()
+		})
+	}
+	// Se o teste morrer com a trava segura, o Create esperaria para sempre.
+	t.Cleanup(soltar)
+	if _, err := conn.Exec(ctx, `SELECT pg_advisory_lock(`+chave+`)`, u); err != nil {
+		t.Fatal(err)
+	}
+
+	fim := make(chan error, 1)
+	go func() {
+		_, err := criarProjeto(t, st, u, "Espera a trava")
+		fim <- err
+	}()
+
+	select {
+	case err := <-fim:
+		t.Fatalf("Create terminou com a trava do titular segura (erro %v): não travou ou travou outra chave", err)
+	case <-time.After(300 * time.Millisecond):
+	}
+
+	soltar()
+	if err := <-fim; err != nil {
+		t.Errorf("Create depois do unlock = %v, queria nil", err)
+	}
+}
+
 func TestOperatorProjectLimitIsHundred(t *testing.T) {
 	pool := testdb.New(t)
 	u := novoUsuario(t, pool)

@@ -80,9 +80,13 @@ func TestStatusPageUserUniqueDownRefusesWithTwoPages(t *testing.T) {
 
 		err := storage.MigrateDownTo(ctx, dsn, versaoAntesPaginaPorProjeto)
 		var pgErr *pgconn.PgError
-		if !errors.As(err, &pgErr) || pgErr.Code != "23505" {
-			t.Fatalf("descer a %d com duas páginas do mesmo usuário: erro %v, queria 23505",
+		if !errors.As(err, &pgErr) || pgErr.Code != "23505" || pgErr.ConstraintName != "status_pages_user_id_key" {
+			t.Fatalf("descer a %d com duas páginas do mesmo usuário: erro %v, queria 23505 em status_pages_user_id_key",
 				versaoAntesPaginaPorProjeto, err)
+		}
+		// O down recusado não sai da 00046: a versão do goose continua nela.
+		if v := versaoDoBanco(t, admin); v != versaoPaginaPorProjeto {
+			t.Errorf("versão do goose depois do down recusado = %d, queria %d", v, versaoPaginaPorProjeto)
 		}
 		var n int
 		if err := admin.QueryRow(ctx, `SELECT count(*) FROM status_pages WHERE user_id = $1`, u).Scan(&n); err != nil {
