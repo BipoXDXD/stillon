@@ -124,7 +124,7 @@ func newAPICom(t *testing.T, ajustar func(*config.Config), ajustarDeps func(*htt
 
 	userID := uuid.New()
 	if _, err := pool.Exec(context.Background(),
-		`INSERT INTO users (id, email, password_hash) VALUES ($1, $2, $3)`,
+		`INSERT INTO users (id, email, password_hash, email_verified_at) VALUES ($1, $2, $3, now())`,
 		userID, testEmail, hashDaFixture()); err != nil {
 		t.Fatal(err)
 	}
@@ -155,18 +155,20 @@ func newAPICom(t *testing.T, ajustar func(*config.Config), ajustarDeps func(*htt
 	segundoFator := auth.NewTOTP(pool, box, "StillOn")
 
 	discord, email := &discordFalso{}, &carteiroFalso{}
+	contas := account.NewService(pool, segundoFator, clk, cfg.IPHashKey)
 	deps := httpapi.Deps{
 		Store: store, Sessions: mgr, TOTP: segundoFator,
-		Accounts:    account.NewService(pool, segundoFator, clk, cfg.IPHashKey),
-		Proofs:      auth.NewFamilyProofs(pool, clk),
-		Targets:     targets.NewService(pool, box, clk),
-		Incidents:   history.NewService(pool, clk),
-		Channels:    notify.NewChannelService(pool, box, clk, discord, email, cfg.PublicBaseURL),
-		StatusPages: statuspage.NewService(pool, clk),
-		Pings:       heartbeat.NewPingService(pool, clk),
-		Heartbeats:  heartbeat.NewService(pool, clk),
-		Projects:    tenancy.NewService(pgstore.New(pool), clk),
-		Clock:       clk, Ready: pool.Ping,
+		Accounts:        contas,
+		EmailConfirmado: contas,
+		Proofs:          auth.NewFamilyProofs(pool, clk),
+		Targets:         targets.NewService(pool, box, clk),
+		Incidents:       history.NewService(pool, clk),
+		Channels:        notify.NewChannelService(pool, box, clk, discord, email, cfg.PublicBaseURL),
+		StatusPages:     statuspage.NewService(pool, clk),
+		Pings:           heartbeat.NewPingService(pool, clk),
+		Heartbeats:      heartbeat.NewService(pool, clk),
+		Projects:        tenancy.NewService(pgstore.New(pool), clk),
+		Clock:           clk, Ready: pool.Ping,
 		LimitesIP: storage.NewOrcamentosPorIP(pool, clk),
 	}
 	if ajustarDeps != nil {

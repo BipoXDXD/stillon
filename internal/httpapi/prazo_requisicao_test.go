@@ -47,6 +47,14 @@ func (repoFalso) Create(context.Context, tenancy.NewProject) (tenancy.ProjectSum
 	return tenancy.ProjectSummary{}, errRepoFalso
 }
 
+// conferidorQueConfirma é a trava de e-mail dos testes sem banco: toda conta
+// conta como confirmada, para que a trava não esconda o que o teste olha.
+type conferidorQueConfirma struct{}
+
+func (conferidorQueConfirma) EmailConfirmado(context.Context, uuid.UUID) (bool, error) {
+	return true, nil
+}
+
 // rotasSemBanco monta Routes sem Postgres: o /readyz só chama o ping
 // injetado, e o ping vê o contexto que a cadeia de middlewares lhe deu.
 func rotasSemBanco(t *testing.T, cfg *config.Config, ping func(context.Context) error) http.Handler {
@@ -55,12 +63,13 @@ func rotasSemBanco(t *testing.T, cfg *config.Config, ping func(context.Context) 
 	t.Cleanup(cancel)
 	clk := clock.NewFake(time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC))
 	return httpapi.Routes(ctx, cfg, httpapi.Deps{
-		Channels:    notify.NewChannelService(nil, nil, clk, nil, nil, cfg.PublicBaseURL),
-		StatusPages: statuspage.NewService(nil, clk),
-		Projects:    tenancy.NewService(repoFalso{}, clk),
-		Clock:       clk,
-		Ready:       ping,
-		LimitesIP:   middleware.NovosOrcamentosEmMemoria(ctx, clk),
+		Channels:        notify.NewChannelService(nil, nil, clk, nil, nil, cfg.PublicBaseURL),
+		StatusPages:     statuspage.NewService(nil, clk),
+		Projects:        tenancy.NewService(repoFalso{}, clk),
+		EmailConfirmado: conferidorQueConfirma{},
+		Clock:           clk,
+		Ready:           ping,
+		LimitesIP:       middleware.NovosOrcamentosEmMemoria(ctx, clk),
 	})
 }
 
@@ -170,9 +179,32 @@ func TestRoutesRecusaDepsSemProjects(t *testing.T) {
 		}
 	}()
 	httpapi.Routes(ctx, cfg, httpapi.Deps{
+		Channels:        notify.NewChannelService(nil, nil, clk, nil, nil, cfg.PublicBaseURL),
+		StatusPages:     statuspage.NewService(nil, clk),
+		Projects:        nil,
+		EmailConfirmado: conferidorQueConfirma{},
+		Clock:           clk,
+		LimitesIP:       middleware.NovosOrcamentosEmMemoria(ctx, clk),
+	})
+}
+
+// Sem conferidor de e-mail, a trava de criação não teria como recusar a conta
+// não confirmada: a montagem recusa os Deps, em vez de deixar todo mundo criar.
+func TestRoutesRecusaDepsSemEmailConfirmado(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	clk := clock.NewFake(time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC))
+	cfg := configSemBanco(time.Second)
+	defer func() {
+		motivo, _ := recover().(string)
+		if !strings.Contains(motivo, "EmailConfirmado") || !strings.Contains(motivo, "account.Service") {
+			t.Fatalf("Routes sem EmailConfirmado: panic %q, queria um que mande passar o account.Service", motivo)
+		}
+	}()
+	httpapi.Routes(ctx, cfg, httpapi.Deps{
 		Channels:    notify.NewChannelService(nil, nil, clk, nil, nil, cfg.PublicBaseURL),
 		StatusPages: statuspage.NewService(nil, clk),
-		Projects:    nil,
+		Projects:    tenancy.NewService(repoFalso{}, clk),
 		Clock:       clk,
 		LimitesIP:   middleware.NovosOrcamentosEmMemoria(ctx, clk),
 	})
@@ -237,11 +269,12 @@ func TestVerifyAplicaOPrazoDaConfiguracao(t *testing.T) {
 		t.Fatal(err)
 	}
 	rotas := httpapi.Routes(ctx, cfg, httpapi.Deps{
-		Channels:    notify.NewChannelService(pool, box, clk, &discordFalso{}, &carteiroFalso{}, cfg.PublicBaseURL),
-		StatusPages: statuspage.NewService(nil, clk),
-		Projects:    tenancy.NewService(repoFalso{}, clk),
-		Clock:       clk,
-		LimitesIP:   middleware.NovosOrcamentosEmMemoria(ctx, clk),
+		Channels:        notify.NewChannelService(pool, box, clk, &discordFalso{}, &carteiroFalso{}, cfg.PublicBaseURL),
+		StatusPages:     statuspage.NewService(nil, clk),
+		Projects:        tenancy.NewService(repoFalso{}, clk),
+		EmailConfirmado: conferidorQueConfirma{},
+		Clock:           clk,
+		LimitesIP:       middleware.NovosOrcamentosEmMemoria(ctx, clk),
 	})
 	for _, rota := range []struct{ metodo, caminho string }{
 		{http.MethodGet, "/verify/" + strings.Repeat("A", 43)},

@@ -95,11 +95,12 @@ func novaBancada(t *testing.T, ajustar func(*config.Config)) *bancada {
 	t.Cleanup(cancel)
 	clk := clock.NewFake(time.Date(2026, 11, 8, 12, 0, 0, 0, time.UTC))
 	deps := httpapi.Deps{
-		Channels:    notify.NewChannelService(nil, nil, clk, nil, nil, cfg.PublicBaseURL),
-		StatusPages: statuspage.NewService(nil, clk),
-		Projects:    tenancy.NewService(repoFalso{}, clk),
-		Clock:       clk,
-		LimitesIP:   middleware.NovosOrcamentosEmMemoria(ctx, clk),
+		Channels:        notify.NewChannelService(nil, nil, clk, nil, nil, cfg.PublicBaseURL),
+		StatusPages:     statuspage.NewService(nil, clk),
+		Projects:        tenancy.NewService(repoFalso{}, clk),
+		EmailConfirmado: conferidorQueConfirma{},
+		Clock:           clk,
+		LimitesIP:       middleware.NovosOrcamentosEmMemoria(ctx, clk),
 	}
 	return &bancada{rotas: httpapi.Routes(ctx, cfg, deps), clk: clk}
 }

@@ -220,22 +220,25 @@ func run(ctx context.Context, cfg *config.Config) error {
 		segundoFator := auth.NewTOTP(pool, box, totpIssuer)
 		provas := auth.NewFamilyProofs(pool, clk)
 		reg.MustRegister(provas.Collector())
+		contas := account.NewService(pool, segundoFator, clk, cfg.IPHashKey)
 		deps := httpapi.Deps{
-			Store:       store,
-			Sessions:    auth.NewManager(store, clk, cfg.IPHashKey),
-			TOTP:        segundoFator,
-			Accounts:    account.NewService(pool, segundoFator, clk, cfg.IPHashKey),
-			Proofs:      provas,
-			Targets:     targets.NewService(pool, box, clk, targets.ComTetoDeRegrasPorHost(cfg.ContentRulesPerHost)),
-			Incidents:   history.NewService(pool, clk),
-			Channels:    notify.NewChannelService(pool, box, clk, notify.NewDiscord(), verificador(cfg), cfg.PublicBaseURL),
-			StatusPages: statuspage.NewService(pool, clk),
-			Pings:       heartbeat.NewPingService(pool, clk),
-			Heartbeats:  heartbeat.NewService(pool, clk),
-			Projects:    tenancy.NewService(pgstore.New(pool), clk),
-			Clock:       clk,
-			LimitesIP:   storage.NewOrcamentosPorIP(pool, clk),
-			Ready:       pool.Ping,
+			Store:    store,
+			Sessions: auth.NewManager(store, clk, cfg.IPHashKey),
+			TOTP:     segundoFator,
+			Accounts: contas,
+			// A trava de criação confere a conta do token a cada pedido.
+			EmailConfirmado: contas,
+			Proofs:          provas,
+			Targets:         targets.NewService(pool, box, clk, targets.ComTetoDeRegrasPorHost(cfg.ContentRulesPerHost)),
+			Incidents:       history.NewService(pool, clk),
+			Channels:        notify.NewChannelService(pool, box, clk, notify.NewDiscord(), verificador(cfg), cfg.PublicBaseURL),
+			StatusPages:     statuspage.NewService(pool, clk),
+			Pings:           heartbeat.NewPingService(pool, clk),
+			Heartbeats:      heartbeat.NewService(pool, clk),
+			Projects:        tenancy.NewService(pgstore.New(pool), clk),
+			Clock:           clk,
+			LimitesIP:       storage.NewOrcamentosPorIP(pool, clk),
+			Ready:           pool.Ping,
 		}
 		servir(gctx, g, httpapi.NewServer(cfg, httpapi.Routes(gctx, cfg, deps)), "api", cfg.ShutdownGrace)
 		// O aviso do bloqueio do segundo fator sai deste papel, que é quem
