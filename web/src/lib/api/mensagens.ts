@@ -26,7 +26,7 @@ const porCodigo: Record<string, string> = {
   channel_limit_reached: 'Limite de 10 canais atingido.',
   channel_not_pending: 'O canal não está mais aguardando verificação.',
   delivery_failed: 'Não conseguimos entregar a mensagem de teste. Confira o endereço.',
-  status_page_exists: 'Você já tem uma status page.',
+  status_page_exists: 'Este projeto já tem uma status page.',
   slug_taken: 'Este endereço já está em uso.',
   // O 409 do PATCH num heartbeat de agendamento que esta versão não lê.
   schedule_unsupported: 'Este agendamento não pode ser editado nesta versão.',

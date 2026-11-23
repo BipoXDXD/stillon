@@ -268,10 +268,9 @@ func ler(ctx context.Context, q *db.Queries, projectID uuid.UUID) (Page, error) 
 }
 
 // traduzir separa as violações de UNIQUE de status_pages. Página repetida é
-// ErrExists pelo UNIQUE de user_id OU pelo de project_id: com os dois violados
-// ao mesmo tempo, o Postgres pode reportar qualquer um, e o de projeto sozinho
-// é o caso de um segundo membro que ainda não tem página. O resto sai como
-// erro interno.
+// ErrExists pelo índice único de project_id. O UNIQUE de user_id saiu na
+// 00046, mas fica aqui até o PR 7: num rollback para antes dela, o Down o
+// devolve. O resto sai como erro interno.
 func traduzir(err error) error {
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
