@@ -18,9 +18,9 @@ func TestParseProjectName(t *testing.T) {
 		{"só espaços", "   ", "", ErrProjectNameRequired},
 		{"no limite de runas", strings.Repeat("ç", 100), strings.Repeat("ç", 100), nil},
 		{"uma runa além", strings.Repeat("ç", 101), "", ErrProjectNameTooLong},
-		{"espaço de largura zero", "a​b", "", ErrProjectNameInvalid},
+		{"espaço de largura zero", "a\u200bb", "", ErrProjectNameInvalid},
 		{"caractere de controle", "a\x00b", "", ErrProjectNameInvalid},
-		{"inversão bidi", "a‮b", "", ErrProjectNameInvalid},
+		{"inversão bidi", "a\u202eb", "", ErrProjectNameInvalid},
 	}
 	for _, c := range casos {
 		t.Run(c.nome, func(t *testing.T) {
