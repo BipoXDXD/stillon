@@ -1,4 +1,4 @@
-import { Navigate, useLocation } from 'react-router'
+import { Navigate, useLocation, useNavigation } from 'react-router'
 import { EstadoDaConsulta } from '@/components/EstadoDaConsulta'
 import { useProjetos } from '@/lib/api/consultas'
 import { escolherProjeto, lerProjetoLembrado } from './escolher-projeto'
@@ -6,8 +6,14 @@ import { NaoEncontrada } from './NaoEncontrada'
 
 // O mesmo caminho, a mesma search e o mesmo hash, dentro do projeto. replace:
 // o endereço antigo não fica no histórico, e o Voltar não cai nele de novo.
+// Com outra navegação em espera (a pessoa clicou numa rota sob demanda antes
+// de a lista chegar), não redireciona: o <Navigate> do react-router navega
+// num efeito, sem conferir a localização, e cancelaria a navegação dela.
+// Quando ela termina, esta rota já desmontou.
 function NoProjeto({ id }: { id: string }) {
   const { pathname, search, hash } = useLocation()
+  const emEspera = useNavigation().state !== 'idle'
+  if (emEspera) return null
   return <Navigate replace to={`/projects/${encodeURIComponent(id)}${pathname}${search}${hash}`} />
 }
 

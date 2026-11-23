@@ -26,6 +26,8 @@ function EscopoDaFixture({ encerrar, children }: { encerrar: () => void; childre
 // não escreve lá, e um teste do histórico passaria sem testar nada.
 // antes: prepara a API falsa antes da primeira consulta (ex.: um projeto que a
 // lista de projetos do boot já precisa trazer).
+// esperarARaiz: false devolve a fixture sem esperar a lista de projetos (para
+// o teste que segura o GET /projects).
 export async function renderizarPainel(
   rota: string,
   o: {
@@ -34,6 +36,7 @@ export async function renderizarPainel(
     prazoDoConfirmMs?: number
     navegador?: boolean
     antes?: (falsa: ApiFalsa) => void
+    esperarARaiz?: boolean
   } = {},
 ) {
   // Cada render é uma carga de página nova: a primeira tela não recebe foco.
@@ -97,11 +100,13 @@ export async function renderizarPainel(
     }
   })
   // A raiz e os links de antes dos projetos só redirecionam quando a lista de
-  // projetos chega. Uma carga de página termina no destino: sem isto, o
-  // router.navigate de um teste logo depois do render perderia para o
-  // redirecionamento atrasado da carga.
+  // projetos chega. Uma carga de página termina no destino, como a pessoa a
+  // vê antes de clicar: um router.navigate sem espera (sem estado loading)
+  // logo depois do render ainda perderia para o redirecionamento atrasado.
+  // A navegação em espera não perde: carga-de-rota.test.tsx prova, com esta
+  // espera desligada.
   // Sem rede, a consulta fica pausada: o teste decide quando ela volta.
-  if (sessao.estado() === 'autenticado' && onlineManager.isOnline()) {
+  if ((o.esperarARaiz ?? true) && sessao.estado() === 'autenticado' && onlineManager.isOnline()) {
     await act(async () => {
       await cliente
         .ensureQueryData({ queryKey: chaves.projetos, queryFn: ({ signal }) => api.projetos(signal) })

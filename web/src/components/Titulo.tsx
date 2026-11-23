@@ -28,9 +28,10 @@ export function Titulo({ children, aba, descritoPor }: { children: ReactNode; ab
   }, [aba])
   useEffect(() => {
     if (focar.current === null) {
-      // O foco estacionado no <main> (a reserva de quem sumiu com ele, quando
-      // a tela ainda não tinha <h1>, como na espera da lista de projetos)
-      // espera pelo título: ele o recebe mesmo na primeira tela.
+      // O foco no <main> só chega lá pela reserva (TITULO_DA_TELA): quem o
+      // tinha sumiu antes de a tela ter <h1> (o splash, enquanto a lista de
+      // projetos carrega). Ele espera por este título, mesmo na primeira
+      // tela; no <body>, a regra da primeira tela vale (titulo.test.tsx).
       focar.current = !primeiraTela || document.activeElement?.tagName === 'MAIN'
       primeiraTela = false
     }
