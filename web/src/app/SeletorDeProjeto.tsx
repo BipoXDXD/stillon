@@ -56,14 +56,16 @@ export function SeletorDeProjeto() {
     void navigate(caminhoNoProjeto(pathname, id))
   }
 
+  // Sem projeto escolhido, o nome acessível é o próprio texto visível
+  // (WCAG 2.5.3). Na carga, o botão tem nome desde o início, mesmo antes de o
+  // "Carregando…" aparecer.
   let texto = 'Escolher projeto'
-  let nome: string | undefined = 'Projeto: nenhum escolhido'
+  let nome: string | undefined
   if (carregando) {
     texto = mostrarCarregando ? 'Carregando…' : ''
-    nome = undefined
+    nome = 'Projeto: carregando'
   } else if (items === undefined) {
     texto = 'Projetos indisponíveis'
-    nome = undefined
   } else if (atual) {
     texto = atual.name
     nome = `Projeto: ${atual.name}`

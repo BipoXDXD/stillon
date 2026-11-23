@@ -109,13 +109,16 @@ describe('seletor de projeto', () => {
     await waitFor(() => expect(r.router.state.location.pathname).toBe(`/projects/${B}/`))
   })
 
-  // Sabotagem: mostrar o padrão quando o da URL não é da pessoa → o botão
-  // diz "Projeto: Padrão".
+  // O nome acessível é o próprio texto visível (WCAG 2.5.3), decisão do dono
+  // de 2026-11-23. Sabotagem: mostrar o padrão quando o da URL não é da
+  // pessoa → o botão diz "Projeto: Padrão"; voltar o aria-label "Projeto:
+  // nenhum escolhido" → o nome não é o texto visível.
   it('num projeto fora da lista, "Escolher projeto", sem item marcado', async () => {
     const r = await renderizarPainel(`/projects/${crypto.randomUUID()}/`, { antes: comDoisProjetos })
     await screen.findByRole('heading', { level: 1, name: 'Página não encontrada' })
-    const botao = await botaoDoSeletor('Projeto: nenhum escolhido')
+    const botao = await botaoDoSeletor('Escolher projeto')
     expect(botao).toHaveTextContent('Escolher projeto')
+    expect(botao).not.toHaveAttribute('aria-label')
     await r.usuario.click(botao)
     const menu = await screen.findByRole('menu')
     expect(within(menu).getAllByRole('menuitemradio').map((o) => o.getAttribute('aria-checked'))).toEqual([
@@ -126,7 +129,8 @@ describe('seletor de projeto', () => {
   })
 
   // Sabotagem: mostrar o texto na hora → aparece antes dos 300 ms; tirar o
-  // aria-disabled → o menu abre sem lista.
+  // aria-disabled → o menu abre sem lista; tirar o aria-label da carga → o
+  // botão fica sem nome nos primeiros 300 ms.
   it('com a lista carregando, "Carregando…" depois de 300 ms, e o menu não abre', async () => {
     let soltar = () => {}
     const presa = new Promise<void>((resolve) => {
@@ -139,6 +143,7 @@ describe('seletor de projeto', () => {
     // No cabeçalho: a tela da conta tem o seu próprio "Carregando…".
     const cabecalho = await screen.findByRole('banner')
     expect(within(cabecalho).queryByText('Carregando…')).not.toBeInTheDocument()
+    expect(within(cabecalho).getByRole('button', { name: 'Projeto: carregando' })).toHaveAttribute('aria-disabled', 'true')
     const texto = await within(cabecalho).findByText('Carregando…', {}, { timeout: 2000 })
     const botao = texto.closest('button')
     expect(botao).toHaveAttribute('aria-disabled', 'true')

@@ -96,7 +96,8 @@ describe('novo projeto', () => {
     await abrirPeloSeletor(r)
     await r.usuario.type(campo(), 'Clientes')
     await r.usuario.click(screen.getByRole('button', { name: 'Criar projeto' }))
-    expect(await screen.findByRole('alert')).toHaveTextContent(
+    const dialogo = screen.getByRole('dialog', { name: 'Novo projeto' })
+    expect(await within(dialogo).findByRole('alert')).toHaveTextContent(
       'O servidor não aceita esta operação. O painel pode estar desatualizado: recarregue a página.',
     )
     expect(campo()).toHaveValue('Clientes')
@@ -146,7 +147,7 @@ describe('sem projetos', () => {
     expect(
       screen.getByText('Alvos, canais e status pages ficam dentro de um projeto. Crie um para continuar.'),
     ).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Projeto: nenhum escolhido' })).toHaveTextContent('Escolher projeto')
+    expect(screen.getByRole('button', { name: 'Escolher projeto' })).not.toHaveAttribute('aria-label')
     await waitFor(() => expect(document.title).toBe('Nenhum projeto — StillOn'))
     await act(() => new Promise((resolve) => setTimeout(resolve, 100)))
     expect(pedidosDeRecurso(r.falsa)).toEqual([])
@@ -162,10 +163,29 @@ describe('sem projetos', () => {
     expect(await screen.findByRole('button', { name: 'Projeto: Clientes' })).toBeInTheDocument()
   })
 
+  // Ao entrar o projeto na lista, a raiz já troca o estado vazio pelo
+  // projeto novo (o <Navigate replace> do Redirecionar); a navegação do
+  // diálogo não pode empilhar o mesmo endereço, ou o Voltar fica parado
+  // nele. Sabotagem: navegar sem replace a partir do estado vazio → uma
+  // entrada a mais no histórico.
+  it('criar pelo estado vazio não empilha entrada no histórico', async () => {
+    const r = await renderizarPainel('/', { antes: semProjetos, navegador: true })
+    await r.usuario.click(await screen.findByRole('button', { name: 'Criar projeto' }))
+    const dialogo = await screen.findByRole('dialog', { name: 'Novo projeto' })
+    const entradasAntes = window.history.length
+    await r.usuario.type(campo(), 'Clientes')
+    await r.usuario.click(within(dialogo).getByRole('button', { name: 'Criar projeto' }))
+    await waitFor(() => expect(r.router.state.location.pathname).toBe('/projects/proj-1/'))
+    expect(await screen.findByRole('button', { name: 'Projeto: Clientes' })).toBeInTheDocument()
+    await act(() => new Promise((resolve) => setTimeout(resolve, 100)))
+    expect(window.history.length).toBe(entradasAntes)
+    expect(r.router.state.historyAction).toBe('REPLACE')
+  })
+
   it('o menu do seletor só tem "Novo projeto"', async () => {
     const r = await renderizarPainel('/', { antes: semProjetos })
     await screen.findByRole('heading', { level: 1, name: 'Nenhum projeto' })
-    await r.usuario.click(screen.getByRole('button', { name: 'Projeto: nenhum escolhido' }))
+    await r.usuario.click(screen.getByRole('button', { name: 'Escolher projeto' }))
     const menu = await screen.findByRole('menu')
     expect(within(menu).queryAllByRole('menuitemradio')).toEqual([])
     expect(within(menu).getByRole('menuitem', { name: 'Novo projeto' })).toBeInTheDocument()

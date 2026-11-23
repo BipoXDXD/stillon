@@ -20,8 +20,21 @@ type Envio = ReturnType<typeof useEnvioUnico>
 // O diálogo "Novo projeto". Enquanto o POST voa, nada fecha o diálogo (nem
 // Esc, nem Cancelar, nem o clique fora): sem isso existiria o "fechei, mas
 // foi criado". reserva: para onde o foco volta quando quem abriu sumiu (o
-// item do menu do seletor some com o menu).
-export function DialogoNovoProjeto({ aberto, aoFechar, reserva }: { aberto: boolean; aoFechar: () => void; reserva?: Reserva }) {
+// item do menu do seletor some com o menu). substituir: aberto pelo estado
+// vazio da raiz, o projeto novo entrar na lista já faz a raiz trocar de
+// endereço com replace; a navegação do diálogo também substitui, senão o
+// mesmo endereço entra duas vezes no histórico.
+export function DialogoNovoProjeto({
+  aberto,
+  aoFechar,
+  reserva,
+  substituir = false,
+}: {
+  aberto: boolean
+  aoFechar: () => void
+  reserva?: Reserva
+  substituir?: boolean
+}) {
   const envio = useEnvioUnico()
   return (
     <Dialogo
@@ -33,7 +46,7 @@ export function DialogoNovoProjeto({ aberto, aoFechar, reserva }: { aberto: bool
       travado={envio.enviando}
       reserva={reserva}
     >
-      <Formulario envio={envio} aoFechar={aoFechar} />
+      <Formulario envio={envio} aoFechar={aoFechar} substituir={substituir} />
     </Dialogo>
   )
 }
@@ -43,7 +56,7 @@ export function DialogoNovoProjeto({ aberto, aoFechar, reserva }: { aberto: bool
 // resto (o teto de projetos, o 405 do binário anterior, a rede), ao topo do
 // diálogo, que continua aberto e com o valor: com o diálogo aberto, um aviso
 // flutuante ficaria inerte para o leitor de tela.
-function Formulario({ envio, aoFechar }: { envio: Envio; aoFechar: () => void }) {
+function Formulario({ envio, aoFechar, substituir }: { envio: Envio; aoFechar: () => void; substituir: boolean }) {
   const api = useApi()
   const qc = useQueryClient()
   const navigate = useNavigate()
@@ -78,7 +91,7 @@ function Formulario({ envio, aoFechar }: { envio: Envio; aoFechar: () => void })
       )
       await qc.invalidateQueries({ queryKey: chaves.projetos })
       aoFechar()
-      await navigate(`/projects/${encodeURIComponent(novo.id)}/`)
+      await navigate(`/projects/${encodeURIComponent(novo.id)}/`, { replace: substituir })
       avisar('Projeto criado.')
     })
 

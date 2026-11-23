@@ -14,7 +14,7 @@ export function SemProjetos() {
       <Titulo aba="Nenhum projeto">Nenhum projeto</Titulo>
       <p className="max-w-prose text-suave">Alvos, canais e status pages ficam dentro de um projeto. Crie um para continuar.</p>
       <Botao onClick={() => setCriando(true)}>Criar projeto</Botao>
-      <DialogoNovoProjeto aberto={criando} aoFechar={() => setCriando(false)} />
+      <DialogoNovoProjeto aberto={criando} aoFechar={() => setCriando(false)} substituir />
     </div>
   )
 }
