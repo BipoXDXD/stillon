@@ -33,7 +33,10 @@ const ABAS: Aba[] = [
 
 const ESPERA_ANTES_DE_ANUNCIAR_MS = 1000
 
-function ehAAtual(aba: Aba, caminho: string): boolean {
+// As telas de recurso moram em /projects/{id}/…: a aba é a mesma em qualquer
+// projeto, e o prefixo sai antes de comparar.
+function ehAAtual(aba: Aba, caminhoCompleto: string): boolean {
+  const caminho = caminhoCompleto.replace(/^\/projects\/[^/]+(?=\/|$)/, '') || '/'
   return caminho === aba.para || aba.secoes.some((s) => caminho === s || caminho.startsWith(`${s}/`))
 }
 

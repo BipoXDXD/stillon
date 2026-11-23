@@ -1,6 +1,7 @@
 import { act, screen, waitFor, within } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 import { alvo } from '@/test/fixtures'
+import { PROJETO_PADRAO } from '@/test/api-falsa'
 import { renderizarPainel } from '@/test/renderizar'
 import { esperarNavegacao } from '@/test/esperar-navegacao'
 import { Alvo } from '@/lib/api/schemas'
@@ -114,8 +115,8 @@ describe('cadastrar', () => {
     const r = await renderizarPainel('/targets/new')
     await preencher(r.usuario)
     await r.usuario.click(screen.getByRole('button', { name: 'Cadastrar' }))
-    await act(() => esperarNavegacao(r.router, '/targets/alvo-1', signal))
-    expect(r.router.state.location.pathname).toBe('/targets/alvo-1')
+    await act(() => esperarNavegacao(r.router, `/projects/${PROJETO_PADRAO}/targets/alvo-1`, signal))
+    expect(r.router.state.location.pathname).toBe(`/projects/${PROJETO_PADRAO}/targets/alvo-1`)
     expect(await screen.findByRole('heading', { name: 'Site' })).toBeInTheDocument()
     expect(r.falsa.corpos('POST /targets')[0]).toMatchObject({
       name: 'Site',
@@ -396,7 +397,7 @@ describe('editar dois alvos seguidos', () => {
     await r.router.navigate('/targets/alvo-2/edit')
     await waitFor(() => expect(screen.getByLabelText('Nome')).toHaveValue('Site B'))
     await r.router.navigate(-1)
-    await waitFor(() => expect(r.router.state.location.pathname).toBe('/targets/alvo-1/edit'))
+    await waitFor(() => expect(r.router.state.location.pathname).toBe(`/projects/${PROJETO_PADRAO}/targets/alvo-1/edit`))
     await waitFor(() => expect(screen.getByLabelText('Nome')).toHaveValue('Site A'))
     expect(screen.getByLabelText('URL')).toHaveValue('https://a.exemplo.com/')
     await r.usuario.selectOptions(screen.getByLabelText('Intervalo'), '5 minutos')

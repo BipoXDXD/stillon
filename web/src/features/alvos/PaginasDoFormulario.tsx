@@ -2,6 +2,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { useNavigate, useParams } from 'react-router'
 import { useApi } from '@/app/contexto'
+import { useRotaDoProjeto } from '@/app/projeto'
 import { EstadoDaConsulta } from '@/components/EstadoDaConsulta'
 import { Titulo } from '@/components/Titulo'
 import { useAvisar } from '@/components/ui/avisos'
@@ -15,6 +16,7 @@ export function PaginaNovoAlvo() {
   const api = useApi()
   const qc = useQueryClient()
   const navegar = useNavigate()
+  const noProjeto = useRotaDoProjeto()
   const avisar = useAvisar()
   return (
     <>
@@ -26,7 +28,7 @@ export function PaginaNovoAlvo() {
           const a = await api.criarAlvo(paraCriacao(v))
           await qc.invalidateQueries({ queryKey: chaves.todosOsAlvos })
           avisar('Alvo cadastrado.')
-          navegar(`/targets/${a.id}`)
+          navegar(noProjeto(`/targets/${a.id}`))
         }}
       />
     </>
@@ -54,6 +56,7 @@ function EdicaoDoAlvo({ alvo }: { alvo: Alvo }) {
   const api = useApi()
   const qc = useQueryClient()
   const navegar = useNavigate()
+  const noProjeto = useRotaDoProjeto()
   const avisar = useAvisar()
   const [iniciais] = useState(() => valoresDe(alvo))
   // A resposta do aviso de headers apagados, aberto no meio do envio:
@@ -76,7 +79,7 @@ function EdicaoDoAlvo({ alvo }: { alvo: Alvo }) {
           if (Object.keys(mudancas).length) await api.alterarAlvo(alvo.id, mudancas)
           await qc.invalidateQueries({ queryKey: chaves.todosOsAlvos })
           avisar('Alvo salvo.')
-          navegar(`/targets/${alvo.id}`)
+          navegar(noProjeto(`/targets/${alvo.id}`))
         }}
       />
       <Confirmar

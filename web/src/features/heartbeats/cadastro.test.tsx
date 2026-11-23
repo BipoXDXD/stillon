@@ -1,7 +1,7 @@
 import { screen, waitFor, within } from '@testing-library/react'
 import { http, HttpResponse } from 'msw'
 import { describe, expect, it, vi } from 'vitest'
-import { PING_URL } from '@/test/api-falsa'
+import { PING_URL, PROJETO_PADRAO } from '@/test/api-falsa'
 import { heartbeat } from '@/test/fixtures'
 import { renderizarPainel } from '@/test/renderizar'
 import { ESPERA_DA_PREVIA_MS } from './PreviaDoCron'
@@ -129,7 +129,7 @@ describe('cadastro', () => {
     expect(screen.getByRole('dialog', { name: 'Guarde a URL de ping' })).toBeInTheDocument()
     await r.usuario.click(screen.getByRole('button', { name: 'Já guardei' }))
     await screen.findByRole('heading', { level: 1, name: 'Backup' })
-    expect(r.router.state.location.pathname).toBe('/heartbeats/hb-1')
+    expect(r.router.state.location.pathname).toBe(`/projects/${PROJETO_PADRAO}/heartbeats/hb-1`)
     expect(screen.queryByText(PING_URL)).not.toBeInTheDocument()
   })
 
@@ -141,10 +141,10 @@ describe('cadastro', () => {
     await dialogo()
     await r.router.navigate(-1)
     await waitFor(() => expect(screen.getAllByText('Guarde a URL antes de sair: ela não aparece de novo.').length).toBeGreaterThan(0))
-    expect(r.router.state.location.pathname).toBe('/heartbeats/new')
+    expect(r.router.state.location.pathname).toBe(`/projects/${PROJETO_PADRAO}/heartbeats/new`)
     expect(screen.getByRole('dialog', { name: 'Guarde a URL de ping' })).toBeInTheDocument()
     await r.usuario.click(screen.getByRole('button', { name: 'Já guardei' }))
-    await waitFor(() => expect(r.router.state.location.pathname).toBe('/heartbeats/hb-1'))
+    await waitFor(() => expect(r.router.state.location.pathname).toBe(`/projects/${PROJETO_PADRAO}/heartbeats/hb-1`))
   })
 
   it('o Voltar também espera a URL nova na rotação', async () => {
@@ -154,10 +154,10 @@ describe('cadastro', () => {
     await dialogo()
     await r.router.navigate(-1)
     await waitFor(() => expect(screen.getAllByText('Guarde a URL antes de sair: ela não aparece de novo.').length).toBeGreaterThan(0))
-    expect(r.router.state.location.pathname).toBe('/heartbeats/h1')
+    expect(r.router.state.location.pathname).toBe(`/projects/${PROJETO_PADRAO}/heartbeats/h1`)
     await r.usuario.click(screen.getByRole('button', { name: 'Já guardei' }))
     await r.router.navigate(-1)
-    await waitFor(() => expect(r.router.state.location.pathname).toBe('/'))
+    await waitFor(() => expect(r.router.state.location.pathname).toBe(`/projects/${PROJETO_PADRAO}/`))
   })
 
   it('a ajuda do cron diz como escrever o domingo', async () => {
@@ -472,7 +472,7 @@ describe('ações do detalhe', () => {
     const r = await detalheCom()
     await r.usuario.click(screen.getByRole('button', { name: 'Apagar' }))
     await r.usuario.click(await screen.findByRole('button', { name: 'Apagar heartbeat' }))
-    await waitFor(() => expect(r.router.state.location.pathname).toBe('/'))
+    await waitFor(() => expect(r.router.state.location.pathname).toBe(`/projects/${PROJETO_PADRAO}/`))
     await screen.findByRole('heading', { level: 2, name: 'Nenhum serviço vigiado ainda.' })
     expect(r.falsa.estado.heartbeats).toEqual([])
   })
@@ -504,7 +504,7 @@ describe('ações do detalhe', () => {
     r.falsa.estado.heartbeats = []
     await r.usuario.click(screen.getByRole('button', { name: 'Pausar' }))
     await r.usuario.click(await screen.findByRole('button', { name: 'Pausar heartbeat' }))
-    await waitFor(() => expect(r.router.state.location.pathname).toBe('/'))
+    await waitFor(() => expect(r.router.state.location.pathname).toBe(`/projects/${PROJETO_PADRAO}/`))
     expect((await screen.findAllByText('O heartbeat já tinha sido apagado, talvez em outra aba.')).length).toBeGreaterThan(0)
   })
 
@@ -512,6 +512,6 @@ describe('ações do detalhe', () => {
     const r = await detalheCom()
     r.falsa.estado.heartbeats = []
     await r.cliente.refetchQueries({ queryKey: ['heartbeats', 'h1'] })
-    await waitFor(() => expect(r.router.state.location.pathname).toBe('/'))
+    await waitFor(() => expect(r.router.state.location.pathname).toBe(`/projects/${PROJETO_PADRAO}/`))
   })
 })

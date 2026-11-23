@@ -1,3 +1,4 @@
+import { onlineManager } from '@tanstack/react-query'
 import { act, render } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { StrictMode, useEffect, type ReactNode } from 'react'
@@ -6,9 +7,10 @@ import { RouterProvider } from 'react-router/dom'
 import { criarClienteDeConsultas, ProvedorDoPainel } from '@/app/contexto'
 import { rotas } from '@/app/rotas'
 import { esquecerAPrimeiraTela } from '@/components/Titulo'
+import { chaves } from '@/lib/api/consultas'
 import { ProvedorDeAvisos } from '@/components/ui/avisos'
 import { ProvedorDeTema } from '@/lib/tema'
-import { EMAIL, SENHA } from './api-falsa'
+import { EMAIL, SENHA, type ApiFalsa } from './api-falsa'
 import { buscarDoTeste, novaSessao, usarApiFalsa } from './ambiente'
 
 function EscopoDaFixture({ encerrar, children }: { encerrar: () => void; children: ReactNode }) {
@@ -22,15 +24,24 @@ function EscopoDaFixture({ encerrar, children }: { encerrar: () => void; childre
 // prazoDoConfirmMs: o prazo dos confirms do 2FA (30 s no painel).
 // navegador: o router do painel de verdade, sobre window.history; o de memória
 // não escreve lá, e um teste do histórico passaria sem testar nada.
+// antes: prepara a API falsa antes da primeira consulta (ex.: um projeto que a
+// lista de projetos do boot já precisa trazer).
 export async function renderizarPainel(
   rota: string,
-  o: { logado?: boolean; atrasoDoBoot?: number; prazoDoConfirmMs?: number; navegador?: boolean } = {},
+  o: {
+    logado?: boolean
+    atrasoDoBoot?: number
+    prazoDoConfirmMs?: number
+    navegador?: boolean
+    antes?: (falsa: ApiFalsa) => void
+  } = {},
 ) {
   // Cada render é uma carga de página nova: a primeira tela não recebe foco.
   esquecerAPrimeiraTela()
   const falsa = usarApiFalsa()
   if (o.logado ?? true) falsa.logado()
   falsa.estado.atrasoRefresh = o.atrasoDoBoot ?? 0
+  o.antes?.(falsa)
   const vida = new AbortController()
   const { sessao, api } = novaSessao({
     prazoDoConfirmMs: o.prazoDoConfirmMs,
@@ -85,6 +96,19 @@ export async function renderizarPainel(
       })
     }
   })
+  // A raiz e os links de antes dos projetos só redirecionam quando a lista de
+  // projetos chega. Uma carga de página termina no destino: sem isto, o
+  // router.navigate de um teste logo depois do render perderia para o
+  // redirecionamento atrasado da carga.
+  // Sem rede, a consulta fica pausada: o teste decide quando ela volta.
+  if (sessao.estado() === 'autenticado' && onlineManager.isOnline()) {
+    await act(async () => {
+      await cliente
+        .ensureQueryData({ queryKey: chaves.projetos, queryFn: ({ signal }) => api.projetos(signal) })
+        .catch(() => undefined)
+    })
+    await act(() => new Promise<void>((resolve) => setTimeout(resolve, 0)))
+  }
   return { falsa, sessao, api, cliente, router, usuario, tela }
 }
 

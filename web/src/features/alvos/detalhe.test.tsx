@@ -3,7 +3,7 @@ import { http, HttpResponse } from 'msw'
 import { describe, expect, it } from 'vitest'
 import { Alvo, ItemDoResumo } from '@/lib/api/schemas'
 import { dataHora, horaMinuto } from '@/lib/format'
-import type { ErroForcado } from '@/test/api-falsa'
+import { PROJETO_PADRAO, type ErroForcado } from '@/test/api-falsa'
 import { alvo, incidente, itemDoResumo } from '@/test/fixtures'
 import { renderizarPainel } from '@/test/renderizar'
 import { servidor } from '@/test/setup'
@@ -151,7 +151,7 @@ describe('detalhe', () => {
     const dialogo = await screen.findByRole('alertdialog')
     expect(within(dialogo).getByText(/Não há como desfazer/)).toBeInTheDocument()
     await r.usuario.click(within(dialogo).getByRole('button', { name: 'Apagar alvo' }))
-    await waitFor(() => expect(r.router.state.location.pathname).toBe('/'))
+    await waitFor(() => expect(r.router.state.location.pathname).toBe(`/projects/${PROJETO_PADRAO}/`))
     expect(r.falsa.chamadas('DELETE /targets/:id')).toBe(1)
   })
 
@@ -174,7 +174,7 @@ describe('detalhe', () => {
     await fechado()
     await r.cliente.refetchQueries()
     expect(r.falsa.chamadas('DELETE /targets/:id')).toBe(0)
-    expect(r.router.state.location.pathname).toBe('/targets/alvo-1')
+    expect(r.router.state.location.pathname).toBe(`/projects/${PROJETO_PADRAO}/targets/alvo-1`)
   })
 
   // Revisão da Task 6: sem Trigger, o Radix devolvia o foco ao <body>.
@@ -216,7 +216,7 @@ describe('detalhe', () => {
     await r.usuario.keyboard('{Escape}')
     expect(screen.getByRole('alertdialog')).toBeInTheDocument()
     p.soltar()
-    await waitFor(() => expect(r.router.state.location.pathname).toBe('/'))
+    await waitFor(() => expect(r.router.state.location.pathname).toBe(`/projects/${PROJETO_PADRAO}/`))
   })
 
   it('apagar não refaz o GET do alvo apagado, e atualiza os incidentes', async () => {
@@ -228,7 +228,7 @@ describe('detalhe', () => {
     const getsDoAlvo = r.falsa.chamadas('GET /targets/:id')
     const getsDeIncidentes = r.falsa.chamadas('GET /incidents')
     await r.usuario.click(within(dialogo).getByRole('button', { name: 'Apagar alvo' }))
-    await waitFor(() => expect(r.router.state.location.pathname).toBe('/'))
+    await waitFor(() => expect(r.router.state.location.pathname).toBe(`/projects/${PROJETO_PADRAO}/`))
     await waitFor(() => expect(r.falsa.chamadas('GET /incidents')).toBeGreaterThan(getsDeIncidentes))
     expect(r.falsa.chamadas('GET /targets/:id')).toBe(getsDoAlvo)
     expect(r.cliente.getQueryCache().findAll({ queryKey: ['targets', 'alvo-1'] })).toHaveLength(0)
@@ -818,7 +818,7 @@ describe('detalhe', () => {
       r.falsa.estado.incidentes = []
       await r.usuario.click(botao)
       expect((await screen.findAllByText('O alvo já tinha sido apagado, talvez em outra aba.'))[0]).toBeInTheDocument()
-      await waitFor(() => expect(r.router.state.location.pathname).toBe('/'))
+      await waitFor(() => expect(r.router.state.location.pathname).toBe(`/projects/${PROJETO_PADRAO}/`))
     })
 
     // Dois cliques antes de o React redesenhar: a guarda não pode depender do
@@ -914,7 +914,7 @@ describe('o alvo sumiu', () => {
     r.falsa.estado.alvos = []
     await r.usuario.click(screen.getByRole('button', { name: 'Pausar' }))
     expect((await screen.findAllByText(TEXTO))[0]).toBeInTheDocument()
-    await waitFor(() => expect(r.router.state.location.pathname).toBe('/'))
+    await waitFor(() => expect(r.router.state.location.pathname).toBe(`/projects/${PROJETO_PADRAO}/`))
     expect(r.cliente.getQueryCache().findAll({ queryKey: ['targets', 'alvo-1'] })).toHaveLength(0)
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
@@ -925,7 +925,7 @@ describe('o alvo sumiu', () => {
     await r.usuario.click(screen.getByRole('button', { name: 'Apagar' }))
     await r.usuario.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Apagar alvo' }))
     expect((await screen.findAllByText(TEXTO))[0]).toBeInTheDocument()
-    await waitFor(() => expect(r.router.state.location.pathname).toBe('/'))
+    await waitFor(() => expect(r.router.state.location.pathname).toBe(`/projects/${PROJETO_PADRAO}/`))
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
 
@@ -934,14 +934,14 @@ describe('o alvo sumiu', () => {
     r.falsa.estado.alvos = []
     await r.cliente.refetchQueries({ queryKey: ['targets', 'alvo-1'], exact: true })
     expect((await screen.findAllByText(TEXTO))[0]).toBeInTheDocument()
-    await waitFor(() => expect(r.router.state.location.pathname).toBe('/'))
+    await waitFor(() => expect(r.router.state.location.pathname).toBe(`/projects/${PROJETO_PADRAO}/`))
     expect(screen.queryByText(/Não foi possível atualizar agora/)).not.toBeInTheDocument()
   })
 
   it('um endereço de alvo que nunca existiu mostra "Não encontrado", sem sair da tela', async () => {
     const r = await renderizarPainel('/targets/nao-existe')
     expect(await screen.findByRole('alert')).toHaveTextContent('Não encontrado.')
-    expect(r.router.state.location.pathname).toBe('/targets/nao-existe')
+    expect(r.router.state.location.pathname).toBe(`/projects/${PROJETO_PADRAO}/targets/nao-existe`)
   })
 })
 

@@ -2,11 +2,11 @@ import { onlineManager } from '@tanstack/react-query'
 import { act, screen, waitFor, within } from '@testing-library/react'
 import { http, HttpResponse } from 'msw'
 import { afterEach, describe, expect, it } from 'vitest'
-import { canal, heartbeat, incidente, itemDoResumo } from '@/test/fixtures'
+import { canal, heartbeat, incidente, itemDoResumo, projeto } from '@/test/fixtures'
 import { renderizarPainel } from '@/test/renderizar'
 import { servidor } from '@/test/setup'
 import { chaves } from '@/lib/api/consultas'
-import { Heartbeat, ItemDoResumo } from '@/lib/api/schemas'
+import { Heartbeat, ItemDoResumo, ListaDeProjetos } from '@/lib/api/schemas'
 import { anunciaveis, mapaDeEstados, transicoes } from './transicoes'
 
 const resumido = (p: Parameters<typeof itemDoResumo>[0]) => anunciaveis([ItemDoResumo.parse(itemDoResumo(p))], [])
@@ -488,6 +488,9 @@ describe('queda de rede', () => {
     const r = await renderizarPainel('/')
 
     act(() => {
+      // A lista de projetos também guardada: sem ela, a raiz ainda não sabe
+      // a que projeto ir.
+      r.cliente.setQueryData(chaves.projetos, ListaDeProjetos.parse({ items: [projeto()] }))
       r.cliente.setQueryData(chaves.resumo, { items: [ItemDoResumo.parse(itemDoResumo({ id: 'a', name: 'API' }))] })
     })
 

@@ -28,7 +28,10 @@ export function Titulo({ children, aba, descritoPor }: { children: ReactNode; ab
   }, [aba])
   useEffect(() => {
     if (focar.current === null) {
-      focar.current = !primeiraTela
+      // O foco estacionado no <main> (a reserva de quem sumiu com ele, quando
+      // a tela ainda não tinha <h1>, como na espera da lista de projetos)
+      // espera pelo título: ele o recebe mesmo na primeira tela.
+      focar.current = !primeiraTela || document.activeElement?.tagName === 'MAIN'
       primeiraTela = false
     }
     if (focar.current) ref.current?.focus()

@@ -1,7 +1,7 @@
 import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { http, HttpResponse } from 'msw'
 import { describe, expect, it } from 'vitest'
-import { PING_URL } from '@/test/api-falsa'
+import { PING_URL, PROJETO_PADRAO } from '@/test/api-falsa'
 import { eventoDeHeartbeat, heartbeat, incidente, incidenteDeHeartbeat } from '@/test/fixtures'
 import { renderizarPainel } from '@/test/renderizar'
 import { servidor } from '@/test/setup'
@@ -320,7 +320,7 @@ describe('incidentes do heartbeat', () => {
     const botao = await within(s).findByRole('button', { name: /^Reconhecer o incidente/ })
     r.falsa.estado.incidentesDeHeartbeat = []
     await r.usuario.click(botao)
-    await waitFor(() => expect(r.router.state.location.pathname).toBe('/'))
+    await waitFor(() => expect(r.router.state.location.pathname).toBe(`/projects/${PROJETO_PADRAO}/`))
   })
 })
 
@@ -592,7 +592,7 @@ describe('heartbeat de versão posterior', () => {
     const r = await detalheCom({ schedule: { kind: 'unknown' } })
     await r.usuario.click(screen.getByRole('button', { name: 'Apagar' }))
     await r.usuario.click(await screen.findByRole('button', { name: 'Apagar heartbeat' }))
-    await waitFor(() => expect(r.router.state.location.pathname).toBe('/'))
+    await waitFor(() => expect(r.router.state.location.pathname).toBe(`/projects/${PROJETO_PADRAO}/`))
     expect(r.falsa.chamadas('DELETE /heartbeats/:id')).toBe(1)
     expect(r.falsa.estado.heartbeats).toEqual([])
   })
@@ -625,9 +625,9 @@ describe('duplicar', () => {
     const d = await dialogoDaUrl()
     expect(within(d).getByText(`${PING_URL}-copia`)).toBeInTheDocument()
     expect(r.falsa.chamadas('POST /heartbeats/:id/clone')).toBe(1)
-    expect(r.router.state.location.pathname).toBe('/heartbeats/h1')
+    expect(r.router.state.location.pathname).toBe(`/projects/${PROJETO_PADRAO}/heartbeats/h1`)
     await r.usuario.click(within(d).getByRole('button', { name: 'Já guardei' }))
-    await waitFor(() => expect(r.router.state.location.pathname).toBe('/heartbeats/hb-2'))
+    await waitFor(() => expect(r.router.state.location.pathname).toBe(`/projects/${PROJETO_PADRAO}/heartbeats/hb-2`))
     expect(await screen.findByRole('heading', { level: 1, name: 'Backup (cópia)' })).toBeInTheDocument()
     expect((await screen.findAllByText('Cópia criada.')).length).toBeGreaterThan(0)
     expect(screen.queryByText(`${PING_URL}-copia`)).not.toBeInTheDocument()
@@ -640,7 +640,7 @@ describe('duplicar', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('Limite de 100 heartbeats atingido.')
     expect(screen.getByRole('button', { name: 'Duplicar' })).not.toHaveAttribute('aria-disabled')
     expect(screen.queryByRole('dialog', { name: 'Guarde a URL de ping' })).not.toBeInTheDocument()
-    expect(r.router.state.location.pathname).toBe('/heartbeats/h1')
+    expect(r.router.state.location.pathname).toBe(`/projects/${PROJETO_PADRAO}/heartbeats/h1`)
   })
 
   it('Duplicar manda um POST mesmo com dois cliques no mesmo render', async () => {
