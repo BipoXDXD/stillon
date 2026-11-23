@@ -41,7 +41,7 @@ var tabelasForaDoProjeto = map[string]string{
 }
 
 // emEscopoDeProjeto roda fn com app.user_id e app.project_id ligados por SQL
-// cru, como storage.InProjectTx fará depois de conferir a pertença: é a
+// cru, como storage.InProjectTx faz depois de conferir a pertença: é a
 // consulta que "esqueceu o filtro", e só a política a contém.
 func emEscopoDeProjeto(t *testing.T, pool *pgxpool.Pool, usuario, projeto uuid.UUID, fn func(pgx.Tx) error) error {
 	t.Helper()
@@ -64,6 +64,7 @@ func emEscopoDeProjeto(t *testing.T, pool *pgxpool.Pool, usuario, projeto uuid.U
 // recursosDeProjeto são as linhas que semearProjeto grava num projeto.
 type recursosDeProjeto struct {
 	alvo, heartbeat, canal uuid.UUID
+	incAlvo, incHeartbeat  uuid.UUID
 	pingHash               []byte
 }
 
@@ -74,8 +75,8 @@ func semearProjeto(t *testing.T, dono, projeto uuid.UUID, nome, slug string) rec
 	t.Helper()
 	ctx := context.Background()
 	admin := testdb.Admin(t)
-	r := recursosDeProjeto{alvo: novoID(), heartbeat: novoID(), canal: novoID(), pingHash: hashDe("ping-" + nome)}
-	incAlvo, incHeartbeat := novoID(), novoID()
+	r := recursosDeProjeto{alvo: novoID(), heartbeat: novoID(), canal: novoID(),
+		incAlvo: novoID(), incHeartbeat: novoID(), pingHash: hashDe("ping-" + nome)}
 	passos := []struct {
 		sql  string
 		args []any
@@ -91,7 +92,7 @@ func semearProjeto(t *testing.T, dono, projeto uuid.UUID, nome, slug string) rec
 		{`INSERT INTO check_rollup_1h (target_id, bucket, total, ok, p50, p95, p99, max)
 		  VALUES ($1, $2, 1, 1, 12, 12, 12, 12)`, []any{r.alvo, agora}},
 		{`INSERT INTO incidents (id, target_id, started_at, cause) VALUES ($1, $2, $3, 'timeout')`,
-			[]any{incAlvo, r.alvo, agora}},
+			[]any{r.incAlvo, r.alvo, agora}},
 		{`INSERT INTO target_tags (target_id, tag) VALUES ($1, 'prod')`, []any{r.alvo}},
 		{`INSERT INTO target_tls (target_id, not_after, observed_at) VALUES ($1, $2, $2)`, []any{r.alvo, agora}},
 		{`INSERT INTO heartbeats (id, user_id, project_id, name, ping_token_hash, period_sec, grace_sec,
@@ -102,11 +103,11 @@ func semearProjeto(t *testing.T, dono, projeto uuid.UUID, nome, slug string) rec
 			[]any{novoID(), r.heartbeat, agora}},
 		{`INSERT INTO heartbeat_tags (heartbeat_id, tag) VALUES ($1, 'cron')`, []any{r.heartbeat}},
 		{`INSERT INTO incidents (id, heartbeat_id, started_at, cause) VALUES ($1, $2, $3, 'heartbeat_late')`,
-			[]any{incHeartbeat, r.heartbeat, agora}},
+			[]any{r.incHeartbeat, r.heartbeat, agora}},
 		{`INSERT INTO notif_channels (id, user_id, project_id, kind, config_enc, verified_at, created_at)
 		  VALUES ($1, $2, $3, 'discord', '\x01', $4, $4)`, []any{r.canal, dono, projeto, agora}},
 		{`INSERT INTO notifications (id, incident_id, channel_id, event, next_attempt_at, created_at)
-		  VALUES ($1, $2, $3, 'opened', $4, $4)`, []any{novoID(), incAlvo, r.canal, agora}},
+		  VALUES ($1, $2, $3, 'opened', $4, $4)`, []any{novoID(), r.incAlvo, r.canal, agora}},
 		{`INSERT INTO channel_health (channel_id) VALUES ($1)`, []any{r.canal}},
 	}
 	if slug != "" {
@@ -205,6 +206,40 @@ func TestProjectScopeSeesNothingOfOtherProjectOfSameUser(t *testing.T) {
 	}
 }
 
+// A página de status fica no projeto dela: o member a vê no escopo do
+// projeto, e ela não aparece no outro projeto do titular, no escopo de
+// usuário nem no escopo público de outro slug. Os três últimos não ligam
+// app.project_id, então só status_pages_do_projeto os separa (a restritiva
+// vale true neles).
+func TestStatusPageStaysInsideItsProject(t *testing.T) {
+	pool := testdb.New(t)
+	u, a, b, _, _ := doisProjetos(t, pool)
+	m := novoUsuario(t, pool)
+	testdb.Membro(t, a, m, "member")
+	w := novoUsuario(t, pool)
+	c := testdb.ProjetoPadrao(t, w)
+	semearProjeto(t, w, c, "c", "pagina-c")
+
+	for _, tabela := range []string{"status_pages", "status_page_items"} {
+		for _, caso := range []struct {
+			nome string
+			n    int
+			quer int
+		}{
+			{"member no escopo de A", contarNoEscopoDoProjeto(t, pool, m, a, tabela), 1},
+			{"titular no escopo de B", contarNoEscopoDoProjeto(t, pool, u, b, tabela), 0},
+			{"outro titular no escopo do projeto dele", contarNoEscopoDoProjeto(t, pool, w, c, tabela), 1},
+			{"titular no escopo de usuário", contarComEscopo(t, pool, u, tabela), 0},
+			{"member no escopo de usuário", contarComEscopo(t, pool, m, tabela), 0},
+			{"escopo público de pagina-c", contarPublico(t, pool, "pagina-c", tabela), 1},
+		} {
+			if caso.n != caso.quer {
+				t.Errorf("%s, %s: %d linhas; queria %d", tabela, caso.nome, caso.n, caso.quer)
+			}
+		}
+	}
+}
+
 // Dentro do escopo de A, nada se grava em B: nem nomeando B, nem omitindo o
 // project_id (o gatilho não preenche no escopo de projeto), nem alterando uma
 // linha que já é de B.
@@ -250,13 +285,19 @@ func TestProjectScopeRefusesWritingIntoAnotherProject(t *testing.T) {
 }
 
 // Sem app.project_id a restritiva vale true: o sondador, o ping e a página
-// pública continuam vendo o que viam. O escopo de usuário já não vê recurso
-// nenhum depois da troca das políticas por pertença ao projeto, e por isso
-// não está aqui.
+// pública continuam vendo o que viam. O escopo de usuário, não: sem
+// app.project_id, nenhuma permissiva <t>_do_projeto concede, e ele não vê os
+// alvos de nenhum dos dois projetos de que é titular.
 func TestRestrictivePolicyLeavesServiceScopesUntouched(t *testing.T) {
 	pool := testdb.New(t)
-	_, _, _, ra, rb := doisProjetos(t, pool)
+	u, _, _, ra, rb := doisProjetos(t, pool)
 	ctx := context.Background()
+
+	t.Run("InUserTx", func(t *testing.T) {
+		if n := alvosNoEscopoDoUsuario(t, pool, u); n != 0 {
+			t.Errorf("InUserTx vê %d alvos; queria 0", n)
+		}
+	})
 
 	t.Run("InProberTx", func(t *testing.T) {
 		var reivindicados []uuid.UUID

@@ -12,15 +12,16 @@ import (
 	"github.com/google/uuid"
 )
 
-const countTargets = `-- name: CountTargets :one
-SELECT count(*) FROM targets WHERE user_id = $1
+const countTitularTargets = `-- name: CountTitularTargets :one
+SELECT cota_alvos_do_titular($1::uuid)::bigint
 `
 
-func (q *Queries) CountTargets(ctx context.Context, userID uuid.UUID) (int64, error) {
-	row := q.db.QueryRow(ctx, countTargets, userID)
-	var count int64
-	err := row.Scan(&count)
-	return count, err
+// Conta no escopo de quem chama: projeto que ele não enxerga é 42501.
+func (q *Queries) CountTitularTargets(ctx context.Context, projectID uuid.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, countTitularTargets, projectID)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
 }
 
 const deleteTarget = `-- name: DeleteTarget :execrows
@@ -220,10 +221,8 @@ type InsertTargetParams struct {
 // Toda query de posse daqui filtra por project_id E roda sob a RLS de
 // InProjectTx. As duas barreiras são independentes de propósito (spec §5.5):
 // um WHERE esquecido é pego pela política, e uma política desligada é pega
-// pelo WHERE. As exceções, por user_id, são as cotas no fim do arquivo
-// (LockUserTargets, CountTargets, ListContentRuleTargetURLs): até o PR 2b,
-// contam os alvos de quem chama dentro do projeto atual (a RLS restritiva
-// corta os de outros projetos); o teto por titular vem no PR 2b.
+// pelo WHERE. As exceções são as cotas no fim do arquivo, que contam pelo
+// titular do projeto, somando os projetos dele (funções cota_* da 00045).
 // user_id é quem criou o alvo; project_id, o projeto em que ele vive,
 // obrigatório: todo chamador grava no escopo de projeto.
 func (q *Queries) InsertTarget(ctx context.Context, arg InsertTargetParams) error {
@@ -344,37 +343,6 @@ func (q *Queries) ListChecks(ctx context.Context, arg ListChecksParams) ([]ListC
 			&i.StatusCode,
 			&i.ErrorKind,
 		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const listContentRuleTargetURLs = `-- name: ListContentRuleTargetURLs :many
-SELECT id, url FROM targets WHERE user_id = $1 AND content_mode IS NOT NULL
-`
-
-type ListContentRuleTargetURLsRow struct {
-	ID  uuid.UUID
-	URL string
-}
-
-// O teto de regras por host: as URLs dos alvos com regra de quem chama,
-// dentro do projeto atual até o PR 2b, lidas sob LockUserTargets. A chave do host sai em Go (IDNA).
-func (q *Queries) ListContentRuleTargetURLs(ctx context.Context, userID uuid.UUID) ([]ListContentRuleTargetURLsRow, error) {
-	rows, err := q.db.Query(ctx, listContentRuleTargetURLs, userID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []ListContentRuleTargetURLsRow
-	for rows.Next() {
-		var i ListContentRuleTargetURLsRow
-		if err := rows.Scan(&i.ID, &i.URL); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -772,16 +740,51 @@ func (q *Queries) ListTargets(ctx context.Context, arg ListTargetsParams) ([]Tar
 	return items, nil
 }
 
-const lockUserTargets = `-- name: LockUserTargets :exec
+const listTitularContentRuleTargetURLs = `-- name: ListTitularContentRuleTargetURLs :many
+SELECT r.id::uuid AS id, r.url::text AS url
+  FROM cota_urls_com_regra_do_titular($1::uuid) AS r
+`
+
+type ListTitularContentRuleTargetURLsRow struct {
+	ID  uuid.UUID
+	URL string
+}
+
+// O teto de regras por host: as URLs dos alvos com regra do titular, em
+// todos os projetos dele, lidas sob LockTitularTargets. A chave do host sai
+// em Go (IDNA). Os casts e os AS são para o sqlc, que não enxerga as colunas
+// do RETURNS TABLE de uma função plpgsql.
+func (q *Queries) ListTitularContentRuleTargetURLs(ctx context.Context, projectID uuid.UUID) ([]ListTitularContentRuleTargetURLsRow, error) {
+	rows, err := q.db.Query(ctx, listTitularContentRuleTargetURLs, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListTitularContentRuleTargetURLsRow
+	for rows.Next() {
+		var i ListTitularContentRuleTargetURLsRow
+		if err := rows.Scan(&i.ID, &i.URL); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const lockTitularTargets = `-- name: LockTitularTargets :exec
 SELECT pg_advisory_xact_lock(hashtextextended('stillon.targets:' || $1::uuid::text, 0))
 `
 
-// O teto de alvos: contar e inserir sob esta trava. Até o PR 2b ele vale
-// para o usuário dentro do projeto atual (CountTargets roda sob a RLS
-// restritiva de InProjectTx); o teto por titular vem no PR 2b. Sem a trava,
-// dois POST simultâneos passariam os dois pela contagem.
-func (q *Queries) LockUserTargets(ctx context.Context, userID uuid.UUID) error {
-	_, err := q.db.Exec(ctx, lockUserTargets, userID)
+// O teto de alvos é do titular, somando os projetos dele: contar e inserir
+// sob esta trava. Sem ela, dois POST simultâneos (de membros diferentes, ou
+// em projetos diferentes do mesmo titular) passariam os dois pela contagem.
+// Mesma chave textual de LockUserTargets: o binário anterior (titular = único
+// membro) trava igual.
+func (q *Queries) LockTitularTargets(ctx context.Context, titularID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, lockTitularTargets, titularID)
 	return err
 }
 

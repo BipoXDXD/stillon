@@ -10,8 +10,10 @@ import (
 
 	"github.com/BipoXDXD/stillon/internal/account"
 	"github.com/BipoXDXD/stillon/internal/clock"
+	"github.com/BipoXDXD/stillon/internal/storage"
 	"github.com/BipoXDXD/stillon/internal/storage/db"
 	"github.com/BipoXDXD/stillon/internal/storage/testdb"
+	"github.com/BipoXDXD/stillon/internal/tenancy"
 )
 
 // O usuário criado pelo CLI nasce operador, com o e-mail verificado e com o
@@ -87,9 +89,10 @@ func TestCreateUserCreatesDefaultProjectAndMarksOperator(t *testing.T) {
 	}
 }
 
-// Um alvo gravado sem project_id pelo usuário recém-criado cai no Projeto
-// padrão dele (o gatilho da 00040 precisa que o padrão exista).
-func TestCreatedUserTargetLandsInDefaultProject(t *testing.T) {
+// O usuário recém-criado grava no Projeto padrão pelo escopo de projeto: o
+// vínculo de owner que a criação gravou basta para a conferência de pertença
+// de InProjectTx, sem semente por fora da RLS.
+func TestCreatedUserWritesTargetInDefaultProject(t *testing.T) {
 	svc, pool := novo(t)
 	ctx := context.Background()
 	id, err := svc.CreateUser(ctx, "dono@exemplo.com", senha)
@@ -103,31 +106,26 @@ func TestCreatedUserTargetLandsInDefaultProject(t *testing.T) {
 		t.Fatalf("ler o Projeto padrão: %v", err)
 	}
 
-	// O InsertTarget exige project_id; o INSERT cru, no escopo só do usuário
-	// (o do InUserTx), é o caminho antigo que o gatilho ainda cobre.
 	alvo := uuid.New()
 	agora := time.Date(2026, 11, 22, 9, 30, 0, 0, time.UTC)
-	tx, err := pool.Begin(ctx)
+	err = storage.InProjectTx(ctx, pool, id, padrao, func(q *db.Queries, _ tenancy.ProjectScope) error {
+		if err := q.InsertTarget(ctx, db.InsertTargetParams{
+			ID: alvo, UserID: id, ProjectID: padrao, Name: "alvo", URL: "https://exemplo.com", Method: "GET",
+			IntervalSec: 300, TimeoutMS: 1000, ExpectedStatus: 200, Enabled: true, NextRunAt: agora, CreatedAt: agora,
+		}); err != nil {
+			return err
+		}
+		got, err := q.GetTarget(ctx, db.GetTargetParams{ProjectID: padrao, ID: alvo})
+		if err != nil {
+			return err
+		}
+		if got.ProjectID == nil || *got.ProjectID != padrao {
+			t.Errorf("project_id do alvo = %v, queria o Projeto padrão %v", got.ProjectID, padrao)
+		}
+		return nil
+	})
 	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-	if _, err := tx.Exec(ctx, `SELECT set_config('app.user_id', $1, true)`, id.String()); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := tx.Exec(ctx, `
-		INSERT INTO targets (id, user_id, name, url, method, interval_sec, timeout_ms,
-		                     expected_status, enabled, next_run_at, created_at)
-		VALUES ($1, $2, 'alvo', 'https://exemplo.com', 'GET', 300, 1000, 200, true, $3, $3)`,
-		alvo, id, agora); err != nil {
-		t.Fatalf("gravar o alvo sem project_id: %v", err)
-	}
-	got, err := db.New(tx).GetTarget(ctx, db.GetTargetParams{ProjectID: padrao, ID: alvo})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.ProjectID == nil || *got.ProjectID != padrao {
-		t.Errorf("project_id do alvo = %v, queria o Projeto padrão %v", got.ProjectID, padrao)
+		t.Fatalf("gravar e ler o alvo no Projeto padrão: %v", err)
 	}
 }
 

@@ -21,9 +21,8 @@ import (
 )
 
 const (
-	// MaxPerUser é o teto de heartbeats, o mesmo de alvos. Até o PR 2b ele
-	// vale para o usuário dentro do projeto atual (a contagem roda sob
-	// InProjectTx); o teto por titular vem no PR 2b.
+	// MaxPerUser é o teto de heartbeats, o mesmo de alvos: por titular,
+	// somando os projetos dele (o nome fica até o PR 5).
 	MaxPerUser int64 = 100
 
 	// PreviewRuns é quantos disparos a prévia do cron mostra.
@@ -119,9 +118,8 @@ type Incident struct {
 // confere a pertença e liga a RLS para aquele projeto: as queries filtram por
 // project_id E a política filtra de novo. A permissão vale pelo papel lido NA
 // transação (o escopo que InProjectTx entrega), nunca pelo que quem chamou
-// trouxe. As cotas (trava e contagem) continuam por user_id e, sob
-// InProjectTx, valem para o usuário dentro do projeto atual; o teto por
-// titular vem no PR 2b.
+// trouxe. As cotas (trava e contagem) são do titular do projeto, somando os
+// projetos dele (funções cota_* da 00045).
 type Service struct {
 	pool *pgxpool.Pool
 	clk  clock.Clock
@@ -229,15 +227,20 @@ func (s *Service) Create(ctx context.Context, scope tenancy.ProjectScope, in Inp
 	return out, token, nil
 }
 
-// inserir grava o heartbeat dentro do limite do usuário do escopo, contado só
-// no projeto atual até o PR 2b (teto por titular). A
-// trava vem antes da contagem: sem ela, dois pedidos simultâneos contariam 99
-// e gravariam 101.
+// inserir grava o heartbeat dentro do limite do titular do projeto, somando
+// os projetos dele. A trava vem antes da contagem: sem ela, dois pedidos
+// simultâneos (de membros diferentes, ou em projetos diferentes do mesmo
+// titular) contariam 99 e gravariam 101. A chave é a do binário anterior, que
+// travava pelo usuário (o titular, único membro).
 func (s *Service) inserir(ctx context.Context, q *db.Queries, sc tenancy.ProjectScope, params db.InsertHeartbeatParams, tags []string) (Heartbeat, error) {
-	if err := q.LockUserHeartbeats(ctx, sc.UserID); err != nil {
-		return Heartbeat{}, fmt.Errorf("travar heartbeats do usuário: %w", err)
+	titular, err := q.ProjectTitular(ctx, sc.ProjectID)
+	if err != nil {
+		return Heartbeat{}, fmt.Errorf("ler o titular do projeto: %w", err)
 	}
-	n, err := q.CountHeartbeats(ctx, sc.UserID)
+	if err := q.LockTitularHeartbeats(ctx, titular); err != nil {
+		return Heartbeat{}, fmt.Errorf("travar heartbeats do titular: %w", err)
+	}
+	n, err := q.CountTitularHeartbeats(ctx, sc.ProjectID)
 	if err != nil {
 		return Heartbeat{}, fmt.Errorf("contar heartbeats: %w", err)
 	}

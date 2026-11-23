@@ -14,9 +14,11 @@ SELECT set_config('app.user_id', sqlc.arg(user_id)::uuid::text, true);
 -- name: ScopeToSessionHash :exec
 SELECT set_config('app.session_token_hash', encode(sqlc.arg(token_hash)::bytea, 'hex'), true);
 
--- O ÚNICO lugar que liga app.project_id é storage.InProjectTx, e só depois de
--- ActiveMembershipRole conferir a pertença na mesma transação. As políticas
--- restritivas da 00042 passam a enxergar só as linhas deste projeto.
+-- app.project_id CONCEDE acesso: as permissivas <t>_do_projeto (00044) e as
+-- de posse indireta liberam as linhas deste projeto, e as restritivas da
+-- 00042 barram as dos outros. Por isso o ÚNICO lugar que o liga é
+-- storage.InProjectTx, e só depois de ActiveMembershipRole conferir a
+-- pertença na mesma transação.
 -- name: ScopeToProject :exec
 SELECT set_config('app.project_id', sqlc.arg(project_id)::uuid::text, true);
 

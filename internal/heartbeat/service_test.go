@@ -60,15 +60,7 @@ func TestHeartbeatLimitHoldsUnderConcurrency(t *testing.T) {
 	}
 	wg.Wait()
 
-	var n int64
-	err = testdb.NoProjetoPadrao(t, a.pool, a.dono, func(q *db.Queries, _ uuid.UUID) error {
-		var err error
-		n, err = q.CountHeartbeats(ctx, a.dono)
-		return err
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	n := a.contarHeartbeats(t, a.dono)
 	if n != heartbeat.MaxPerUser {
 		t.Errorf("%d heartbeats depois de dois POST simultâneos (erros: %v), queria %d", n, erros, heartbeat.MaxPerUser)
 	}
@@ -120,15 +112,7 @@ func TestCloneLimitHoldsUnderConcurrency(t *testing.T) {
 	}
 	wg.Wait()
 
-	var n int64
-	err = testdb.NoProjetoPadrao(t, a.pool, a.dono, func(q *db.Queries, _ uuid.UUID) error {
-		var err error
-		n, err = q.CountHeartbeats(ctx, a.dono)
-		return err
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	n := a.contarHeartbeats(t, a.dono)
 	if n != 100 {
 		t.Errorf("%d heartbeats depois de duas cópias simultâneas (erros: %v), queria 100", n, erros)
 	}
@@ -159,17 +143,7 @@ func TestCreateLeavesNothingWhenTheResponseFails(t *testing.T) {
 	if err == nil || token != "" {
 		t.Fatalf("Create = %q, %v; queria erro sem token", token, err)
 	}
-	var n int64
-	fundo := context.Background()
-	err = testdb.NoProjetoPadrao(t, a.pool, a.dono, func(q *db.Queries, _ uuid.UUID) error {
-		var err error
-		n, err = q.CountHeartbeats(fundo, a.dono)
-		return err
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if n != 0 {
+	if n := a.contarHeartbeats(t, a.dono); n != 0 {
 		t.Errorf("%d heartbeats gravados sem que o token saísse", n)
 	}
 }

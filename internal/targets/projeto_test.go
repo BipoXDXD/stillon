@@ -90,15 +90,14 @@ func TestViewerReadsButCannotChangeTargets(t *testing.T) {
 	}
 	comoViewer := escopoNo(projeto, v, tenancy.RoleViewer)
 
-	// O viewer lê (PermRead), mas a política permissiva ainda é por dono:
-	// hoje ele não vê o alvo que o titular criou.
-	// TODO(PR 2b): passa a ver os alvos do titular quando as permissivas forem por projeto
+	// O viewer lê (PermRead) o alvo que o titular criou: a política é por
+	// projeto.
 	vistos, err := a.svc.List(ctx, comoViewer, nil, 10)
 	if err != nil {
 		t.Errorf("List como viewer: %v, queria sem erro", err)
 	}
-	if len(vistos) != 0 {
-		t.Errorf("List como viewer trouxe %d alvos, queria 0 enquanto a permissiva for por dono", len(vistos))
+	if len(vistos) != 1 || vistos[0].ID != alvo.ID {
+		t.Errorf("List como viewer trouxe %+v, queria só o alvo %s do titular", vistos, alvo.ID)
 	}
 	if _, err := a.svc.Create(ctx, comoViewer, entrada()); !errors.Is(err, tenancy.ErrForbidden) {
 		t.Errorf("Create como viewer: erro %v, queria ErrForbidden", err)
@@ -116,6 +115,29 @@ func TestViewerReadsButCannotChangeTargets(t *testing.T) {
 	}
 	if nome, _, _ := a.alvoNoBanco(t, alvo.ID); nome != entrada().Name {
 		t.Errorf("o alvo ficou com nome %q, queria %q", nome, entrada().Name)
+	}
+}
+
+// O member edita o alvo que o titular criou: a política é por projeto, não
+// por quem criou a linha.
+func TestMemberUpdatesTitularTarget(t *testing.T) {
+	a := novoAmbiente(t)
+	ctx := context.Background()
+	titular, m := a.usuario(t), a.usuario(t)
+	projeto := testdb.ProjetoPadrao(t, titular)
+	testdb.Membro(t, projeto, m, "member")
+	alvo, err := a.svc.Create(ctx, escopoNo(projeto, titular, tenancy.RoleOwner), entrada())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	novo := "renomeado pelo member"
+	if _, err := a.svc.Update(ctx, escopoNo(projeto, m, tenancy.RoleMember), alvo.ID, targets.Patch{Name: &novo}); err != nil {
+		t.Fatalf("Update como member: %v, queria sem erro", err)
+	}
+
+	if nome, _, criador := a.alvoNoBanco(t, alvo.ID); nome != novo || criador != titular {
+		t.Errorf("o alvo ficou com nome %q e criador %s, queria %q e o titular %s", nome, criador, novo, titular)
 	}
 }
 

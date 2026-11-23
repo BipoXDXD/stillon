@@ -1262,10 +1262,10 @@ func TestAnotherUsersPingNowIsIndistinguishableFromMissing(t *testing.T) {
 // intruso sobre a tarefa do dono.
 func conferirDuplicarELimparSemEfeito(t *testing.T, a *api, id, intruso uuid.UUID) {
 	t.Helper()
-	if n := contarHeartbeatsDe(t, a, intruso); n != 0 {
+	if n := contarHeartbeatsDe(t, intruso); n != 0 {
 		t.Errorf("o intruso ficou com %d heartbeats, queria 0", n)
 	}
-	if n := contarHeartbeatsDe(t, a, a.userID); n != 1 {
+	if n := contarHeartbeatsDe(t, a.userID); n != 1 {
 		t.Errorf("o dono ficou com %d heartbeats, queria 1", n)
 	}
 	var tipos []string

@@ -2,14 +2,12 @@ package storage_test
 
 import (
 	"context"
-	"errors"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/BipoXDXD/stillon/internal/storage/db"
@@ -17,9 +15,11 @@ import (
 )
 
 // O INSERT de cada recurso como o binário anterior à 00040 o faz: sem
-// project_id. Durante o release os dois binários gravam juntos, e o gatilho
-// da 00040 é o que põe a linha no Projeto padrão. Não atualize junto com as
-// queries: a imagem anterior não muda.
+// project_id, no escopo de usuário. Até a troca das políticas por pertença ao
+// projeto, o gatilho da 00040 punha a linha no Projeto padrão; depois dela, o
+// escopo de usuário não grava recurso (o binário em sobreposição no release
+// já grava por InProjectTx). Não atualize junto com as queries: a imagem
+// anterior não muda.
 const (
 	antigaInsertTarget = `INSERT INTO targets (id, user_id, name, url, method, interval_sec, timeout_ms,
                      expected_status, headers_enc, degraded_threshold_ms, enabled,
@@ -81,18 +81,6 @@ func inserirComSQLAntigo(t *testing.T, pool *pgxpool.Pool, ins insercaoAntiga, d
 	return id
 }
 
-// projectIDDe relê o project_id por fora da RLS.
-func projectIDDe(t *testing.T, tabela string, id uuid.UUID) *uuid.UUID {
-	t.Helper()
-	var got *uuid.UUID
-	// tabela é sempre um literal do próprio teste.
-	if err := testdb.Admin(t).QueryRow(context.Background(),
-		`SELECT project_id FROM `+tabela+` WHERE id = $1`, id).Scan(&got); err != nil {
-		t.Fatalf("%s: reler project_id: %v", tabela, err)
-	}
-	return got
-}
-
 // outroProjeto cria, por fora da RLS, um segundo projeto (não padrão) do titular.
 func outroProjeto(t *testing.T, titular uuid.UUID) uuid.UUID {
 	t.Helper()
@@ -105,43 +93,48 @@ func outroProjeto(t *testing.T, titular uuid.UUID) uuid.UUID {
 	return id
 }
 
-// O binário anterior grava sem project_id durante o release; a linha tem de
-// cair no Projeto padrão do dono, ou some quando a política por projeto ligar.
-func TestOlderBinaryInsertsLandInDefaultProject(t *testing.T) {
+// O INSERT do binário anterior (escopo só do usuário, sem project_id) não
+// grava mais: sem app.project_id nenhuma política de recurso concede. Com o
+// Projeto padrão o gatilho preenche project_id, sem ele a linha ficaria NULL;
+// nos dois casos o WITH CHECK de <t>_do_projeto recusa, e nada fica no banco.
+func TestOlderBinaryInsertsAreRefusedInUserScope(t *testing.T) {
 	pool := testdb.New(t)
+	ctx := context.Background()
 	for _, ins := range insercoesAntigas {
-		t.Run(ins.tabela, func(t *testing.T) {
-			dono := novoUsuario(t, pool)
-			projeto := testdb.ProjetoPadrao(t, dono)
-			id := inserirComSQLAntigo(t, pool, ins, dono)
-			if got := projectIDDe(t, ins.tabela, id); got == nil || *got != projeto {
-				t.Errorf("%s: project_id = %v, queria o padrão %s", ins.tabela, got, projeto)
+		for _, comPadrao := range []bool{true, false} {
+			nome := ins.tabela + "/sem Projeto padrão"
+			if comPadrao {
+				nome = ins.tabela + "/com Projeto padrão"
 			}
-		})
-	}
-}
-
-// Sem Projeto padrão (usuário anterior ao backfill), o INSERT antigo passa e
-// deixa project_id nulo: o binário anterior nunca quebra.
-func TestInsertWithoutDefaultProjectKeepsNullProjectID(t *testing.T) {
-	pool := testdb.New(t)
-	for _, ins := range insercoesAntigas {
-		t.Run(ins.tabela, func(t *testing.T) {
-			dono := novoUsuario(t, pool)
-			id := inserirComSQLAntigo(t, pool, ins, dono)
-			if got := projectIDDe(t, ins.tabela, id); got != nil {
-				t.Errorf("%s: project_id = %s, queria NULL", ins.tabela, *got)
-			}
-		})
+			t.Run(nome, func(t *testing.T) {
+				dono := novoUsuario(t, pool)
+				if comPadrao {
+					testdb.ProjetoPadrao(t, dono)
+				}
+				id := novoID()
+				err := emEscopo(t, pool, "app.user_id", dono.String(), func(tx pgx.Tx) error {
+					_, err := tx.Exec(ctx, ins.sql, ins.args(id, dono)...)
+					return err
+				})
+				if codigoPG(err) != "42501" {
+					t.Errorf("INSERT antigo no escopo de usuário: %v; queria 42501", err)
+				}
+				// tabela é sempre um literal do próprio teste.
+				if n := contar(t, testdb.Admin(t), `SELECT count(*) FROM `+ins.tabela+` WHERE id = $1`, id); n != 0 {
+					t.Errorf("o INSERT recusado deixou %d linha(s)", n)
+				}
+			})
+		}
 	}
 }
 
 // No escopo de projeto o gatilho não preenche: código novo que esquece o
-// project_id tem de falhar alto, não cair no Projeto padrão. Desde a política
-// restritiva por projeto (rls_restrita_por_projeto), "falhar alto" é o 42501
-// dela: a linha fica com project_id NULL, que não é o projeto do escopo. O
-// escopo é o do próprio Projeto padrão, então um gatilho que preenchesse
-// faria o INSERT passar.
+// project_id tem de falhar alto, não cair no Projeto padrão. "Falhar alto" é o
+// 42501 da RLS: a linha fica com project_id NULL, que não é o projeto do
+// escopo, e tanto <t>_do_projeto quanto a restritiva <t>_so_projeto_do_escopo
+// a recusam (qual das duas o Postgres nomeia não importa aqui). O escopo é o
+// do próprio Projeto padrão, então um gatilho que preenchesse faria o INSERT
+// passar.
 func TestFillTriggerSkipsProjectScope(t *testing.T) {
 	pool := testdb.New(t)
 	ctx := context.Background()
@@ -153,17 +146,17 @@ func TestFillTriggerSkipsProjectScope(t *testing.T) {
 				_, err := tx.Exec(ctx, ins.sql, ins.args(novoID(), dono)...)
 				return err
 			})
-			var pgErr *pgconn.PgError
-			politica := ins.tabela + "_so_projeto_do_escopo"
-			if !errors.As(err, &pgErr) || pgErr.Code != "42501" || !strings.Contains(pgErr.Message, politica) {
-				t.Errorf("%s: INSERT sem project_id no escopo de projeto: %v; queria 42501 da política %s", ins.tabela, err, politica)
+			if codigoPG(err) != "42501" {
+				t.Errorf("%s: INSERT sem project_id no escopo de projeto: %v; queria 42501", ins.tabela, err)
 			}
 		})
 	}
 }
 
-// Uma vez gravado, o project_id não muda em escopo nenhum: os de serviço
-// (ping, verify) têm UPDATE de linha inteira. NULL → valor é o backfill.
+// O project_id não muda em escopo nenhum: os de serviço (ping, verify,
+// sondador) têm UPDATE de linha inteira. Nem NULL → valor passa: o único caso
+// era o backfill, que a migration da troca das políticas roda pela última vez
+// antes de deixar o guard estrito.
 func TestProjectIDIsImmutableOnceSet(t *testing.T) {
 	pool := testdb.New(t)
 	ctx := context.Background()
@@ -197,23 +190,32 @@ func TestProjectIDIsImmutableOnceSet(t *testing.T) {
 		})
 	}
 
-	// A linha sem projeto é dado legado, e o backfill é o da migration: depois
-	// da troca das políticas por pertença ao projeto, nenhum escopo da
-	// aplicação enxerga linha com project_id NULL. Os dois passam pelo
-	// superusuário, que ignora a RLS mas não o gatilho guard_project_id_imutavel:
-	// é ele que tem de deixar NULL → valor passar.
-	t.Run("NULL para o padrão passa", func(t *testing.T) {
+	// A linha sem projeto é dado legado, gravada aqui pelo superusuário (que
+	// ignora a RLS, mas não o gatilho). Nem o sondador, que tem UPDATE de
+	// alvo em todo projeto, nem o superusuário a põem num projeto.
+	t.Run("NULL para valor não passa", func(t *testing.T) {
 		admin := testdb.Admin(t)
+		semProjeto := novoUsuario(t, pool)
+		legados := map[string]uuid.UUID{}
 		for _, ins := range insercoesAntigas {
-			semProjeto := novoUsuario(t, pool)
-			id := inserirComSQLAntigo(t, admin, ins, semProjeto)
-			padrao := testdb.ProjetoPadrao(t, semProjeto)
-			tag, err := admin.Exec(ctx, `UPDATE `+ins.tabela+` SET project_id = $1 WHERE id = $2`, padrao, id)
-			if err != nil || tag.RowsAffected() != 1 {
-				t.Errorf("%s: backfill deu %d linha(s) e erro %v; queria 1 linha", ins.tabela, tag.RowsAffected(), err)
+			legados[ins.tabela] = inserirComSQLAntigo(t, admin, ins, semProjeto)
+		}
+		padrao := testdb.ProjetoPadrao(t, semProjeto)
+
+		// O escopo de InProberTx, ligado por SQL cru para o UPDATE sem query gerada.
+		comEscopo(t, pool, "app.scope", "prober", func(tx pgx.Tx) {
+			tag, err := tx.Exec(ctx, `UPDATE targets SET project_id = $1 WHERE id = $2`, padrao, legados["targets"])
+			if codigoPG(err) != "42501" {
+				t.Errorf("o sondador pôs projeto no alvo sem projeto (%d linha(s), erro %v); queria 42501",
+					tag.RowsAffected(), err)
 			}
-			if got := projectIDDe(t, ins.tabela, id); got == nil || *got != padrao {
-				t.Errorf("%s: project_id = %v depois do backfill, queria %s", ins.tabela, got, padrao)
+		}, false)
+		for _, ins := range insercoesAntigas {
+			// tabela é sempre um literal do próprio teste.
+			tag, err := admin.Exec(ctx, `UPDATE `+ins.tabela+` SET project_id = $1 WHERE id = $2`, padrao, legados[ins.tabela])
+			if codigoPG(err) != "42501" {
+				t.Errorf("%s: o superusuário pôs projeto na linha sem projeto (%d linha(s), erro %v); queria 42501",
+					ins.tabela, tag.RowsAffected(), err)
 			}
 		}
 	})

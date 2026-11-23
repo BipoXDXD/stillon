@@ -243,6 +243,15 @@ func mapasIguais(a, b map[string]int) bool {
 	return true
 }
 
+// bancoComBackfill é o banco parado na última versão que ainda tem
+// backfill_projetos_padrao(): a troca das políticas por pertença ao projeto a
+// roda uma última vez e a derruba.
+func bancoComBackfill(t *testing.T) (pool, admin *pgxpool.Pool) {
+	t.Helper()
+	pool, admin, _ = bancoNaVersao(t, versaoDaMigration(t, sufixoAntesDaTroca))
+	return pool, admin
+}
+
 func rodarBackfill(t *testing.T, pool *pgxpool.Pool) {
 	t.Helper()
 	if _, err := pool.Exec(context.Background(), `SELECT backfill_projetos_padrao()`); err != nil {
@@ -250,14 +259,11 @@ func rodarBackfill(t *testing.T, pool *pgxpool.Pool) {
 	}
 }
 
-// A 00042 e o contract rodam a função de novo: rerodar não duplica projeto
-// nem vínculo.
+// A 00042 e a troca das políticas por pertença rodam a função de novo:
+// rerodar não duplica projeto nem vínculo.
 func TestBackfillIsIdempotent(t *testing.T) {
-	pool := testdb.New(t)
-	admin := testdb.Admin(t)
-	// O alvo órfão (sem projeto) é dado legado: depois da troca das políticas
-	// por pertença ao projeto, o escopo de usuário já não grava alvo, então ele
-	// entra pelo superusuário, como estaria no banco.
+	pool, admin := bancoComBackfill(t)
+	// O alvo órfão (sem projeto) entra pelo superusuário, como dado legado.
 	for range 2 {
 		dono := novoUsuario(t, pool)
 		novoAlvoDoBinarioAnterior(t, admin, dono, agora)
@@ -278,8 +284,7 @@ func TestBackfillIsIdempotent(t *testing.T) {
 // Quem se cadastra depois da 00041 ganha o Projeto padrão quando a função
 // roda de novo, mas não vira operador nem ganha e-mail verificado.
 func TestBackfillRerunDoesNotPromoteOperator(t *testing.T) {
-	pool := testdb.New(t)
-	admin := testdb.Admin(t)
+	pool, admin := bancoComBackfill(t)
 	x := novoUsuario(t, pool)
 
 	rodarBackfill(t, pool)
@@ -337,7 +342,7 @@ func TestProjectMigrationsDownKeepResources(t *testing.T) {
 // A 00042 chama a função dentro de um escopo: ao voltar, o app.user_id de
 // quem chamou tem de estar como estava.
 func TestBackfillKeepsCallerScope(t *testing.T) {
-	pool := testdb.New(t)
+	pool, _ := bancoComBackfill(t)
 	ctx := context.Background()
 	quemChama := novoUsuario(t, pool)
 	novoUsuario(t, pool)
@@ -363,7 +368,10 @@ func TestBackfillKeepsCallerScope(t *testing.T) {
 // As funções da 00041 não ficam abertas a PUBLIC: só o dono (o papel da
 // aplicação) as executa.
 func TestProjectBackfillFunctionsNotExecutableByPublic(t *testing.T) {
-	pool := testdb.New(t)
+	pool, _ := bancoComBackfill(t)
+	if n := contar(t, pool, `SELECT count(*) FROM pg_proc WHERE proname IN ('backfill_projetos_padrao', 'gerar_uuid_v7')`); n != 2 {
+		t.Fatalf("achei %d das 2 funções da 00041: o teste não olha o que diz olhar", n)
+	}
 	n := contar(t, pool, `
 		SELECT count(*)
 		  FROM pg_proc p, aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) a

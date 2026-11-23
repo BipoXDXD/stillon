@@ -849,16 +849,11 @@ func TestTargetLimitIs409(t *testing.T) {
 	if resp.StatusCode != http.StatusConflict || decodeEnvelope(t, resp).Error.Code != "target_limit_reached" {
 		t.Errorf("status %d, queria 409 target_limit_reached", resp.StatusCode)
 	}
-	// O 409 não basta: a recusa não pode ter gravado o 101º. A contagem roda
-	// no Projeto padrão do dono, onde o INSERT acima gravou os alvos (com
-	// project_id explícito): targets tem RLS.
+	// O 409 não basta: a recusa não pode ter gravado o 101º. A contagem é por
+	// fora da RLS.
 	var n int64
-	err = testdb.NoProjetoPadrao(t, a.pool, a.userID, func(q *db.Queries, _ uuid.UUID) error {
-		var err error
-		n, err = q.CountTargets(ctx, a.userID)
-		return err
-	})
-	if err != nil {
+	if err := testdb.Admin(t).QueryRow(ctx,
+		`SELECT count(*) FROM targets WHERE user_id = $1`, a.userID).Scan(&n); err != nil {
 		t.Fatal(err)
 	}
 	if n != targets.MaxTargetsPerUser {

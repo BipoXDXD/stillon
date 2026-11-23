@@ -12,7 +12,6 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/BipoXDXD/stillon/internal/storage/db"
 	"github.com/BipoXDXD/stillon/internal/storage/testdb"
 )
 
@@ -25,19 +24,15 @@ func clonar(t *testing.T, a *api, token, id string, corpo any) (int, string) {
 
 func contarHeartbeats(t *testing.T, a *api) int64 {
 	t.Helper()
-	return contarHeartbeatsDe(t, a, a.userID)
+	return contarHeartbeatsDe(t, a.userID)
 }
 
-func contarHeartbeatsDe(t *testing.T, a *api, userID uuid.UUID) int64 {
+// contarHeartbeatsDe conta, por fora da RLS, os heartbeats que userID criou.
+func contarHeartbeatsDe(t *testing.T, userID uuid.UUID) int64 {
 	t.Helper()
-	ctx := context.Background()
 	var n int64
-	err := testdb.NoProjetoPadrao(t, a.pool, userID, func(q *db.Queries, _ uuid.UUID) error {
-		var err error
-		n, err = q.CountHeartbeats(ctx, userID)
-		return err
-	})
-	if err != nil {
+	if err := testdb.Admin(t).QueryRow(context.Background(),
+		`SELECT count(*) FROM heartbeats WHERE user_id = $1`, userID).Scan(&n); err != nil {
 		t.Fatal(err)
 	}
 	return n

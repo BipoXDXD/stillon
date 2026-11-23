@@ -273,12 +273,10 @@ func TestNilProjectIDIsIndistinguishableFromMissing(t *testing.T) {
 	}
 }
 
-// O viewer do projeto do dono lê, mas não escreve: toda gêmea de escrita dá
-// 403 forbidden, e nada do dono muda. As gêmeas de leitura de coleção dão
-// 200. As de leitura por {id} dão 404 hoje: enquanto a política permissiva
-// for user_id = app.user_id (portão do PR 2b), o viewer não enxerga as linhas
-// que o dono criou, e o 404 é o mesmo de um id que não existe. Nunca 403: o
-// viewer tem PermRead.
+// O viewer do projeto do dono lê, mas não escreve: toda gêmea de leitura,
+// de coleção ou por {id}, dá 200 com o mesmo corpo que o dono lê (a política
+// é por projeto, não por quem criou a linha); toda gêmea de escrita dá 403
+// forbidden, e nada do dono muda.
 func TestViewerGetsForbiddenOnEveryMutatingProjectRoute(t *testing.T) {
 	a := newAPI(t)
 	dono := tokenDe(t, a, a.userID)
@@ -292,14 +290,14 @@ func TestViewerGetsForbiddenOnEveryMutatingProjectRoute(t *testing.T) {
 	antes := lerTudoDoDono(t, a, dono, r, leituras)
 	for _, rota := range leituras {
 		esperarVagaNoLimite(a)
-		status, corpo := lerCru(t, a, http.MethodGet, r.caminho(t, rota, r.projeto), viewer, nil)
-		quer := http.StatusOK
-		if strings.Contains(rota, "{id}") {
-			// TODO(PR 2b): 200 quando as permissivas forem por projeto
-			quer = http.StatusNotFound
+		caminho := r.caminho(t, rota, r.projeto)
+		status, corpo := lerCru(t, a, http.MethodGet, caminho, viewer, nil)
+		if status != http.StatusOK {
+			t.Errorf("%s do viewer deu %d, queria 200: %s", rota, status, corpo)
+			continue
 		}
-		if status != quer {
-			t.Errorf("%s do viewer deu %d, queria %d: %s", rota, status, quer, corpo)
+		if corpo != antes[caminho] {
+			t.Errorf("%s: o viewer leu outro corpo que o dono:\nviewer %s\ndono   %s", rota, corpo, antes[caminho])
 		}
 	}
 	for _, rota := range ordemComDeleteNoFim(escritas) {
@@ -348,8 +346,13 @@ func TestViewerResendLeavesPendingTokenUntouched(t *testing.T) {
 	idDoViewer := outroUsuario(t, a)
 	testdb.Membro(t, projeto, idDoViewer, "viewer")
 	status, corpo = lerCru(t, a, http.MethodPost, noProjeto+"/"+canal+"/verify/resend", tokenDe(t, a, idDoViewer), nil)
-	if erro, _ := decodificar(t, corpo)["error"].(map[string]any); status != http.StatusForbidden || erro["code"] != "forbidden" {
-		t.Fatalf("reenvio do viewer deu %d, queria 403 forbidden: %s", status, corpo)
+	// Errorf, e não Fatalf: as asserções do token e do carteiro abaixo têm de
+	// cair também, e não só o status. O corpo só se lê no 403 (o reenvio que
+	// passa responde sem corpo).
+	if status != http.StatusForbidden {
+		t.Errorf("reenvio do viewer deu %d, queria 403 forbidden: %s", status, corpo)
+	} else if erro, _ := decodificar(t, corpo)["error"].(map[string]any); erro["code"] != "forbidden" {
+		t.Errorf("reenvio do viewer deu 403 com o código %v, queria forbidden: %s", erro["code"], corpo)
 	}
 	hashDepois, venceDepois := pendente()
 	if !slices.Equal(hashAntes, hashDepois) || !venceAntes.Equal(venceDepois) {

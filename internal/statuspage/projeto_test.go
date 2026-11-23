@@ -129,11 +129,10 @@ func TestMemberCannotEditStatusPage(t *testing.T) {
 	if _, err := a.svc.Update(ctx, comoMember, p.ID, statuspage.Patch{Title: &titulo, Published: &publicada}); !errors.Is(err, tenancy.ErrForbidden) {
 		t.Errorf("Update como member: erro %v, queria ErrForbidden", err)
 	}
-	// O member lê (PermRead): não é ErrForbidden. A política permissiva ainda
-	// é por dono, então hoje ele não vê a página que o titular criou.
-	// TODO(PR 2b): passa a ver a página do titular quando as permissivas forem por projeto
-	if _, err := a.svc.Get(ctx, comoMember); !errors.Is(err, statuspage.ErrNotFound) {
-		t.Errorf("Get como member: erro %v, queria ErrNotFound (lê, mas a permissiva ainda é por dono)", err)
+	// O member lê (PermRead) a página que o titular criou: a política é por
+	// projeto.
+	if got, err := a.svc.Get(ctx, comoMember); err != nil || got.ID != p.ID {
+		t.Errorf("Get como member: página %s, erro %v; queria a página %s do titular", got.ID, err, p.ID)
 	}
 
 	var n int
