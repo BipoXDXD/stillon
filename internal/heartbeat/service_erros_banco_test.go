@@ -172,7 +172,7 @@ func TestCreateComPassoRecusadoNaoGravaNada(t *testing.T) {
 	}{
 		{
 			nome:    "contar",
-			criar:   politicaRecusarLeitura("heartbeats", "CountHeartbeats"),
+			criar:   politicaRecusarLeitura("heartbeats", "CountTitularHeartbeats"),
 			erroCom: "contar heartbeats",
 		},
 		{
@@ -246,7 +246,7 @@ func TestCreateSemATravaNaoGravaNada(t *testing.T) {
 	}
 	cancelar()
 	r := <-fim
-	if r.err == nil || r.token != "" || !strings.Contains(r.err.Error(), "travar heartbeats do usuário") {
+	if r.err == nil || r.token != "" || !strings.Contains(r.err.Error(), "travar heartbeats do titular") {
 		t.Fatalf("Create = %q, %v; queria erro da trava e sem token", r.token, r.err)
 	}
 	if err := tx.Rollback(fundo); err != nil {

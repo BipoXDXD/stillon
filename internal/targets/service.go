@@ -81,7 +81,7 @@ func (s *Service) Create(ctx context.Context, scope tenancy.ProjectScope, in Inp
 		if err := atual.Require(tenancy.PermEditMonitors); err != nil {
 			return err
 		}
-		if err := s.recusarAlvoAcimaDosTetos(ctx, q, atual.UserID, f); err != nil {
+		if err := s.recusarAlvoAcimaDosTetos(ctx, q, atual.ProjectID, f); err != nil {
 			return err
 		}
 		return inserirAlvo(ctx, q, atual, f.insertTargetParams(atual, id, sealed, in.Enabled, in.TLSWarn, now), f.Tags)
@@ -112,20 +112,20 @@ func camposDoCadastro(in Input) fields {
 	}
 }
 
-// recusarAlvoAcimaDosTetos conta e decide sob a trava do usuário: sem ela, dois
+// recusarAlvoAcimaDosTetos conta e decide sob a trava do titular: sem ela, dois
 // POST simultâneos passariam os dois pela contagem. As contagens vêm todas
-// antes do gancho depoisDeContar e das decisões, e o teto de alvos (do usuário
-// dentro do projeto atual até o PR 2b) tem precedência sobre o teto de regras
+// antes do gancho depoisDeContar e das decisões, e o teto de alvos (do
+// titular, somando os projetos dele) tem precedência sobre o teto de regras
 // por host.
-func (s *Service) recusarAlvoAcimaDosTetos(ctx context.Context, q *db.Queries, userID uuid.UUID, f fields) error {
-	if err := q.LockUserTargets(ctx, userID); err != nil {
-		return fmt.Errorf("travar alvos do usuário: %w", err)
+func (s *Service) recusarAlvoAcimaDosTetos(ctx context.Context, q *db.Queries, projectID uuid.UUID, f fields) error {
+	if err := travarAlvosDoTitular(ctx, q, projectID); err != nil {
+		return err
 	}
-	n, err := q.CountTargets(ctx, userID)
+	n, err := q.CountTitularTargets(ctx, projectID)
 	if err != nil {
 		return fmt.Errorf("contar alvos: %w", err)
 	}
-	noHost, err := regrasNoHostDoNovoAlvo(ctx, q, userID, f)
+	noHost, err := regrasNoHostDoNovoAlvo(ctx, q, projectID, f)
 	if err != nil {
 		return err
 	}
@@ -141,13 +141,27 @@ func (s *Service) recusarAlvoAcimaDosTetos(ctx context.Context, q *db.Queries, u
 	return nil
 }
 
-// regrasNoHostDoNovoAlvo conta os alvos do dono com regra no host do alvo novo.
-// Sem regra o teto por host não se aplica, e a contagem nem é feita.
-func regrasNoHostDoNovoAlvo(ctx context.Context, q *db.Queries, userID uuid.UUID, f fields) (int, error) {
+// travarAlvosDoTitular toma a trava das cotas de alvos do titular do projeto.
+// A chave é a do binário anterior (que travava pelo usuário, o titular e
+// único membro): durante a release os dois contam em fila.
+func travarAlvosDoTitular(ctx context.Context, q *db.Queries, projectID uuid.UUID) error {
+	titular, err := q.ProjectTitular(ctx, projectID)
+	if err != nil {
+		return fmt.Errorf("ler o titular do projeto: %w", err)
+	}
+	if err := q.LockTitularTargets(ctx, titular); err != nil {
+		return fmt.Errorf("travar alvos do titular: %w", err)
+	}
+	return nil
+}
+
+// regrasNoHostDoNovoAlvo conta os alvos do titular com regra no host do alvo
+// novo. Sem regra o teto por host não se aplica, e a contagem nem é feita.
+func regrasNoHostDoNovoAlvo(ctx context.Context, q *db.Queries, projectID uuid.UUID, f fields) (int, error) {
 	if f.ContentRule == nil {
 		return 0, nil
 	}
-	return contarRegrasNoHost(ctx, q, userID, hostDaRegra(f.URL), uuid.Nil)
+	return contarRegrasNoHost(ctx, q, projectID, hostDaRegra(f.URL), uuid.Nil)
 }
 
 // inserirAlvo grava a linha do alvo e, em seguida, as tags dele, no projeto
@@ -224,7 +238,7 @@ func (s *Service) List(ctx context.Context, scope tenancy.ProjectScope, before *
 // tudo na mesma transação: dois PATCH simultâneos não se atropelam, e um
 // timeout que cabia no intervalo antigo não passa despercebido no novo.
 //
-// Ordem: papel (403), trava do usuário, linha (404), validação (400), teto de
+// Ordem: papel (403), trava do titular, linha (404), validação (400), teto de
 // regras por host (409) e só então as escritas (histerese, alvo, validade do
 // certificado). A recusa vem antes de toda escrita para não depender do
 // rollback, e depois da linha para o alheio continuar 404.
@@ -242,8 +256,8 @@ func (s *Service) Update(ctx context.Context, scope tenancy.ProjectScope, id uui
 }
 
 // editarAlvo é o corpo transacional do Update, na ordem que o doc dele fixa.
-// As cotas (trava e regras por host) são do usuário do escopo; a linha, a
-// histerese, a validade e as tags são do projeto.
+// As cotas (trava e regras por host) são do titular do projeto, somando os
+// projetos dele; a linha, a histerese, a validade e as tags são do projeto.
 func (s *Service) editarAlvo(ctx context.Context, q *db.Queries, sc tenancy.ProjectScope, id uuid.UUID, p Patch) (Target, error) {
 	row, f, err := s.lerParaEditar(ctx, q, sc, id)
 	if err != nil {
@@ -253,7 +267,7 @@ func (s *Service) editarAlvo(ctx context.Context, q *db.Queries, sc tenancy.Proj
 	if verr := validate(&e.f); verr != nil {
 		return Target{}, verr
 	}
-	if err := s.recusarRegraAcimaDoTeto(ctx, q, sc.UserID, e); err != nil {
+	if err := s.recusarRegraAcimaDoTeto(ctx, q, sc.ProjectID, e); err != nil {
 		return Target{}, err
 	}
 	if err := zerarHistereseSeMudouOCriterio(ctx, q, sc.ProjectID, e); err != nil {
@@ -271,13 +285,13 @@ func (s *Service) editarAlvo(ctx context.Context, q *db.Queries, sc tenancy.Proj
 	return out, nil
 }
 
-// lerParaEditar toma a trava do usuário e lê a linha com FOR UPDATE, os
+// lerParaEditar toma a trava do titular e lê a linha com FOR UPDATE, os
 // headers abertos e as tags. A mesma ordem de travas do Create (consultiva,
 // depois a linha): dois PATCH simultâneos que poriam regra no mesmo host
 // contam em fila. Linha de outro projeto é ErrNotFound.
 func (s *Service) lerParaEditar(ctx context.Context, q *db.Queries, sc tenancy.ProjectScope, id uuid.UUID) (db.Target, fields, error) {
-	if err := q.LockUserTargets(ctx, sc.UserID); err != nil {
-		return db.Target{}, fields{}, fmt.Errorf("travar alvos do usuário: %w", err)
+	if err := travarAlvosDoTitular(ctx, q, sc.ProjectID); err != nil {
+		return db.Target{}, fields{}, err
 	}
 	row, err := q.GetTargetForUpdate(ctx, db.GetTargetForUpdateParams{ProjectID: sc.ProjectID, ID: id})
 	if err != nil {
@@ -315,11 +329,11 @@ func novaEdicao(row db.Target, f fields, p Patch) edicao {
 // recusarRegraAcimaDoTeto devolve ErrContentHostLimit quando a edição poria
 // uma regra num host que já está no teto. Só conta quando a edição aumenta o
 // host; a recusa vem antes de toda escrita para não depender do rollback.
-func (s *Service) recusarRegraAcimaDoTeto(ctx context.Context, q *db.Queries, userID uuid.UUID, e edicao) error {
+func (s *Service) recusarRegraAcimaDoTeto(ctx context.Context, q *db.Queries, projectID uuid.UUID, e edicao) error {
 	if !aumentaOHost(e.regraGravada, e.row.URL, e.f.ContentRule, e.f.URL) {
 		return nil
 	}
-	outros, err := contarRegrasNoHost(ctx, q, userID, hostDaRegra(e.f.URL), e.row.ID)
+	outros, err := contarRegrasNoHost(ctx, q, projectID, hostDaRegra(e.f.URL), e.row.ID)
 	if err != nil {
 		return err
 	}
@@ -455,11 +469,12 @@ func mudouOCriterioDeSaude(urlAntes, metodoAntes string, regraAntes *ContentRule
 	return depois.URL != urlAntes || depois.Method != metodoAntes || !depois.ContentRule.Equal(regraAntes)
 }
 
-// contarRegrasNoHost conta os alvos do dono com regra cujo hostDaRegra é
-// host, sem contar exceto (uuid.Nil no Create). Só conta: quem chama compara
-// com o teto. Pede a trava LockUserTargets já tomada.
-func contarRegrasNoHost(ctx context.Context, q *db.Queries, userID uuid.UUID, host string, exceto uuid.UUID) (int, error) {
-	linhas, err := q.ListContentRuleTargetURLs(ctx, userID)
+// contarRegrasNoHost conta os alvos com regra do titular de projectID, em
+// todos os projetos dele, cujo hostDaRegra é host, sem contar exceto
+// (uuid.Nil no Create). Só conta: quem chama compara com o teto. Pede a
+// trava do titular já tomada (travarAlvosDoTitular).
+func contarRegrasNoHost(ctx context.Context, q *db.Queries, projectID uuid.UUID, host string, exceto uuid.UUID) (int, error) {
+	linhas, err := q.ListTitularContentRuleTargetURLs(ctx, projectID)
 	if err != nil {
 		return 0, fmt.Errorf("contar regras no host: %w", err)
 	}

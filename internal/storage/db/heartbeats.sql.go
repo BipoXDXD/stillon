@@ -191,15 +191,16 @@ func (q *Queries) CountHeartbeatEvents(ctx context.Context) (int64, error) {
 	return count, err
 }
 
-const countHeartbeats = `-- name: CountHeartbeats :one
-SELECT count(*) FROM heartbeats WHERE user_id = $1
+const countTitularHeartbeats = `-- name: CountTitularHeartbeats :one
+SELECT cota_heartbeats_do_titular($1::uuid)::bigint
 `
 
-func (q *Queries) CountHeartbeats(ctx context.Context, userID uuid.UUID) (int64, error) {
-	row := q.db.QueryRow(ctx, countHeartbeats, userID)
-	var count int64
-	err := row.Scan(&count)
-	return count, err
+// Conta no escopo de quem chama: projeto que ele não enxerga é 42501.
+func (q *Queries) CountTitularHeartbeats(ctx context.Context, projectID uuid.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, countTitularHeartbeats, projectID)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
 }
 
 const deleteHeartbeat = `-- name: DeleteHeartbeat :execrows
@@ -448,8 +449,8 @@ type InsertHeartbeatParams struct {
 }
 
 // Heartbeats (docs/superpowers/specs/2026-11-05-heartbeats-design.md). As do
-// dono rodam sob InProjectTx e filtram por project_id (as cotas, por user_id);
-// as do ping, sob InPingTx; as do avaliador, sob InProberTx.
+// dono rodam sob InProjectTx e filtram por project_id (as cotas, pelo titular
+// do projeto); as do ping, sob InPingTx; as do avaliador, sob InProberTx.
 // user_id é quem criou o heartbeat; project_id, o projeto em que ele vive, e
 // sempre vem: no escopo de projeto o gatilho preencher_project_id_padrao não
 // preenche, e a RLS recusaria o nulo.
@@ -814,20 +815,19 @@ func (q *Queries) LockHeartbeatForPing(ctx context.Context, pingTokenHash []byte
 	return i, err
 }
 
-const lockUserHeartbeats = `-- name: LockUserHeartbeats :exec
+const lockTitularHeartbeats = `-- name: LockTitularHeartbeats :exec
 
 SELECT pg_advisory_xact_lock(hashtextextended('stillon.heartbeats:' || $1::uuid::text, 0))
 `
 
 // API do dono: as de cima e estas rodam sob InProjectTx e filtram por
-// project_id, como as de targets.sql. As exceções, por user_id, são as cotas
-// (LockUserHeartbeats, CountHeartbeats).
-// O teto de heartbeats: contar e inserir sob esta trava, como LockUserTargets.
-// Até o PR 2b ele vale para o usuário dentro do projeto atual (a RLS
-// restritiva de InProjectTx corta os de outros projetos); o teto por titular
-// vem no PR 2b.
-func (q *Queries) LockUserHeartbeats(ctx context.Context, userID uuid.UUID) error {
-	_, err := q.db.Exec(ctx, lockUserHeartbeats, userID)
+// project_id, como as de targets.sql. As exceções são as cotas
+// (LockTitularHeartbeats, CountTitularHeartbeats), pelo titular do projeto.
+// O teto de heartbeats é do titular, somando os projetos dele: contar e
+// inserir sob esta trava, como LockTitularTargets. Mesma chave textual de
+// LockUserHeartbeats: o binário anterior trava igual.
+func (q *Queries) LockTitularHeartbeats(ctx context.Context, titularID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, lockTitularHeartbeats, titularID)
 	return err
 }
 

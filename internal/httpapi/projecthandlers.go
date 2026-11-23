@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"errors"
 	"net/http"
 	"time"
 
@@ -8,9 +9,9 @@ import (
 	"github.com/BipoXDXD/stillon/internal/tenancy"
 )
 
-// ProjectHandlers serve os projetos do usuário. A lista é da conta, e não de
-// um projeto: a rota fica em protegida, sem ProjetoPadrao nem
-// ProjetoDoCaminho, e não cria o Projeto padrão de quem ainda não tem.
+// ProjectHandlers serve os projetos do usuário. A lista e a criação são da
+// conta, e não de um projeto: as rotas ficam sem ProjetoPadrao nem
+// ProjetoDoCaminho, e não criam o Projeto padrão de quem ainda não tem.
 type ProjectHandlers struct {
 	svc *tenancy.Service
 }
@@ -44,9 +45,59 @@ func (h *ProjectHandlers) List(w http.ResponseWriter, r *http.Request) {
 	}
 	items := make([]projectResponse, 0, len(ps))
 	for _, p := range ps {
-		items = append(items, projectResponse{
-			ID: p.ID.String(), Name: p.Name, IsDefault: p.IsDefault, Role: string(p.Role), CreatedAt: p.CreatedAt,
-		})
+		items = append(items, toProjectResponse(p))
 	}
 	apierr.WriteJSON(w, http.StatusOK, map[string]any{"items": items})
+}
+
+// projectRequest é o corpo de POST /api/v1/projects. Não há campo de
+// titular: ele vem do token, e decodeJSON recusa campo desconhecido.
+type projectRequest struct {
+	Name string `json:"name"`
+}
+
+// Create é POST /api/v1/projects: cria um projeto de que o usuário é titular
+// e owner, e responde 201 com o mesmo item de GET /api/v1/projects.
+func (h *ProjectHandlers) Create(w http.ResponseWriter, r *http.Request) {
+	userID, ok := usuario(w, r)
+	if !ok {
+		return
+	}
+	var req projectRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	p, err := h.svc.Create(r.Context(), userID, req.Name)
+	if err != nil {
+		h.recusarCriacao(w, r, err)
+		return
+	}
+	apierr.WriteJSON(w, http.StatusCreated, toProjectResponse(p))
+}
+
+// recusarCriacao traduz o erro de tenancy.Service.Create: nome inválido é 400
+// com o campo, o teto do titular é 409, e o resto é erro interno.
+func (h *ProjectHandlers) recusarCriacao(w http.ResponseWriter, r *http.Request, err error) {
+	motivo := ""
+	switch {
+	case errors.Is(err, tenancy.ErrProjectNameRequired):
+		motivo = "required"
+	case errors.Is(err, tenancy.ErrProjectNameTooLong):
+		motivo = "too_long"
+	case errors.Is(err, tenancy.ErrProjectNameInvalid):
+		motivo = "invalid"
+	case errors.Is(err, tenancy.ErrProjectLimit):
+		apierr.WriteError(w, r, apierr.CodeProjectLimit)
+		return
+	default:
+		erroInterno(w, r, "criar projeto", err)
+		return
+	}
+	apierr.WriteValidation(w, r, []apierr.FieldError{{Field: "name", Reason: motivo}})
+}
+
+func toProjectResponse(p tenancy.ProjectSummary) projectResponse {
+	return projectResponse{
+		ID: p.ID.String(), Name: p.Name, IsDefault: p.IsDefault, Role: string(p.Role), CreatedAt: p.CreatedAt,
+	}
 }

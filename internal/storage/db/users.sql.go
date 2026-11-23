@@ -279,3 +279,15 @@ func (q *Queries) SwapUserHash(ctx context.Context, arg SwapUserHashParams) (int
 	}
 	return result.RowsAffected(), nil
 }
+
+const userIsOperator = `-- name: UserIsOperator :one
+SELECT is_operator FROM users WHERE id = $1
+`
+
+// O operador tem teto de projetos maior (tenancy.ProjectLimit).
+func (q *Queries) UserIsOperator(ctx context.Context, id uuid.UUID) (bool, error) {
+	row := q.db.QueryRow(ctx, userIsOperator, id)
+	var is_operator bool
+	err := row.Scan(&is_operator)
+	return is_operator, err
+}

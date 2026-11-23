@@ -95,7 +95,7 @@ func TestAnotherUsersHeartbeatIs404OnEveryRoute(t *testing.T) {
 
 	_, lista := lerCru(t, a, http.MethodGet, "/api/v1/heartbeats?limit=100", intruso, nil)
 	conferirSemDadosDoDono(t, "GET /api/v1/heartbeats do intruso", lista, proibidos)
-	if n := contarHeartbeatsDe(t, a, idDoIntruso); n != 0 {
+	if n := contarHeartbeatsDe(t, idDoIntruso); n != 0 {
 		t.Errorf("o intruso ficou com %d heartbeats, queria 0", n)
 	}
 	for _, caminho := range leituras {

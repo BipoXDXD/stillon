@@ -27,3 +27,30 @@ SELECT p.id, p.name, p.is_default, m.role, p.created_at
   JOIN users t ON t.id = p.titular_id
  WHERE m.user_id = sqlc.arg(user_id) AND t.suspended_at IS NULL
  ORDER BY p.is_default DESC, p.id;
+
+-- Criação de projeto pela API (tenancy.Service.Create). A trava, a contagem e
+-- os dois INSERTs rodam numa só transação no escopo do titular: a trava
+-- serializa as criações do mesmo titular, e a contagem já vê o que a anterior
+-- gravou (READ COMMITTED lê de novo depois de esperar a trava).
+-- name: LockTitularProjects :exec
+SELECT pg_advisory_xact_lock(hashtextextended('stillon.projects:' || sqlc.arg(titular_id)::uuid::text, 0));
+
+-- projects_member_select mostra ao titular todos os projetos dele por
+-- titular_id, inclusive os que não têm vínculo dele.
+-- name: CountTitularProjects :one
+SELECT count(*) FROM projects WHERE titular_id = sqlc.arg(titular_id);
+
+-- Sem ON CONFLICT: projeto novo que colide falha alto (ao contrário do padrão).
+-- name: InsertProject :one
+INSERT INTO projects (id, name, titular_id, is_default, created_at)
+VALUES (sqlc.arg(id), sqlc.arg(name), sqlc.arg(titular_id), false, sqlc.arg(now))
+RETURNING id, name, is_default, created_at;
+
+-- name: InsertProjectOwner :exec
+INSERT INTO project_members (project_id, user_id, role, created_at)
+VALUES (sqlc.arg(project_id), sqlc.arg(user_id), 'owner', sqlc.arg(now));
+
+-- O titular do projeto, para as cotas (trava e contagem). Roda sob
+-- InProjectTx: projects_member_select deixa o membro ver o projeto.
+-- name: ProjectTitular :one
+SELECT titular_id FROM projects WHERE id = sqlc.arg(project_id);

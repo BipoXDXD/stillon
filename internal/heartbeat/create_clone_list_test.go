@@ -12,7 +12,6 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/BipoXDXD/stillon/internal/heartbeat"
-	"github.com/BipoXDXD/stillon/internal/storage/db"
 	"github.com/BipoXDXD/stillon/internal/storage/testdb"
 )
 
@@ -27,17 +26,13 @@ func (a ambiente) outroDono(t *testing.T) uuid.UUID {
 	return id
 }
 
-// contarHeartbeats relê no banco quantas tarefas o usuário tem.
+// contarHeartbeats relê no banco, por fora da RLS, quantas tarefas o usuário
+// criou.
 func (a ambiente) contarHeartbeats(t *testing.T, dono uuid.UUID) int64 {
 	t.Helper()
-	ctx := context.Background()
 	var n int64
-	err := testdb.NoProjetoPadrao(t, a.pool, dono, func(q *db.Queries, _ uuid.UUID) error {
-		var err error
-		n, err = q.CountHeartbeats(ctx, dono)
-		return err
-	})
-	if err != nil {
+	if err := testdb.Admin(t).QueryRow(context.Background(),
+		`SELECT count(*) FROM heartbeats WHERE user_id = $1`, dono).Scan(&n); err != nil {
 		t.Fatal(err)
 	}
 	return n

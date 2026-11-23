@@ -34,6 +34,13 @@ const (
 	envioBurst = 5
 )
 
+// Criar projeto ganha balde próprio por usuário: um a cada minuto, 5 de uma
+// vez. Na memória de cada instância até o PR 5.
+const (
+	projetoNovoACada = time.Minute
+	projetoNovoBurst = 5
+)
+
 // verifyBodyBytes: o POST de /verify é um formulário sem campos.
 const verifyBodyBytes = 1 << 10
 
@@ -223,6 +230,11 @@ func Routes(ctx context.Context, cfg *config.Config, d Deps) http.Handler {
 	// A lista de projetos é da conta, como /me: protegida, sem projeto no
 	// contexto, e não garante o Projeto padrão.
 	mux.Handle("GET /api/v1/projects", protegida(ph.List))
+	// Criar também é da conta (o titular vem do token), com o balde próprio de
+	// criação depois do comum e antes da consulta de sessão.
+	porProjetoNovo := middleware.RateLimitUserEvery(ctx, d.Clock, projetoNovoACada, projetoNovoBurst)
+	criacaoDeProjeto := func(fn http.HandlerFunc) http.Handler { return authn(porUsuario(porProjetoNovo(viva(fn)))) }
+	mux.Handle("POST /api/v1/projects", criacaoDeProjeto(ph.Create))
 
 	mux.Handle("GET /api/v1/targets", recursoLegado(th.List))
 	mux.Handle("POST /api/v1/targets", recursoLegado(th.Create))

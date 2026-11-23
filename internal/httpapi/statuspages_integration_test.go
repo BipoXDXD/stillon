@@ -64,16 +64,20 @@ func TestStatusPageFlow(t *testing.T) {
 		t.Errorf("PATCH deu %d: %s", resp.StatusCode, cru)
 	}
 
-	// Segunda página: 409 com o código próprio.
+	// Segunda página: 409 com o código próprio e a mensagem de apierr (não o
+	// texto de statuspage.ErrExists).
 	var env struct {
 		Error struct {
-			Code string `json:"code"`
+			Code    string `json:"code"`
+			Message string `json:"message"`
 		} `json:"error"`
 	}
 	resp = chamar(t, a, http.MethodPost, "/api/v1/status-pages", tok, map[string]any{"slug": "outra", "title": "T"})
 	lerCorpo(t, resp, &env)
-	if resp.StatusCode != http.StatusConflict || env.Error.Code != "status_page_exists" {
-		t.Errorf("segunda página deu %d/%s, queria 409 status_page_exists", resp.StatusCode, env.Error.Code)
+	if resp.StatusCode != http.StatusConflict || env.Error.Code != "status_page_exists" ||
+		env.Error.Message != "Este projeto já tem uma status page." {
+		t.Errorf("segunda página deu %d/%s %q, queria 409 status_page_exists com a mensagem do projeto",
+			resp.StatusCode, env.Error.Code, env.Error.Message)
 	}
 
 	// Slug de outro usuário: 409 slug_taken.

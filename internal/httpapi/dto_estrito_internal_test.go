@@ -34,6 +34,7 @@ const webhookValidoDoTeste = "https://discord.com/api/webhooks/12345678901234567
 func corposEstritos() map[string]corpoEstrito {
 	alvos, batidas, canais := &TargetHandlers{}, &HeartbeatHandlers{}, &ChannelHandlers{}
 	paginas, conta, sessao := &StatusPageHandlers{}, &AccountHandlers{}, &AuthHandlers{}
+	projetos := &ProjectHandlers{}
 	item := `{"target_id":"` + uuid.NewString() + `","display_name":"a","extra":1}`
 	agendaComExtra := `{"kind":"period","period_sec":60,"extra":1}`
 
@@ -51,6 +52,7 @@ func corposEstritos() map[string]corpoEstrito {
 			aninhados: []string{`{"slug":"empresa","title":"T","items":[` + item + `]}`}},
 		"StatusPageHandlers.Update": {handler: noProjetoPadrao(paginas.Update), valido: `{"title":"T"}`,
 			aninhados: []string{`{"items":[` + item + `]}`}},
+		"ProjectHandlers.Create":         {handler: projetos.Create, valido: `{"name":"Projeto"}`},
 		"AccountHandlers.ChangePassword": {handler: conta.ChangePassword, valido: `{"current_password":"a","new_password":"b"}`},
 		"AuthHandlers.Login":             {handler: sessao.Login, valido: `{"email":"a@exemplo.com","password":"x"}`},
 		"AuthHandlers.TOTPEnroll":        {handler: sessao.TOTPEnroll, valido: `{"password":"x"}`},

@@ -454,7 +454,7 @@ var (
 const campoDaConsulta = "query"
 
 // Summary é GET /targets/summary: o dashboard numa chamada só (spec §11.3),
-// sem paginação (o teto de alvos por usuário é o limite). ?tag= e ?state=
+// sem paginação (o teto de alvos do titular é o limite). ?tag= e ?state=
 // filtram (spec do painel denso).
 func (h *TargetHandlers) Summary(w http.ResponseWriter, r *http.Request) {
 	sc, ok := escopo(w, r)
