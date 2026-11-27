@@ -78,8 +78,8 @@ var rotasLimitadas = []rotaLimitada{
 	},
 	{
 		nome: "confirmação de e-mail", metodo: http.MethodPost, caminho: "/api/v1/auth/email/confirm",
-		corpo: `{"token":"` + strings.Repeat("A", 129) + `"}`,
-		fixos: map[string]string{"X-Requested-With": "stillon"}, rajada: 10,
+		corpo: `{"token":"` + strings.Repeat("A", 129) + `","password":"x"}`,
+		fixos: map[string]string{"X-Requested-With": "stillon"}, rajada: 5,
 		dentro: http.StatusBadRequest, umaFicha: 6 * time.Second, retryAfter: "6",
 	},
 	{

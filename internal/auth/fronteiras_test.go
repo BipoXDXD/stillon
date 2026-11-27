@@ -262,3 +262,43 @@ func TestRotateReusoQueNaoPersisteDevolveOErro(t *testing.T) {
 		})
 	}
 }
+
+// tentativasQueCancelam cancela o contexto da requisição ao reservar (o cliente
+// desistiu durante o Argon2id) e guarda o erro do contexto que o Refund recebe.
+type tentativasQueCancelam struct {
+	cancelar     context.CancelFunc
+	devolveu     bool
+	erroNoRefund error
+}
+
+func (a *tentativasQueCancelam) Reserve(context.Context) (bool, error) {
+	a.cancelar()
+	return true, nil
+}
+func (a *tentativasQueCancelam) Refund(ctx context.Context) error {
+	a.devolveu, a.erroNoRefund = true, ctx.Err()
+	return a.erroNoRefund
+}
+func (a *tentativasQueCancelam) Reset(context.Context) error { return nil }
+
+// A senha certa devolve a reserva mesmo que o cliente desista no meio: com o
+// contexto da requisição, a devolução falharia e a senha certa ficaria
+// contada como errada.
+func TestCheckPasswordOrLockedDevolveComOClienteQueDesistiu(t *testing.T) {
+	hash, err := auth.HashPasswordWith("a-senha-certa-e-comprida", []byte("sal-de-teste-16b"), 8, 1, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancelar := context.WithCancel(context.Background())
+	defer cancelar()
+	tentativas := &tentativasQueCancelam{cancelar: cancelar}
+
+	ok, err := auth.CheckPasswordOrLocked(ctx, tentativas, auth.User{PasswordHash: hash}, "a-senha-certa-e-comprida")
+
+	if !ok || err != nil {
+		t.Fatalf("(ok, err) = (%v, %v), queria (true, nil)", ok, err)
+	}
+	if !tentativas.devolveu || tentativas.erroNoRefund != nil {
+		t.Errorf("devolveu = %v com o contexto em %v; queria a devolução fora do cancelamento", tentativas.devolveu, tentativas.erroNoRefund)
+	}
+}

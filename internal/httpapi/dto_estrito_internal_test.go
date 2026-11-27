@@ -66,7 +66,7 @@ func corposEstritos() map[string]corpoEstrito {
 		"AuthHandlers.TOTPRotateConfirm": {handler: sessao.TOTPRotateConfirm, valido: `{"code":"1","rotation":"x"}`},
 		"CadastroHandlers.Signup": {handler: cadastro.Signup,
 			valido: `{"email":"a@exemplo.com","password":"uma-senha-bem-comprida","turnstile_token":"x"}`},
-		"CadastroHandlers.ConfirmarEmail": {handler: cadastro.ConfirmarEmail, valido: `{"token":"x"}`},
+		"CadastroHandlers.ConfirmarEmail": {handler: cadastro.ConfirmarEmail, valido: `{"token":"x","password":"y"}`},
 		"CadastroHandlers.EsqueciASenha":  {handler: cadastro.EsqueciASenha, valido: `{"email":"a@exemplo.com","turnstile_token":"x"}`},
 		"CadastroHandlers.RedefinirSenha": {handler: cadastro.RedefinirSenha,
 			valido: `{"token":"x","new_password":"uma-senha-bem-comprida"}`},

@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -188,9 +189,11 @@ func (h *AuthHandlers) tentativas(r *http.Request, user auth.User, now time.Time
 
 // devolverTentativa devolve a reserva de uma prova certa que não terminou o
 // login (ver auth.Attempts). Falhar ao devolver não muda a resposta: a prova
-// estava certa, e o pior caso é uma tentativa a mais contada.
+// estava certa, e o pior caso é uma tentativa a mais contada. O contexto vai sem
+// o cancelamento da requisição: o cliente que desistiu não deixa a prova certa
+// contada como errada.
 func devolverTentativa(r *http.Request, t auth.Attempts) {
-	if err := t.Refund(r.Context()); err != nil {
+	if err := t.Refund(context.WithoutCancel(r.Context())); err != nil {
 		slog.Error("devolver tentativa de login", "erro", err)
 	}
 }

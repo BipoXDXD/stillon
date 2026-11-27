@@ -159,7 +159,7 @@ func Routes(ctx context.Context, cfg *config.Config, d Deps) http.Handler {
 	sp := NewStatusPageHandlers(d.StatusPages, cfg.PublicBaseURL)
 	ah := NewAccountHandlers(d.Accounts, proxiesDe(cfg), secureCookie, provas)
 	ph := NewProjectHandlers(d.Projects)
-	cad := NewCadastroHandlers(d.Cadastro, d.Recuperacao, d.Turnstile, d.CadastroPublico, proxiesDe(cfg))
+	cad := NewCadastroHandlers(d.Cadastro, d.Recuperacao, d.Turnstile, d.CadastroPublico, proxiesDe(cfg), cfg.IPHashKey, d.Clock)
 	authn := middleware.Authn(cfg.JWTSecret, d.Clock)
 	// criacao é a trava "sem e-mail confirmado não cria" (403
 	// email_not_verified), em todo POST que cria targets, heartbeats (inclusive
@@ -222,8 +222,10 @@ func Routes(ctx context.Context, cfg *config.Config, d Deps) http.Handler {
 	// O cadastro público e a recuperação de senha: sem sessão, cada rota com o
 	// seu balde por IP em d.LimitesIP (somado entre réplicas). Signup e forgot
 	// são os mais apertados (2/min, rajada 5): cada um custa um Argon2id ou um
-	// e-mail, e o Turnstile só vem depois da validação. Confirm e reset têm o
-	// token de 256 bits como credencial, e o balde só segura a martelada.
+	// e-mail, e o Turnstile só vem depois da validação. Reset tem o token de 256
+	// bits como credencial, e o balde só segura a martelada. Confirm exige o
+	// token E a senha do cadastro: com a senha, ganha o balde do login (10/min,
+	// rajada 5), e a senha errada conta no bloqueio da conta (o do login).
 	baldeIP := func(b middleware.BaldeIP, fn http.HandlerFunc) http.Handler {
 		return middleware.RateLimitIPCompartilhado(d.LimitesIP, b, proxiesDe(cfg), cfg.IPHashKey)(fn)
 	}
@@ -233,7 +235,7 @@ func Routes(ctx context.Context, cfg *config.Config, d Deps) http.Handler {
 	mux.Handle("POST /api/v1/auth/password/forgot",
 		baldeIP(middleware.BaldeIP{Nome: "password_forgot", PorMinuto: 2, Rajada: 5}, cad.EsqueciASenha))
 	mux.Handle("POST /api/v1/auth/email/confirm",
-		baldeIP(middleware.BaldeIP{Nome: "email_confirm", PorMinuto: 10, Rajada: 10}, cad.ConfirmarEmail))
+		baldeIP(middleware.BaldeIP{Nome: "email_confirm", PorMinuto: 10, Rajada: 5}, cad.ConfirmarEmail))
 	mux.Handle("POST /api/v1/auth/password/reset",
 		baldeIP(middleware.BaldeIP{Nome: "password_reset", PorMinuto: 10, Rajada: 5}, cad.RedefinirSenha))
 

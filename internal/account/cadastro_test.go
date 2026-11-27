@@ -3,6 +3,7 @@ package account_test
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -54,18 +55,30 @@ func (m *mailerFalso) limpar() {
 	m.enviados = nil
 }
 
-// hasherContado conta as derivações e espera `demora` em cada uma.
+// hasherContado conta as derivações e espera `demora` em cada uma. Grava um
+// Argon2id de verdade, com o custo mínimo: a confirmação do e-mail o verifica
+// com o mecanismo do login.
 type hasherContado struct {
 	chamadas atomic.Int32
 	demora   time.Duration
 }
 
-func (h *hasherContado) hash(_ context.Context, plain string) (string, error) {
+func (h *hasherContado) hash(ctx context.Context, plain string) (string, error) {
 	h.chamadas.Add(1)
 	if h.demora > 0 {
 		time.Sleep(h.demora)
 	}
-	return prefixoBarato + plain, nil
+	return hashArgon2Barato(ctx, plain)
+}
+
+// hashArgon2Barato é um Argon2id válido com os parâmetros mínimos (8 KiB, t=1,
+// p=1): auth.VerifyPassword o confere em microssegundos.
+func hashArgon2Barato(_ context.Context, plain string) (string, error) {
+	sal := make([]byte, 16)
+	if _, err := rand.Read(sal); err != nil {
+		return "", err
+	}
+	return auth.HashPasswordWith(plain, sal, 8, 1, 1)
 }
 
 var linksDeTeste = account.Links{Base: "https://painel.exemplo"}
@@ -466,13 +479,25 @@ func TestCadastrarValidaAntesDeTudo(t *testing.T) {
 	}
 }
 
+// falhasDeLogin lê o contador do bloqueio da conta (o do login).
+func falhasDeLogin(t *testing.T, id uuid.UUID) (int, bool) {
+	t.Helper()
+	var n int
+	var travada bool
+	if err := testdb.Admin(t).QueryRow(context.Background(),
+		`SELECT failed_attempts, locked_until IS NOT NULL FROM users WHERE id = $1`, id).Scan(&n, &travada); err != nil {
+		t.Fatal(err)
+	}
+	return n, travada
+}
+
 func TestConfirmarEmailMarcaEConsome(t *testing.T) {
 	a := novoCadastro(t)
 	ctx := context.Background()
 	token := cadastrarEPegarToken(t, a, "fulano@exemplo.com")
 	id := idDoEmail(t, "fulano@exemplo.com")
 
-	if err := a.cad.ConfirmarEmail(ctx, token); err != nil {
+	if err := a.cad.ConfirmarEmail(ctx, token, senha, nil); err != nil {
 		t.Fatal(err)
 	}
 	if !emailConfirmado(t, id) {
@@ -481,8 +506,62 @@ func TestConfirmarEmailMarcaEConsome(t *testing.T) {
 	if n := contar(t, `SELECT count(*) FROM audit_log WHERE user_id = $1 AND action = 'user.email_verified'`, id); n != 1 {
 		t.Fatalf("%d auditorias user.email_verified; queria 1", n)
 	}
-	if err := a.cad.ConfirmarEmail(ctx, token); !errors.Is(err, account.ErrTokenInvalido) {
+	if n, _ := falhasDeLogin(t, id); n != 0 {
+		t.Errorf("a senha certa ficou contada no bloqueio: %d falhas, queria 0", n)
+	}
+	if err := a.cad.ConfirmarEmail(ctx, token, senha, nil); !errors.Is(err, account.ErrTokenInvalido) {
 		t.Fatalf("segundo uso do token: %v; queria ErrTokenInvalido", err)
+	}
+}
+
+// A senha errada não confirma, não gasta o link e conta no bloqueio do login:
+// a confirmação não é um oráculo de senha à parte.
+func TestConfirmarEmailSenhaErradaNaoGastaOLink(t *testing.T) {
+	a := novoCadastro(t)
+	ctx := context.Background()
+	token := cadastrarEPegarToken(t, a, "fulano@exemplo.com")
+	id := idDoEmail(t, "fulano@exemplo.com")
+
+	if err := a.cad.ConfirmarEmail(ctx, token, "outra-senha-bem-comprida", nil); !errors.Is(err, account.ErrInvalidCredentials) {
+		t.Fatalf("senha errada: %v; queria ErrInvalidCredentials", err)
+	}
+	if emailConfirmado(t, id) {
+		t.Fatal("a senha errada confirmou o e-mail")
+	}
+	if n, _ := falhasDeLogin(t, id); n != 1 {
+		t.Errorf("%d falhas no bloqueio da conta, queria 1", n)
+	}
+	if err := a.cad.ConfirmarEmail(ctx, token, senha, nil); err != nil {
+		t.Fatalf("o link não valeu depois da senha errada: %v", err)
+	}
+	if !emailConfirmado(t, id) {
+		t.Fatal("a senha certa não confirmou o e-mail")
+	}
+	if n, _ := falhasDeLogin(t, id); n != 1 {
+		t.Errorf("a senha certa mexeu no contador: %d falhas, queria 1 (só a errada conta)", n)
+	}
+}
+
+// A senha vazia é 401 sem Argon2id e sem contar tentativa, e o link continua
+// valendo.
+func TestConfirmarEmailSenhaVazia(t *testing.T) {
+	a := novoCadastro(t)
+	ctx := context.Background()
+	token := cadastrarEPegarToken(t, a, "fulano@exemplo.com")
+	id := idDoEmail(t, "fulano@exemplo.com")
+
+	antes := auth.Argon2Verifications()
+	if err := a.cad.ConfirmarEmail(ctx, token, "", nil); !errors.Is(err, account.ErrInvalidCredentials) {
+		t.Fatalf("senha vazia: %v; queria ErrInvalidCredentials", err)
+	}
+	if n := auth.Argon2Verifications() - antes; n != 0 {
+		t.Errorf("senha vazia rodou %d Argon2id, queria 0", n)
+	}
+	if n, _ := falhasDeLogin(t, id); n != 0 {
+		t.Errorf("senha vazia contou %d falhas, queria 0", n)
+	}
+	if err := a.cad.ConfirmarEmail(ctx, token, senha, nil); err != nil {
+		t.Fatalf("o link não valeu depois da senha vazia: %v", err)
 	}
 }
 
@@ -492,7 +571,7 @@ func TestConfirmarEmailVencido(t *testing.T) {
 	id := idDoEmail(t, "fulano@exemplo.com")
 	a.clk.Advance(24*time.Hour + time.Second)
 
-	if err := a.cad.ConfirmarEmail(context.Background(), token); !errors.Is(err, account.ErrTokenInvalido) {
+	if err := a.cad.ConfirmarEmail(context.Background(), token, senha, nil); !errors.Is(err, account.ErrTokenInvalido) {
 		t.Fatalf("token vencido: %v; queria ErrTokenInvalido", err)
 	}
 	if emailConfirmado(t, id) {
@@ -500,13 +579,113 @@ func TestConfirmarEmailVencido(t *testing.T) {
 	}
 }
 
+// O token inválido vem antes da senha: com a certa, a errada ou nenhuma, é
+// ErrTokenInvalido, sem Argon2id e sem contar tentativa.
 func TestConfirmarEmailTokenLixo(t *testing.T) {
 	a := novoCadastro(t)
 	cadastrarEPegarToken(t, a, "fulano@exemplo.com")
+	id := idDoEmail(t, "fulano@exemplo.com")
+	antes := auth.Argon2Verifications()
 	for _, token := range []string{"x", ""} {
-		if err := a.cad.ConfirmarEmail(context.Background(), token); !errors.Is(err, account.ErrTokenInvalido) {
-			t.Fatalf("token %q: %v; queria ErrTokenInvalido", token, err)
+		for _, s := range []string{senha, "outra-senha-bem-comprida", ""} {
+			if err := a.cad.ConfirmarEmail(context.Background(), token, s, nil); !errors.Is(err, account.ErrTokenInvalido) {
+				t.Fatalf("token %q, senha %q: %v; queria ErrTokenInvalido", token, s, err)
+			}
 		}
+	}
+	if n := auth.Argon2Verifications() - antes; n != 0 {
+		t.Errorf("token inválido rodou %d Argon2id, queria 0", n)
+	}
+	if n, _ := falhasDeLogin(t, id); n != 0 {
+		t.Errorf("token inválido contou %d falhas, queria 0", n)
+	}
+}
+
+// Cinco senhas erradas travam a conta no bloqueio do login, com a auditoria do
+// login e o ip_hash de quem deu a quinta; travada, até a senha certa é
+// auth.LockedError com o fim da trava, sem contar nada, e o link continua
+// valendo para quando a trava vencer.
+func TestConfirmarEmailBloqueiaComoOLogin(t *testing.T) {
+	a := novoCadastro(t)
+	ctx := context.Background()
+	token := cadastrarEPegarToken(t, a, "fulano@exemplo.com")
+	id := idDoEmail(t, "fulano@exemplo.com")
+	ipDe := func(i int) []byte { return crypto.HashToken(fmt.Sprintf("origem-%d", i)) }
+
+	for i := range auth.LockThreshold {
+		if err := a.cad.ConfirmarEmail(ctx, token, "outra-senha-bem-comprida", ipDe(i)); !errors.Is(err, account.ErrInvalidCredentials) {
+			t.Fatalf("senha errada %d: %v; queria ErrInvalidCredentials", i+1, err)
+		}
+	}
+	travouEm := a.clk.Now()
+	if n, travada := falhasDeLogin(t, id); n != auth.LockThreshold || !travada {
+		t.Fatalf("%d falhas, travada = %v; queria %d e travada", n, travada, auth.LockThreshold)
+	}
+	var ipDaTrava []byte
+	if err := testdb.Admin(t).QueryRow(ctx,
+		`SELECT ip_hash FROM audit_log WHERE user_id = $1 AND action = 'user.locked'`, id).Scan(&ipDaTrava); err != nil {
+		t.Fatalf("auditoria user.locked: %v", err)
+	}
+	if !bytes.Equal(ipDaTrava, ipDe(auth.LockThreshold-1)) {
+		t.Errorf("ip_hash da trava = %x, queria o da quinta tentativa", ipDaTrava)
+	}
+
+	a.clk.Advance(time.Minute)
+	err := a.cad.ConfirmarEmail(ctx, token, senha, nil)
+	var travada auth.LockedError
+	if !errors.Is(err, auth.ErrLocked) || !errors.As(err, &travada) {
+		t.Fatalf("senha certa com a conta travada: %v; queria auth.LockedError", err)
+	}
+	if want := travouEm.Add(auth.LockDuration); !travada.Until.Equal(want) {
+		t.Errorf("Until = %v, queria %v (o fim da trava)", travada.Until, want)
+	}
+	if emailConfirmado(t, id) {
+		t.Fatal("a conta travada confirmou o e-mail")
+	}
+	if n, _ := falhasDeLogin(t, id); n != auth.LockThreshold {
+		t.Errorf("a conta travada contou tentativa: %d falhas, queria %d", n, auth.LockThreshold)
+	}
+
+	a.clk.Advance(auth.LockDuration)
+	if err := a.cad.ConfirmarEmail(ctx, token, senha, nil); err != nil {
+		t.Fatalf("depois da trava: %v", err)
+	}
+	if !emailConfirmado(t, id) {
+		t.Fatal("a senha certa depois da trava não confirmou")
+	}
+}
+
+// A senha trocada entre a verificação e a transação não confirma: a senha
+// conferida já não é a da conta. O link continua valendo.
+func TestConfirmarEmailSenhaTrocadaNoMeioRecusa(t *testing.T) {
+	a := novoCadastro(t)
+	ctx := t.Context()
+	token := cadastrarEPegarToken(t, a, "fulano@exemplo.com")
+	id := idDoEmail(t, "fulano@exemplo.com")
+
+	soltar := segurarTrava(t, a.pool, id)
+	fim := make(chan error, 1)
+	go func() { fim <- a.cad.ConfirmarEmail(ctx, token, senha, nil) }()
+	if esperou, err := esperarNaTravaDoUsuario(t, a.pool, id, fim); !esperou {
+		soltar()
+		t.Fatalf("a confirmação terminou antes de esperar a trava do usuário: %v", err)
+	}
+	outro, err := hashArgon2Barato(ctx, "a-senha-trocada-no-meio")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := testdb.Admin(t).Exec(ctx, `UPDATE users SET password_hash = $2 WHERE id = $1`, id, outro); err != nil {
+		t.Fatal(err)
+	}
+	soltar()
+	if err := <-fim; !errors.Is(err, account.ErrInvalidCredentials) {
+		t.Fatalf("confirmação com a senha antiga: %v; queria ErrInvalidCredentials", err)
+	}
+	if emailConfirmado(t, id) {
+		t.Fatal("a senha antiga confirmou o e-mail")
+	}
+	if err := a.cad.ConfirmarEmail(ctx, token, "a-senha-trocada-no-meio", nil); err != nil {
+		t.Fatalf("o link não valeu com a senha nova: %v", err)
 	}
 }
 
@@ -523,7 +702,7 @@ func TestConfirmacaoSimultaneaSoUmaVence(t *testing.T) {
 	for i := range n {
 		wg.Go(func() {
 			largada.Wait()
-			erros[i] = a.cad.ConfirmarEmail(context.Background(), token)
+			erros[i] = a.cad.ConfirmarEmail(context.Background(), token, senha, nil)
 		})
 	}
 	largada.Done()
@@ -545,6 +724,9 @@ func TestConfirmacaoSimultaneaSoUmaVence(t *testing.T) {
 	}
 	if c := contar(t, `SELECT count(*) FROM audit_log WHERE user_id = $1 AND action = 'user.email_verified'`, id); c != 1 {
 		t.Fatalf("%d auditorias user.email_verified; queria 1", c)
+	}
+	if f, _ := falhasDeLogin(t, id); f != 0 {
+		t.Errorf("as senhas certas ficaram contadas: %d falhas, queria 0", f)
 	}
 }
 
@@ -569,10 +751,10 @@ func TestReenviarInvalidaOLinkAnterior(t *testing.T) {
 		t.Fatalf("corpo sem o link de confirmação: %q", enviados[0].body)
 	}
 
-	if err := a.cad.ConfirmarEmail(ctx, antigo); !errors.Is(err, account.ErrTokenInvalido) {
+	if err := a.cad.ConfirmarEmail(ctx, antigo, senha, nil); !errors.Is(err, account.ErrTokenInvalido) {
 		t.Fatalf("token antigo: %v; queria ErrTokenInvalido", err)
 	}
-	if err := a.cad.ConfirmarEmail(ctx, novoToken); err != nil {
+	if err := a.cad.ConfirmarEmail(ctx, novoToken, senha, nil); err != nil {
 		t.Fatalf("token novo: %v", err)
 	}
 	if !emailConfirmado(t, id) {
@@ -585,7 +767,7 @@ func TestReenviarJaConfirmadoNaoManda(t *testing.T) {
 	ctx := context.Background()
 	token := cadastrarEPegarToken(t, a, "fulano@exemplo.com")
 	id := idDoEmail(t, "fulano@exemplo.com")
-	if err := a.cad.ConfirmarEmail(ctx, token); err != nil {
+	if err := a.cad.ConfirmarEmail(ctx, token, senha, nil); err != nil {
 		t.Fatal(err)
 	}
 	tokens := contar(t, `SELECT count(*) FROM account_tokens WHERE user_id = $1`, id)
