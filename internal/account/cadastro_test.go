@@ -31,10 +31,13 @@ type mailerFalso struct {
 	enviados []emailEnviado
 }
 
-func (m *mailerFalso) SendAccountEmail(_ context.Context, to, subject, body string) error {
+func (m *mailerFalso) SendAccountEmail(ctx context.Context, to, subject, body string, entrega account.EntregaDeEmail) error {
 	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.enviados = append(m.enviados, emailEnviado{to: to, subject: subject, body: body})
+	m.enviados = append(m.enviados, emailEnviado{to, subject, body})
+	m.mu.Unlock()
+	if entrega.Concluir != nil {
+		return entrega.Concluir(ctx, account.AceitoPeloTransporte)
+	}
 	return nil
 }
 
@@ -105,6 +108,14 @@ func contar(t *testing.T, sql string, args ...any) int {
 	return n
 }
 
+func conferirVinculoDoTitular(t *testing.T, id uuid.UUID) {
+	t.Helper()
+	if n := contar(t, `SELECT count(*) FROM projects p JOIN project_members m ON m.project_id = p.id
+		WHERE p.titular_id = $1 AND p.is_default AND m.user_id = $1 AND m.role = 'owner'`, id); n != 1 {
+		t.Fatalf("%d Projetos padrão com owner; queria 1", n)
+	}
+}
+
 func idDoEmail(t *testing.T, email string) uuid.UUID {
 	t.Helper()
 	var id uuid.UUID
@@ -154,10 +165,7 @@ func TestCadastrarContaNovaCriaUsuarioProjetoEToken(t *testing.T) {
 	if n := contar(t, `SELECT count(*) FROM users WHERE id = $1 AND email_verified_at IS NULL AND NOT is_operator`, id); n != 1 {
 		t.Fatal("o usuário do cadastro nasceu confirmado ou operador")
 	}
-	if n := contar(t, `SELECT count(*) FROM projects p JOIN project_members m ON m.project_id = p.id
-		WHERE p.titular_id = $1 AND p.is_default AND m.user_id = $1 AND m.role = 'owner'`, id); n != 1 {
-		t.Fatalf("%d Projetos padrão com owner; queria 1", n)
-	}
+	conferirVinculoDoTitular(t, id)
 	vence := a.clk.Now().Add(24 * time.Hour)
 	if n := contar(t, `SELECT count(*) FROM account_tokens
 		WHERE user_id = $1 AND purpose = 'confirm_email' AND used_at IS NULL AND expires_at = $2`, id, vence); n != 1 {
@@ -295,10 +303,12 @@ func TestCadastrarSimultaneoUsaGrafiaDaContaCriada(t *testing.T) {
 	if n := contar(t, `SELECT count(*) FROM projects`); n != 1 {
 		t.Fatalf("%d projetos; queria 1", n)
 	}
+	var titular uuid.UUID
 	var cadastrado string
-	if err := admin.QueryRow(ctx, `SELECT email FROM users`).Scan(&cadastrado); err != nil {
+	if err := admin.QueryRow(ctx, `SELECT id, email FROM users`).Scan(&titular, &cadastrado); err != nil {
 		t.Fatal(err)
 	}
+	conferirVinculoDoTitular(t, titular)
 	enviados := a.mailer.todos()
 	if len(enviados) != 2 {
 		t.Fatalf("%d e-mails; queria 2", len(enviados))
@@ -538,9 +548,9 @@ func TestReenviarJaConfirmadoNaoManda(t *testing.T) {
 // mailerForaDoAr recusa todo e-mail, como uma fila que não aceita mais nada.
 type mailerForaDoAr struct{ chamadas atomic.Int32 }
 
-func (m *mailerForaDoAr) SendAccountEmail(context.Context, string, string, string) error {
+func (m *mailerForaDoAr) SendAccountEmail(context.Context, string, string, string, account.EntregaDeEmail) error {
 	m.chamadas.Add(1)
-	return errors.New("fila de e-mails de conta fora do ar")
+	return errors.New("falha sintética: endereço, corpo e token da mensagem")
 }
 
 // capturarLog troca o logger padrão por um que escreve no buffer devolvido, e
@@ -578,7 +588,7 @@ func TestCadastrarComMailerForaDoArDevolveNilNosDoisRamos(t *testing.T) {
 		t.Fatalf("%d usuários; queria 1 (a conta nasce mesmo sem o e-mail)", n)
 	}
 	saida := log.String()
-	if !strings.Contains(saida, "fila de e-mails de conta fora do ar") {
+	if !strings.Contains(saida, "e-mail de conta não enfileirado") {
 		t.Errorf("o erro do mailer não foi para o log: %s", saida)
 	}
 	if strings.Contains(saida, "fulano") || strings.Contains(saida, "token") {

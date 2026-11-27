@@ -2,15 +2,47 @@ package account
 
 import (
 	"context"
+	"errors"
+	"log/slog"
 	"strings"
 )
 
-// AccountMailer é a porta dos e-mails de conta (confirmação, "já tem conta",
-// redefinição). SendAccountEmail enfileira e volta; não espera a rede. Se a
-// latência do envio aparecesse só num dos ramos (conta existente ou não), o
-// tempo de resposta denunciaria a conta.
+// ResultadoDoEnvio é a resposta do transporte ou o descarte antes da entrega.
+type ResultadoDoEnvio uint8
+
+const (
+	EnvioIncerto ResultadoDoEnvio = iota
+	AceitoPeloTransporte
+	EnvioDescartado
+)
+
+// ConclusaoDoEnvio registra o resultado. Pode ser repetida se a gravação
+// falhar depois de o trabalho já ter sido feito.
+type ConclusaoDoEnvio func(context.Context, ResultadoDoEnvio) error
+
+// EntregaDeEmail descreve o ciclo de um link. O trabalhador chama Preparar
+// antes das cotas e da rede. false significa que o link já perdeu a validade.
+// Mensagens sem link usam o valor zero.
+type EntregaDeEmail struct {
+	Preparar func(context.Context) (bool, error)
+	Concluir ConclusaoDoEnvio
+}
+
+// AccountMailer enfileira e volta sem aguardar a rede. A conclusão pertence
+// ao trabalhador, inclusive quando este pode limpar um descarte da fila.
 type AccountMailer interface {
-	SendAccountEmail(ctx context.Context, to, subject, body string) error
+	SendAccountEmail(ctx context.Context, to, subject, body string, entrega EntregaDeEmail) error
+}
+
+// ErrEmailSuprimido indica que o mailer descartou a mensagem antes de enfileirar.
+var ErrEmailSuprimido = errors.New("e-mail de conta suprimido")
+
+// enviarEmailDeConta mantém a resposta independente da fila e do provedor.
+// Um erro do mailer pode conter dados da mensagem, então o log é fixo.
+func enviarEmailDeConta(ctx context.Context, mailer AccountMailer, to, assunto, corpo string, entrega EntregaDeEmail) {
+	if err := mailer.SendAccountEmail(ctx, to, assunto, corpo, entrega); err != nil && !errors.Is(err, ErrEmailSuprimido) {
+		slog.ErrorContext(ctx, "e-mail de conta não enfileirado")
+	}
 }
 
 // Links monta os links dos e-mails de conta a partir da URL pública do painel.

@@ -144,7 +144,7 @@ func TestRemetenteDeContaNaFiacao(t *testing.T) {
 	if mailer != account.AccountMailer(e) {
 		t.Fatalf("mailerDeConta = %#v, queria o enviador", mailer)
 	}
-	if err := mailer.SendAccountEmail(context.Background(), "pessoa@exemplo.test", "Assunto", "Corpo"); err != nil {
+	if err := mailer.SendAccountEmail(context.Background(), "pessoa@exemplo.test", "Assunto", "Corpo", account.EntregaDeEmail{}); err != nil {
 		t.Fatal(err)
 	}
 	got := rf.esperar(t, 1)

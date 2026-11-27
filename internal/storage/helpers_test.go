@@ -48,16 +48,9 @@ func projetoPadraoDe(t *testing.T, pool *pgxpool.Pool, dono uuid.UUID) uuid.UUID
 	ctx := context.Background()
 	var projeto uuid.UUID
 	err := storage.InUserTx(ctx, pool, dono, func(q *db.Queries) error {
-		if err := q.EnsureDefaultProject(ctx, db.EnsureDefaultProjectParams{
-			ID: novoID(), Name: "Projeto padrão", TitularID: dono, Now: agora,
-		}); err != nil {
-			return err
-		}
 		var err error
-		if projeto, err = q.GetDefaultProjectID(ctx, dono); err != nil {
-			return err
-		}
-		return q.EnsureProjectOwner(ctx, db.EnsureProjectOwnerParams{ProjectID: projeto, UserID: dono, Now: agora})
+		projeto, err = storage.CriarProjetoPadraoNaTx(ctx, q, dono, agora)
+		return err
 	})
 	if err != nil {
 		t.Fatalf("Projeto padrão de %s: %v", dono, err)

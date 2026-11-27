@@ -11,6 +11,7 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/BipoXDXD/stillon/internal/account"
 	"github.com/BipoXDXD/stillon/internal/contaemail"
 	"github.com/BipoXDXD/stillon/internal/crypto"
 	"github.com/BipoXDXD/stillon/internal/notify"
@@ -162,7 +163,7 @@ func (c *cenario) rodar(t *testing.T) func() {
 
 func enfileirar(t *testing.T, e *contaemail.Enviador, para string) {
 	t.Helper()
-	if err := e.SendAccountEmail(context.Background(), para, "Assunto do teste", "Corpo do teste\n"); err != nil {
+	if err := e.SendAccountEmail(context.Background(), para, "Assunto do teste", "Corpo do teste\n", account.EntregaDeEmail{}); err != nil {
 		t.Fatalf("SendAccountEmail = %v, queria nil", err)
 	}
 }
@@ -238,7 +239,7 @@ func TestFilaCheiaNaoBloqueia(t *testing.T) {
 	erros := make(chan error, 1)
 	go func() {
 		for range 101 {
-			if err := c.enviador.SendAccountEmail(context.Background(), "pessoa@exemplo.com", "a", "b"); err != nil {
+			if err := c.enviador.SendAccountEmail(context.Background(), "pessoa@exemplo.com", "a", "b", account.EntregaDeEmail{}); err != nil {
 				erros <- err
 				return
 			}
@@ -247,8 +248,8 @@ func TestFilaCheiaNaoBloqueia(t *testing.T) {
 	}()
 	select {
 	case err := <-erros:
-		if err != nil {
-			t.Fatalf("SendAccountEmail = %v, queria nil", err)
+		if !errors.Is(err, account.ErrEmailSuprimido) {
+			t.Fatalf("fila cheia: %v, queria ErrEmailSuprimido", err)
 		}
 	case <-time.After(time.Second):
 		t.Fatal("SendAccountEmail bloqueou com a fila cheia")
@@ -375,13 +376,27 @@ func TestEncerramentoCabeNoPrazoDoDreno(t *testing.T) {
 		feito := make(chan struct{})
 		go func() { e.Rodar(ctx); close(feito) }()
 
-		enfileirar(t, e, "pessoa@exemplo.com")
-		enfileirar(t, e, "outra@exemplo.com") // fica para o dreno
+		resultados := make(chan account.ResultadoDoEnvio, 2)
+		concluir := func(_ context.Context, resultado account.ResultadoDoEnvio) error {
+			resultados <- resultado
+			return nil
+		}
+		for _, destino := range []string{"pessoa@exemplo.com", "outra@exemplo.com"} {
+			if err := e.SendAccountEmail(t.Context(), destino, "Assunto", "Corpo", account.EntregaDeEmail{Concluir: concluir}); err != nil {
+				t.Fatal(err)
+			}
+		}
 		<-transporte.comecou
 		inicio := time.Now()
 		cancel()
 		<-feito
 
+		if len(resultados) != 2 {
+			t.Fatalf("%d conclusões no encerramento, queria duas", len(resultados))
+		}
+		if emVoo, naFila := <-resultados, <-resultados; emVoo != account.EnvioIncerto || naFila != account.EnvioDescartado {
+			t.Errorf("conclusões no encerramento: %v, %v. Queria envio em voo incerto e enfileirado descartado", emVoo, naFila)
+		}
 		if d := time.Since(inicio); d != orcamento {
 			t.Errorf("Rodar levou %v no relógio virtual depois do cancel, queria %v", d, orcamento)
 		}
@@ -423,7 +438,9 @@ func TestEnvioDepoisDoEncerramentoVaiParaOLog(t *testing.T) {
 	cancel()
 	c.enviador.Rodar(ctx)
 
-	enfileirar(t, c.enviador, "tarde@exemplo.com")
+	if err := c.enviador.SendAccountEmail(t.Context(), "tarde@exemplo.com", "a", "b", account.EntregaDeEmail{}); !errors.Is(err, account.ErrEmailSuprimido) {
+		t.Fatalf("fila encerrada: %v, queria ErrEmailSuprimido", err)
+	}
 
 	log := c.log.String()
 	if !strings.Contains(log, "motivo=encerrado") {
@@ -431,5 +448,79 @@ func TestEnvioDepoisDoEncerramentoVaiParaOLog(t *testing.T) {
 	}
 	if strings.Contains(log, "tarde@exemplo.com") {
 		t.Errorf("o log traz o endereço: %s", log)
+	}
+}
+
+func TestFalhaDoTransporteOmiteDadosDaMensagem(t *testing.T) {
+	c := novoCenario(true, true)
+	c.transporte.erro = errors.New("pessoa@exemplo.test https://painel.exemplo.test/#token=segredo-sintetico assunto-sintetico corpo-sintetico")
+	parar := c.rodar(t)
+	if err := c.enviador.SendAccountEmail(t.Context(), "pessoa@exemplo.test", "assunto-sintetico", "corpo-sintetico", account.EntregaDeEmail{}); err != nil {
+		t.Fatal(err)
+	}
+	parar()
+
+	registro := c.log.String()
+	if !strings.Contains(registro, "e-mail de conta falhou") {
+		t.Fatal("falha do transporte ausente no log")
+	}
+	for _, dado := range []string{"pessoa@exemplo.test", "https://painel.exemplo.test", "segredo-sintetico", "assunto-sintetico", "corpo-sintetico"} {
+		if strings.Contains(registro, dado) {
+			t.Error("o log expôs dados da mensagem")
+		}
+	}
+}
+
+func TestRepeteConclusaoSemReenviarMensagem(t *testing.T) {
+	c := novoCenario(true, true)
+	parar := c.rodar(t)
+	var resultados []account.ResultadoDoEnvio
+	concluir := func(ctx context.Context, resultado account.ResultadoDoEnvio) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		resultados = append(resultados, resultado)
+		if len(resultados) == 1 {
+			return errors.New("resposta do commit perdida")
+		}
+		return nil
+	}
+	if err := c.enviador.SendAccountEmail(t.Context(), "pessoa@exemplo.test", "Assunto", "Corpo", account.EntregaDeEmail{Concluir: concluir}); err != nil {
+		t.Fatal(err)
+	}
+	parar()
+	if n := c.transporte.total(); n != 1 {
+		t.Errorf("transporte recebeu %d envios, queria um", n)
+	}
+	if len(resultados) != 2 || resultados[0] != account.AceitoPeloTransporte || resultados[1] != account.AceitoPeloTransporte {
+		t.Errorf("conclusões = %v, queria duas conclusões de aceite", resultados)
+	}
+}
+
+func TestFilaCheiaDelegaConclusaoAoTrabalhador(t *testing.T) {
+	c := novoCenario(true, true)
+	for range 100 {
+		enfileirar(t, c.enviador, "destino@exemplo.test")
+	}
+	resultados := make(chan account.ResultadoDoEnvio, 1)
+	concluir := func(_ context.Context, resultado account.ResultadoDoEnvio) error {
+		resultados <- resultado
+		return nil
+	}
+	err := c.enviador.SendAccountEmail(t.Context(), "suprimido@exemplo.test", "Assunto", "Corpo", account.EntregaDeEmail{Concluir: concluir})
+	if !errors.Is(err, account.ErrEmailSuprimido) {
+		t.Fatalf("fila cheia: %v, queria ErrEmailSuprimido", err)
+	}
+	if len(resultados) != 0 {
+		t.Fatal("a submissão executou a conclusão sem o trabalhador")
+	}
+	ctx, parar := context.WithCancel(t.Context())
+	parar()
+	c.enviador.Rodar(ctx)
+	if len(resultados) != 1 || <-resultados != account.EnvioDescartado {
+		t.Fatal("o trabalhador deveria concluir o descarte da mensagem recusada")
+	}
+	if n := c.transporte.total(); n != 100 {
+		t.Errorf("transporte recebeu %d mensagens, queria as 100 aceitas pela fila", n)
 	}
 }
