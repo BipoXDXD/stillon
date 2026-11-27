@@ -494,28 +494,45 @@ func cenarioDeTeto(t *testing.T, libera bool) (respostas []respostaCrua, entrega
 // Review Focus 4: com o teto esgotado, signup e forgot respondem byte a byte
 // como com o teto livre, com conta e sem conta, e nada chega ao transporte.
 func TestRespostasIdenticasComTetoEsgotado(t *testing.T) {
-	// Um subteste por cenário: o banco de teste é um só, restaurado no fim
-	// de cada subteste, e a fixture da conta existente nasce de novo.
-	var livre, esgotado []respostaCrua
-	var entregasLivre, entregasEsgotado int32
-	t.Run("teto livre", func(t *testing.T) { livre, entregasLivre = cenarioDeTeto(t, true) })
-	t.Run("teto esgotado", func(t *testing.T) { esgotado, entregasEsgotado = cenarioDeTeto(t, false) })
-	if len(livre) != 4 || len(esgotado) != 4 {
-		t.Fatal("um dos cenários não chegou ao fim")
+	if testing.Short() {
+		t.Skip("precisa de Docker; pulado em -short")
 	}
-	if entregasLivre != 3 {
-		t.Fatalf("com o teto livre, %d entregas; queria 3 (o cenário não exercita o envio)", entregasLivre)
-	}
-	if entregasEsgotado != 0 {
-		t.Errorf("com o teto esgotado, %d entregas; queria 0", entregasEsgotado)
+	// O banco é restaurado após cada subteste, e a conta existente nasce de novo.
+	cenarios := []struct {
+		nome     string
+		libera   bool
+		entregas int32
+	}{
+		{"teto livre", true, 3},
+		{"teto esgotado", false, 0},
 	}
 	nomes := []string{"signup conta nova", "signup conta existente", "forgot com conta", "forgot sem conta"}
+	var respostas [2][]respostaCrua
+	for i, c := range cenarios {
+		t.Run(c.nome, func(t *testing.T) {
+			recebidas, entregas := cenarioDeTeto(t, c.libera)
+			if len(recebidas) != len(nomes) {
+				t.Fatalf("%d respostas; queria %d", len(recebidas), len(nomes))
+			}
+			if entregas != c.entregas {
+				t.Errorf("%d entregas; queria %d", entregas, c.entregas)
+			}
+			for j, nome := range nomes {
+				exigir202SemCorpo(t, nome, recebidas[j])
+			}
+			exigirIguais(t, "signup: nova × existente", recebidas[0], recebidas[1])
+			exigirIguais(t, "forgot: com × sem conta", recebidas[2], recebidas[3])
+			respostas[i] = recebidas
+		})
+	}
+	livre, esgotado := respostas[0], respostas[1]
+	// Um filtro -run pode selecionar só um cenário.
+	if livre == nil || esgotado == nil {
+		return
+	}
 	for i, nome := range nomes {
-		exigir202SemCorpo(t, nome+" (teto livre)", livre[i])
 		exigirIguais(t, nome+": teto livre × esgotado", livre[i], esgotado[i])
 	}
-	exigirIguais(t, "signup com teto esgotado: nova × existente", esgotado[0], esgotado[1])
-	exigirIguais(t, "forgot com teto esgotado: com × sem conta", esgotado[2], esgotado[3])
 }
 
 // O balde de signup por IP: rajada de 5, e o 6º seguido do mesmo IP é 429.

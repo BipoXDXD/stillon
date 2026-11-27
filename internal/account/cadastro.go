@@ -52,10 +52,10 @@ func ValidarCadastro(email, senha string) (string, error) {
 // Cadastrar cria a conta não confirmada, com o Projeto padrão e o token de
 // confirmação, e manda o link por e-mail. Com o e-mail já cadastrado
 // (confirmado ou não, em qualquer caixa), não grava nada e manda o "você já
-// tem conta; esqueceu a senha?". Nos dois casos devolve nil: o erro é só de
-// validação (antes de qualquer trabalho) ou de infraestrutura (banco,
-// inclusive auth.ErrArgon2Busy). A falha do mailer vai para o log e não muda
-// a resposta.
+// tem conta; esqueceu a senha?" para o endereço gravado. Nos dois casos
+// devolve nil. Os erros possíveis são de validação ou de infraestrutura,
+// inclusive auth.ErrArgon2Busy. A falha do mailer vai para o log e a
+// resposta continua igual.
 //
 // Contra a enumeração, os dois ramos fazem o mesmo trabalho caro: o Argon2id
 // roda SEMPRE, antes de qualquer consulta, e sai exatamente um e-mail, depois
@@ -81,12 +81,24 @@ func (c *Cadastro) Cadastrar(ctx context.Context, email, senha string) error {
 	now := c.clk.Now()
 
 	existente := false
+	destino := e
 	err = emTx(ctx, c.pool, func(q *db.Queries) error {
 		_, err := q.InsertSignupUser(ctx, db.InsertSignupUserParams{
 			ID: id, Email: e, PasswordHash: hash, CreatedAt: now,
 		})
 		if errors.Is(err, pgx.ErrNoRows) {
-			// ON CONFLICT DO NOTHING: o e-mail já tem conta, e nada muda nela.
+			// Depois do conflito, a leitura em READ COMMITTED enxerga a conta
+			// mesmo quando outro cadastro acabou de confirmar a transação.
+			userID, err := q.GetUserIDByEmail(ctx, e)
+			if err != nil {
+				return fmt.Errorf("buscar usuário do cadastro existente: %w", err)
+			}
+			conta, err := q.GetAccount(ctx, userID)
+			if err != nil {
+				return fmt.Errorf("ler conta do cadastro existente: %w", err)
+			}
+			// O citext ignora a caixa, mas o servidor de e-mail pode distingui-la.
+			destino = conta.Email
 			existente = true
 			return nil
 		}
@@ -114,7 +126,7 @@ func (c *Cadastro) Cadastrar(ctx context.Context, email, senha string) error {
 	} else {
 		assunto, corpo = emailDeConfirmacao(c.links.ConfirmarEmail(token))
 	}
-	c.enviarSemOraculo(ctx, e, assunto, corpo)
+	c.enviarSemOraculo(ctx, destino, assunto, corpo)
 	return nil
 }
 
