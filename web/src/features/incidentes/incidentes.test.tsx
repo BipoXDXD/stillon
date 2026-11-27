@@ -22,7 +22,7 @@ describe('incidentes', () => {
     )
     await r.usuario.click(screen.getByRole('button', { name: 'Reconhecer o incidente de API' }))
     expect(await screen.findByText(/Reconhecido em/)).toBeInTheDocument()
-    expect(r.falsa.chamadas('POST /incidents/:id/ack')).toBe(1)
+    expect(r.falsa.chamadas('POST /projects/:projectId/incidents/:id/ack')).toBe(1)
   })
 
   it('o filtro vai para a URL e muda a consulta', async () => {
@@ -76,7 +76,7 @@ describe('incidentes', () => {
       })
       const pedidos = { total: 0 }
       servidor.use(
-        http.get('*/api/v1/incidents', async ({ request }) => {
+        http.get('*/api/v1/projects/:projectId/incidents', async ({ request }) => {
           if (!new URL(request.url).searchParams.has('cursor')) return
           pedidos.total++
           await preso
@@ -131,7 +131,7 @@ describe('incidentes', () => {
       const r = await renderizarPainel('/incidents?status=all')
       const pagina = Array.from({ length: 50 }, (_, i) => incidente({ id: `inc-${i}`, target_name: `Alvo ${i}` }))
       servidor.use(
-        http.get('*/api/v1/incidents', ({ request }) =>
+        http.get('*/api/v1/projects/:projectId/incidents', ({ request }) =>
           new URL(request.url).searchParams.has('cursor')
             ? HttpResponse.json({ items: [] })
             : HttpResponse.json({ items: pagina, next_cursor: 'inc-49' }),
@@ -159,7 +159,7 @@ describe('incidentes', () => {
 
     it('uma falha mantém o foco no botão, que volta a funcionar', async () => {
       const r = await listaCom(60)
-      r.falsa.estado.forcar.set('GET /incidents', { status: 503, code: 'unavailable' })
+      r.falsa.estado.forcar.set('GET /projects/:projectId/incidents', { status: 503, code: 'unavailable' })
       await r.usuario.click(botao())
       expect(await screen.findByText(/Não foi possível atualizar agora/)).toBeInTheDocument()
       expect(botao()).toHaveFocus()
@@ -250,7 +250,7 @@ describe('incidentes', () => {
     await r.cliente.refetchQueries()
     const itens = () => screen.getAllByRole('listitem').filter((li) => li.textContent?.includes('Tempo esgotado'))
     await waitFor(() => expect(itens()).toHaveLength(50))
-    r.falsa.estado.forcar.set('GET /incidents', { status: 503, code: 'unavailable' })
+    r.falsa.estado.forcar.set('GET /projects/:projectId/incidents', { status: 503, code: 'unavailable' })
     await r.usuario.click(screen.getByRole('button', { name: 'Carregar mais' }))
     expect(await screen.findByText(/Não foi possível atualizar agora/)).toBeInTheDocument()
     expect(itens()).toHaveLength(50)
@@ -261,12 +261,12 @@ describe('incidentes', () => {
     const r = await renderizarPainel('/incidents')
     r.falsa.estado.incidentes = [incidente()]
     await r.cliente.refetchQueries()
-    r.falsa.estado.forcar.set('POST /incidents/:id/ack', { status: 503, code: 'unavailable' })
-    const antes = r.falsa.chamadas('GET /incidents')
+    r.falsa.estado.forcar.set('POST /projects/:projectId/incidents/:id/ack', { status: 503, code: 'unavailable' })
+    const antes = r.falsa.chamadas('GET /projects/:projectId/incidents')
     await r.usuario.click(await screen.findByRole('button', { name: 'Reconhecer o incidente de API' }))
     const erro = await screen.findByRole('alert')
     // Mesmo com a falha a lista é reconsultada: o ack pode ter chegado ao servidor.
-    await waitFor(() => expect(r.falsa.chamadas('GET /incidents')).toBeGreaterThan(antes))
+    await waitFor(() => expect(r.falsa.chamadas('GET /projects/:projectId/incidents')).toBeGreaterThan(antes))
     expect(screen.getByRole('button', { name: 'Reconhecer o incidente de API' })).toBeEnabled()
     await r.usuario.click(screen.getByRole('radio', { name: 'Todos' }))
     await waitFor(() => expect(erro).not.toBeInTheDocument())
@@ -290,7 +290,7 @@ describe('incidentes', () => {
       fireEvent.click(botao)
     })
     expect(await screen.findByText(/Reconhecido em/)).toBeInTheDocument()
-    expect(r.falsa.chamadas('POST /incidents/:id/ack')).toBe(1)
+    expect(r.falsa.chamadas('POST /projects/:projectId/incidents/:id/ack')).toBe(1)
   })
 
   it('Reconhecer fica desabilitado enquanto o POST está em voo', async () => {
@@ -301,7 +301,7 @@ describe('incidentes', () => {
     const segurado = new Promise<void>((ok) => (soltar = ok))
     // Segura o ack e depois cai no handler da API falsa (sem retorno, o MSW segue adiante).
     servidor.use(
-      http.post('*/api/v1/incidents/:id/ack', async () => {
+      http.post('*/api/v1/projects/:projectId/incidents/:id/ack', async () => {
         await segurado
       }),
     )
@@ -313,7 +313,7 @@ describe('incidentes', () => {
     await r.usuario.click(botao)
     soltar()
     expect(await screen.findByText(/Reconhecido em/)).toBeInTheDocument()
-    expect(r.falsa.chamadas('POST /incidents/:id/ack')).toBe(1)
+    expect(r.falsa.chamadas('POST /projects/:projectId/incidents/:id/ack')).toBe(1)
   })
 
   // A trava é por incidente: com um ack em voo, o botão de outro incidente
@@ -326,7 +326,7 @@ describe('incidentes', () => {
     let soltar!: () => void
     const segurado = new Promise<void>((ok) => (soltar = ok))
     servidor.use(
-      http.post('*/api/v1/incidents/:id/ack', async ({ params }) => {
+      http.post('*/api/v1/projects/:projectId/incidents/:id/ack', async ({ params }) => {
         if (params.id === 'inc-1') await segurado
       }),
     )

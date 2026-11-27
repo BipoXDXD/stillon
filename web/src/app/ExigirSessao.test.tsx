@@ -2,6 +2,7 @@ import { setImmediate as concluirTurno } from 'node:timers/promises'
 import { act, screen } from '@testing-library/react'
 import { http, HttpResponse } from 'msw'
 import { expect, it, vi } from 'vitest'
+import { PROJETO_PADRAO } from '@/test/api-falsa'
 import { renderizarPainel } from '@/test/renderizar'
 import { servidor } from '@/test/setup'
 
@@ -78,7 +79,8 @@ it('Tentar de novo mostra splash e recupera o destino original quando a rede vol
     await act(() => r!.sessao.iniciar())
     expect(r.sessao.estado()).toBe('autenticado')
     expect(await screen.findByRole('heading', { name: 'Novo alvo' })).toHaveFocus()
-    expect(r.router.state.location.pathname).toBe('/targets/new')
+    // O link de antes dos projetos chega ao Projeto padrão, com a search.
+    expect(r.router.state.location.pathname).toBe(`/projects/${PROJETO_PADRAO}/targets/new`)
     expect(r.router.state.location.search).toBe('?origem=porta')
     expect(r.falsa.chamadas('POST /auth/refresh')).toBe(1)
   } finally {

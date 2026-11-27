@@ -24,6 +24,8 @@ const porCodigo: Record<string, string> = {
   content_rule_host_limit_reached: 'Limite de regras de conteúdo para este host atingido.',
   heartbeat_limit_reached: 'Limite de 100 heartbeats atingido.',
   channel_limit_reached: 'Limite de 10 canais atingido.',
+  // Sem o número: o teto muda no PR 5 (planos).
+  project_limit_reached: 'Limite de projetos atingido.',
   channel_not_pending: 'O canal não está mais aguardando verificação.',
   delivery_failed: 'Não conseguimos entregar a mensagem de teste. Confira o endereço.',
   status_page_exists: 'Este projeto já tem uma status page.',
@@ -65,7 +67,7 @@ const porMotivo: Record<string, string> = {
   unavailable: 'Indisponível neste servidor.',
 }
 
-const CARACTERE_INVISIVEL = 'Tem um caractere que não pode ser mostrado'
+export const CARACTERE_INVISIVEL = 'Tem um caractere que não pode ser mostrado'
 
 export const LIMITE_DA_REGRA = 'Até 256 caracteres.'
 export const CONTROLE_NA_REGRA = 'Sem tab, quebra de linha ou outro caractere de controle.'

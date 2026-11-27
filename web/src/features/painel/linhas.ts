@@ -29,13 +29,14 @@ type LinhaHeartbeat = LinhaComum & { tipo: 'heartbeat' }
 
 export type LinhaDeMonitor = LinhaHttp | LinhaHeartbeat
 
-export function linhaDoAlvo(it: ItemDoResumo, incidente: Incidente | undefined, agora: Date): LinhaDeMonitor {
+// prefixo: o começo dos caminhos do projeto ('/projects/{id}'), dono dos links.
+export function linhaDoAlvo(it: ItemDoResumo, incidente: Incidente | undefined, agora: Date, prefixo: string): LinhaDeMonitor {
   const estado = estadoExibido(it.state, it.enabled)
   return {
     tipo: 'http',
     chave: `http:${it.id}`,
     nome: it.name,
-    href: `/targets/${it.id}`,
+    href: `${prefixo}/targets/${it.id}`,
     estado,
     textoDoEstado: textoDoEstado(estado),
     situacao: situacaoDoAlvo(it, estado, incidente, agora),
@@ -43,7 +44,7 @@ export function linhaDoAlvo(it: ItemDoResumo, incidente: Incidente | undefined, 
     latenciaMs: it.last_latency_ms,
     uptime24h: it.uptime_24h,
     historico: it.spark,
-    incidenteHref: it.open_incident_id ? '/incidents?status=open' : null,
+    incidenteHref: it.open_incident_id ? `${prefixo}/incidents?status=open` : null,
   }
 }
 
@@ -62,19 +63,19 @@ function situacaoDoAlvo(it: ItemDoResumo, estado: EstadoExibido, incidente: Inci
 
 // Sem uptime e sem as 24 horas: o heartbeat não tem nada disso, e medida
 // inventada mentiria.
-export function linhaDoHeartbeat(hb: Heartbeat, agora: Date): LinhaDeMonitor {
+export function linhaDoHeartbeat(hb: Heartbeat, agora: Date, prefixo: string): LinhaDeMonitor {
   return {
     tipo: 'heartbeat',
     chave: `heartbeat:${hb.id}`,
     nome: hb.name,
-    href: `/heartbeats/${hb.id}`,
+    href: `${prefixo}/heartbeats/${hb.id}`,
     estado: estadoDoHeartbeat(hb.state),
     textoDoEstado: textoDoHeartbeat(hb.state),
     situacao: situacaoDoHeartbeat(hb, agora),
     tags: hb.tags,
     uptime24h: null,
     historico: [],
-    incidenteHref: hb.open_incident_id ? `/heartbeats/${hb.id}` : null,
+    incidenteHref: hb.open_incident_id ? `${prefixo}/heartbeats/${hb.id}` : null,
   }
 }
 

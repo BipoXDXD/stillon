@@ -1,7 +1,7 @@
 import { CircleCheck } from 'lucide-react'
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import { Link, useSearchParams } from 'react-router'
-import { useApi } from '@/app/contexto'
+import { useApiDoProjeto, useRotaDoProjeto } from '@/app/projeto'
 import { aoApontarPreCarregar, carregarDetalhe } from '@/app/rotas-sob-demanda'
 import { EstadoDaConsulta } from '@/components/EstadoDaConsulta'
 import {
@@ -19,7 +19,7 @@ import { estiloDeCartao } from '@/components/ui/cartao'
 import { ControleSegmentado, type OpcaoSegmentada } from '@/components/ui/controle-segmentado'
 import { estadoDoHeartbeat, textoDoHeartbeat } from '@/features/heartbeats/estado'
 import { useTarefasQuePedemAtencao } from '@/features/heartbeats/tarefas-que-pedem-atencao'
-import { chaves, useHeartbeats, useIncidentes, useIncidentesAbertos } from '@/lib/api/consultas'
+import { useChavesDoProjeto, useHeartbeats, useIncidentes, useIncidentesAbertos } from '@/lib/api/consultas'
 import { textoDaCausa } from '@/lib/api/mensagens'
 import type { Heartbeat, Incidente } from '@/lib/api/schemas'
 import { dataHora } from '@/lib/format'
@@ -58,6 +58,7 @@ function Cartao({
   reconhecendo: boolean
   aoReconhecer: (id: string) => void
 }) {
+  const noProjeto = useRotaDoProjeto()
   const situacao = situacaoDoIncidente(i)
   return (
     // sm:flex-nowrap: na tela larga, o texto encolhe (min-w-0) e o Reconhecer
@@ -76,7 +77,7 @@ function Cartao({
             <Link
               // O foco vem para cá depois do "Carregar mais".
               id={`incidente-${i.id}`}
-              to={`/targets/${i.target_id}`}
+              to={noProjeto(`/targets/${i.target_id}`)}
               {...aoApontarPreCarregar(carregarDetalhe)}
               className={cn('alvo-de-toque underline-offset-4 hover:underline', situacao === 'resolvido' && 'text-apagado')}
             >
@@ -147,13 +148,14 @@ function Vazio({ filtro, soDosAlvos }: { filtro: Filtro; soDosAlvos: boolean }) 
 // Os incidentes de heartbeat têm rotas próprias: a
 // lista aponta as tarefas fora, em vez de fingir que não existem.
 function TarefasQuePedemAtencao({ tarefas }: { tarefas: readonly Heartbeat[] }) {
+  const noProjeto = useRotaDoProjeto()
   if (tarefas.length === 0) return null
   return (
     <Grupo titulo="Tarefas que pedem atenção">
       <ul className="space-y-3">
         {tarefas.map((hb) => (
           <li key={hb.id} className={cn(estiloDeCartao, 'flex flex-wrap items-center gap-x-3 gap-y-2 border-l-4 border-l-fora')}>
-            <Link to={`/heartbeats/${hb.id}`} className="alvo-de-toque min-w-0 font-semibold underline-offset-4 hover:underline">
+            <Link to={noProjeto(`/heartbeats/${hb.id}`)} className="alvo-de-toque min-w-0 font-semibold underline-offset-4 hover:underline">
               {hb.name}
             </Link>
             <SeloDeEstado estado={estadoDoHeartbeat(hb.state)} texto={textoDoHeartbeat(hb.state)} />
@@ -174,7 +176,8 @@ export function PaginaIncidentes() {
   const abertos = useIncidentesAbertos()
   const heartbeats = useHeartbeats()
   const tarefas = useTarefasQuePedemAtencao()
-  const api = useApi()
+  const api = useApiDoProjeto()
+  const chave = useChavesDoProjeto()
   const avisar = useAvisar()
   const [erro, setErro] = useState<string | null>(null)
   // O incidente cujo Reconhecer acabou de ser usado. Se o botão sumiu (o ack
@@ -194,7 +197,7 @@ export function PaginaIncidentes() {
 
   const { reconhecendo, reconhecer } = useReconhecer({
     enviar: api.reconhecer,
-    consulta: chaves.todosOsIncidentes,
+    consulta: chave.todosOsIncidentes,
     aoNaoEncontrar: () => avisar('O incidente não existe mais: o alvo foi apagado, talvez em outra aba.'),
     aoErrar: setErro,
     aoTerminar: (id) => {

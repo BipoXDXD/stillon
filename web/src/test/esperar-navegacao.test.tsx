@@ -2,6 +2,7 @@ import { setImmediate as concluirTurno } from 'node:timers/promises'
 import { act, screen } from '@testing-library/react'
 import { beforeEach, expect, it, vi } from 'vitest'
 import { rotas } from '@/app/rotas'
+import { PROJETO_PADRAO } from './api-falsa'
 import { esperarNavegacao } from './esperar-navegacao'
 import { renderizarPainel } from './renderizar'
 
@@ -86,7 +87,10 @@ function observarAbort(signal: AbortSignal) {
 }
 
 it('espera o destino idle após o POST e limpa observadores com eventos reais', async ({ signal }) => {
-  const rota = rotas[1]?.children?.[0]?.children?.flatMap((r) => r.children ?? []).find((r) => r.path === 'targets/:id')
+  const rota = rotas[1]?.children?.[0]?.children
+    ?.find((r) => r.path === 'projects/:projectId')
+    ?.children?.flatMap((r) => r.children ?? [])
+    .find((r) => r.path === 'targets/:id')
   if (!rota || typeof rota.lazy !== 'function') throw new Error('lazy real do detalhe ausente')
   const original = rota.lazy
   const post = portao()
@@ -110,7 +114,7 @@ it('espera o destino idle após o POST e limpa observadores com eventos reais', 
   let pararSentinela: (() => void) | undefined
   let restaurarSubscribe: (() => void) | undefined
   try {
-    r = await renderizarPainel('/targets/new')
+    r = await renderizarPainel(`/projects/${PROJETO_PADRAO}/targets/new`)
     const router = r.router
     const subscribe = router.subscribe.bind(router)
     let entregas = 0
@@ -121,26 +125,26 @@ it('espera o destino idle após o POST e limpa observadores com eventos reais', 
       ouvinte(...args)
     }))
     restaurarSubscribe = () => observacao.mockRestore()
-    const esperaA = acompanhar(esperarNavegacao(router, '/targets/alvo-1', a.signal))
+    const esperaA = acompanhar(esperarNavegacao(router, `/projects/${PROJETO_PADRAO}/targets/alvo-1`, a.signal))
     await r.usuario.type(screen.getByLabelText('Nome'), 'Site')
     await r.usuario.type(screen.getByLabelText('URL'), 'https://exemplo.com')
     await act(async () => {
       await r!.usuario.click(screen.getByRole('button', { name: 'Cadastrar' }))
       await post.aberto
       await concluirTurno()
-      expect(r!.falsa.chamadas('POST /targets')).toBe(1)
-      expect(router.state.location.pathname).toBe('/targets/new')
+      expect(r!.falsa.chamadas('POST /projects/:projectId/targets')).toBe(1)
+      expect(router.state.location.pathname).toBe(`/projects/${PROJETO_PADRAO}/targets/new`)
       expect(router.state.navigation.state).toBe('idle')
       expect(esperaA.estado()).toBe('pendente')
       liberarPost.abrir()
       await lazy.aberto
       await concluirTurno()
-      expect(router.state.location.pathname).toBe('/targets/new')
+      expect(router.state.location.pathname).toBe(`/projects/${PROJETO_PADRAO}/targets/new`)
       expect(router.state.navigation.state).toBe('loading')
       expect(esperaA.estado()).toBe('pendente')
       // Mesmo destino atual: durante loading não há prontidão. Nenhuma
       // navegação extra é disparada para criar esse estado.
-      const esperaB = acompanhar(esperarNavegacao(router, '/targets/new', b.signal))
+      const esperaB = acompanhar(esperarNavegacao(router, `/projects/${PROJETO_PADRAO}/targets/new`, b.signal))
       await concluirTurno()
       expect(esperaB.estado()).toBe('pendente')
       const motivo = new Error('destino atual deixou de ser o destino desejado')
@@ -150,11 +154,11 @@ it('espera o destino idle após o POST e limpa observadores com eventos reais', 
       expect((await esperaB.resultado).erro).toBe(motivo)
       liberarLazy.abrir()
       expect((await esperaA.resultado).erro).toBeUndefined()
-      expect(router.state.location.pathname).toBe('/targets/alvo-1')
+      expect(router.state.location.pathname).toBe(`/projects/${PROJETO_PADRAO}/targets/alvo-1`)
       expect(router.state.navigation.state).toBe('idle')
     })
     expect(await screen.findByRole('heading', { name: 'Site' })).toBeInTheDocument()
-    expect(r.falsa.corpos('POST /targets')).toEqual([{
+    expect(r.falsa.corpos('POST /projects/:projectId/targets')).toEqual([{
       name: 'Site', url: 'https://exemplo.com', method: 'GET', interval_sec: 60,
       timeout_ms: 10000, expected_status: 200, enabled: true,
     }])
@@ -202,14 +206,14 @@ it('espera o destino idle após o POST e limpa observadores com eventos reais', 
 })
 
 it('destino já idle resolve e sinal já abortado rejeita com a reason original', async ({ signal }) => {
-  const r = await renderizarPainel('/targets/new')
+  const r = await renderizarPainel(`/projects/${PROJETO_PADRAO}/targets/new`)
   try {
     expect(r.router.state.navigation.state).toBe('idle')
-    await expect(esperarNavegacao(r.router, '/targets/new', signal)).resolves.toBeUndefined()
+    await expect(esperarNavegacao(r.router, `/projects/${PROJETO_PADRAO}/targets/new`, signal)).resolves.toBeUndefined()
     const controle = new AbortController()
     const motivo = new Error('cancelado antes da espera')
     controle.abort(motivo)
-    await expect(esperarNavegacao(r.router, '/targets/new', controle.signal)).rejects.toBe(motivo)
+    await expect(esperarNavegacao(r.router, `/projects/${PROJETO_PADRAO}/targets/new`, controle.signal)).rejects.toBe(motivo)
   } finally {
     r.router.dispose()
   }
@@ -217,7 +221,7 @@ it('destino já idle resolve e sinal já abortado rejeita com a reason original'
 
 
 it.each(['antes', 'depois'] as const)('abort %s do registro preserva a reason real', async (momento) => {
-  const r = await renderizarPainel('/targets/new')
+  const r = await renderizarPainel(`/projects/${PROJETO_PADRAO}/targets/new`)
   const controle = new AbortController()
   const signal = controle.signal
   const motivo = new Error('cancelado durante a instalação')
@@ -230,7 +234,7 @@ it.each(['antes', 'depois'] as const)('abort %s do registro preserva a reason re
     if (momento === 'depois') controle.abort(motivo)
   })
   try {
-    const espera = acompanhar(esperarNavegacao(r.router, '/targets/alvo-1', signal))
+    const espera = acompanhar(esperarNavegacao(r.router, `/projects/${PROJETO_PADRAO}/targets/alvo-1`, signal))
     await concluirTurno()
     expect(espera.estado()).toBe('rejeitada')
     expect((await espera.resultado).erro).toBe(motivo)

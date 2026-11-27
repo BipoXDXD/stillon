@@ -16,17 +16,17 @@ describe('linhasDaLista', () => {
   }
 
   it('junta alvos e heartbeats na ordem por gravidade', () => {
-    expect(nomes(linhasDaLista(dados, SEM_FILTROS, 'gravidade', agora))).toEqual(['Banco', 'Backup', 'Site'])
+    expect(nomes(linhasDaLista(dados, SEM_FILTROS, 'gravidade', agora, '/projects/p'))).toEqual(['Banco', 'Backup', 'Site'])
   })
 
   // Sabotagem: ignorar a ordem pedida.
   it('segue a ordem pedida', () => {
-    expect(nomes(linhasDaLista(dados, SEM_FILTROS, 'nome', agora))).toEqual(['Backup', 'Banco', 'Site'])
+    expect(nomes(linhasDaLista(dados, SEM_FILTROS, 'nome', agora, '/projects/p'))).toEqual(['Backup', 'Banco', 'Site'])
   })
 
   // Sabotagem: não aplicar a busca.
   it('aplica a busca aos alvos e aos heartbeats', () => {
-    expect(nomes(linhasDaLista(dados, { ...SEM_FILTROS, busca: 'ba' }, 'nome', agora))).toEqual(['Backup', 'Banco'])
+    expect(nomes(linhasDaLista(dados, { ...SEM_FILTROS, busca: 'ba' }, 'nome', agora, '/projects/p'))).toEqual(['Backup', 'Banco'])
   })
 })
 
@@ -36,6 +36,7 @@ describe('vizinhosNaLista', () => {
     SEM_FILTROS,
     'nome',
     agora,
+    '/projects/p',
   )
 
   it('no meio, os dois vizinhos', () => {

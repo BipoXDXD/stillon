@@ -1,10 +1,10 @@
 import { Check, Circle, CircleDashed, Pause, Triangle, X, type LucideIcon } from 'lucide-react'
 import { useEffect, useId, useRef } from 'react'
-import { useApi } from '@/app/contexto'
+import { useApiDoProjeto } from '@/app/projeto'
 import { Selo } from '@/components/SeloDeEstado'
 import { Botao } from '@/components/ui/botao'
 import { useReconhecer } from '@/features/incidentes/reconhecer'
-import { chaves } from '@/lib/api/consultas'
+import { useChavesDoProjeto } from '@/lib/api/consultas'
 import type { Incidente, ItemDoResumo } from '@/lib/api/schemas'
 import type { EstadoExibido } from '@/lib/estado'
 import { dataHora } from '@/lib/format'
@@ -35,7 +35,8 @@ type Props = {
 // Reconhecer quando há incidente aberto sem ack. O Reconhecer é primário: o
 // secundário não tem 3:1 sobre os tons 100 do escuro.
 export function FaixaDeEstado({ item, incidentes, agora, aoSumir, aoErrar }: Props) {
-  const api = useApi()
+  const api = useApiDoProjeto()
+  const chave = useChavesDoProjeto()
   const idDoTitulo = useId()
   const idDaAjuda = useId()
   const reconhecido = useRef<HTMLParagraphElement>(null)
@@ -66,7 +67,7 @@ export function FaixaDeEstado({ item, incidentes, agora, aoSumir, aoErrar }: Pro
 
   const { reconhecendo, reconhecer } = useReconhecer({
     enviar: api.reconhecer,
-    consulta: chaves.todosOsIncidentes,
+    consulta: chave.todosOsIncidentes,
     aoNaoEncontrar: aoSumir,
     aoErrar,
     aoTerminar: () => {

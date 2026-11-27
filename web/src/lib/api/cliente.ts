@@ -18,10 +18,12 @@ import {
   ListaDeIncidentes,
   ListaDeIncidentesDeHeartbeat,
   ListaDePaginas,
+  ListaDeProjetos,
   ListaDeSessoes,
   Incidente,
   Me,
   PaginaDeStatus,
+  Projeto,
   Resumo,
   PreviaDoCron,
   Serie,
@@ -86,6 +88,8 @@ export type EntradaPagina = {
   items: { target_id: string; display_name: string }[]
 }
 
+export type EntradaProjeto = { name: string }
+
 export type TrocaDeSenha = { current_password: string; new_password: string; totp_code?: string }
 
 // Os valores do ?state= do resumo: os do servidor, mais o pausado.
@@ -114,6 +118,89 @@ function consultaDoResumo({ tags, estados }: FiltroDoResumo): string {
 
 const LIMITE_DO_LOG = 20
 const PRAZO_DA_CONSULTA_MS = 10_000
+
+// As duas formas de pedir que criarApi monta (com a regra do 401) e que os
+// recursos de um projeto reaproveitam.
+type Pedir = {
+  (p: Omit<Pedido, 'token'>, esquema: null): Promise<void>
+  <T>(p: Omit<Pedido, 'token'>, esquema: z.ZodType<T>): Promise<T>
+}
+type Get = <T>(rota: string, esquema: z.ZodType<T>, cancelamento?: AbortSignal) => Promise<T>
+
+// Os métodos dos recursos de um projeto (alvos, incidentes, heartbeats,
+// canais e páginas), todos sob /projects/{id}. A conta (me, sessões, senha e
+// 2FA) fica fora: não é de projeto.
+function criarApiDoProjeto(get: Get, pedir: Pedir, projeto: string) {
+  const prefixo = caminho`/projects/${projeto}`
+  return {
+    resumo: (filtro: FiltroDoResumo = { tags: [], estados: [] }, sinal?: AbortSignal) =>
+      get(prefixo + `/targets/summary${consultaDoResumo(filtro)}`, Resumo, sinal),
+    alvos: (sinal?: AbortSignal) => get(prefixo + '/targets?limit=100', ListaDeAlvos, sinal),
+    alvo: (id: string, sinal?: AbortSignal) => get(prefixo + caminho`/targets/${id}`, Alvo, sinal),
+    criarAlvo: (e: EntradaAlvo) => pedir({ metodo: 'POST', caminho: prefixo + '/targets', corpo: e }, Alvo),
+    alterarAlvo: (id: string, a: AlteracaoAlvo) =>
+      pedir({ metodo: 'PATCH', caminho: prefixo + caminho`/targets/${id}`, corpo: a }, Alvo),
+    apagarAlvo: (id: string) => pedir({ metodo: 'DELETE', caminho: prefixo + caminho`/targets/${id}` }, null),
+    // Só a janela, pelo nome (B6 do Plano 10): o servidor calcula from = to −
+    // janela com o relógio dele. O from calculado aqui dependia do relógio
+    // do navegador, e o to sempre foi o do servidor.
+    serie: (id: string, janela: string, sinal?: AbortSignal) =>
+      get(prefixo + caminho`/targets/${id}/checks` + consulta({ window: janela }), Serie, sinal),
+
+    incidentes: (f: FiltroIncidentes, sinal?: AbortSignal) =>
+      get(
+        prefixo + `/incidents${consulta({ status: f.status, cursor: f.cursor, target_id: f.targetId, limit: f.limit })}`,
+        ListaDeIncidentes,
+        sinal,
+      ),
+    reconhecer: (id: string) =>
+      pedir({ metodo: 'POST', caminho: prefixo + caminho`/incidents/${id}/ack` }, Incidente),
+
+    // Uma página de 100 é tudo: é o teto por usuário (spec da tela, T7).
+    heartbeats: (sinal?: AbortSignal) => get(prefixo + '/heartbeats?limit=100', ListaDeHeartbeats, sinal),
+    heartbeat: (id: string, sinal?: AbortSignal) => get(prefixo + caminho`/heartbeats/${id}`, Heartbeat, sinal),
+    previaDoCron: (expr: string, timezone: string, sinal?: AbortSignal) =>
+      get(prefixo + `/heartbeats/cron-preview${consulta({ expr, timezone })}`, PreviaDoCron, sinal),
+    criarHeartbeat: (e: EntradaHeartbeat) => pedir({ metodo: 'POST', caminho: prefixo + '/heartbeats', corpo: e }, HeartbeatComPing),
+    alterarHeartbeat: (id: string, a: AlteracaoHeartbeat) =>
+      pedir({ metodo: 'PATCH', caminho: prefixo + caminho`/heartbeats/${id}`, corpo: a }, Heartbeat),
+    apagarHeartbeat: (id: string) => pedir({ metodo: 'DELETE', caminho: prefixo + caminho`/heartbeats/${id}` }, null),
+    rotacionarHeartbeat: (id: string) =>
+      pedir({ metodo: 'POST', caminho: prefixo + caminho`/heartbeats/${id}/token/rotate` }, HeartbeatComPing),
+    duplicarHeartbeat: (id: string) =>
+      pedir({ metodo: 'POST', caminho: prefixo + caminho`/heartbeats/${id}/clone` }, HeartbeatComPing),
+    limparEventosDoHeartbeat: (id: string) =>
+      pedir({ metodo: 'POST', caminho: prefixo + caminho`/heartbeats/${id}/events/clear` }, null),
+    // Um sucesso pelo painel; a resposta é o heartbeat já atualizado.
+    sinalizarAgora: (id: string) =>
+      pedir({ metodo: 'POST', caminho: prefixo + caminho`/heartbeats/${id}/ping-now` }, Heartbeat),
+    eventosDoHeartbeat: (id: string, cursor?: string, sinal?: AbortSignal) =>
+      get(prefixo + caminho`/heartbeats/${id}/events` + consulta({ cursor, limit: LIMITE_DO_LOG }), ListaDeEventos, sinal),
+    incidentesDoHeartbeat: (id: string, cursor?: string, sinal?: AbortSignal) =>
+      get(prefixo + caminho`/heartbeats/${id}/incidents` + consulta({ cursor, limit: LIMITE_DO_LOG }), ListaDeIncidentesDeHeartbeat, sinal),
+    reconhecerDoHeartbeat: (id: string, incidente: string) =>
+      pedir(
+        { metodo: 'POST', caminho: prefixo + caminho`/heartbeats/${id}/incidents/${incidente}/ack` },
+        IncidenteDeHeartbeat,
+      ),
+    canais: (sinal?: AbortSignal) => get(prefixo + '/channels', ListaDeCanais, sinal),
+    criarCanal: (e: EntradaCanal) => pedir({ metodo: 'POST', caminho: prefixo + '/channels', corpo: e }, Canal),
+    apagarCanal: (id: string) => pedir({ metodo: 'DELETE', caminho: prefixo + caminho`/channels/${id}` }, null),
+    reenviarVerificacao: (id: string) =>
+      pedir({ metodo: 'POST', caminho: prefixo + caminho`/channels/${id}/verify/resend` }, null),
+    // Spec do Plano 9 §3.3: pausar (enabled false) e retomar (true) pelo
+    // mesmo PATCH; a resposta é o canal no formato da lista.
+    pausarCanal: (id: string, enabled: boolean) =>
+      pedir({ metodo: 'PATCH', caminho: prefixo + caminho`/channels/${id}`, corpo: { enabled } }, Canal),
+
+    paginas: (sinal?: AbortSignal) => get(prefixo + '/status-pages', ListaDePaginas, sinal),
+    criarPagina: (e: EntradaPagina) => pedir({ metodo: 'POST', caminho: prefixo + '/status-pages', corpo: e }, PaginaDeStatus),
+    alterarPagina: (id: string, e: Partial<EntradaPagina>) =>
+      pedir({ metodo: 'PATCH', caminho: prefixo + caminho`/status-pages/${id}`, corpo: e }, PaginaDeStatus),
+  }
+}
+
+export type ApiDoProjeto = ReturnType<typeof criarApiDoProjeto>
 
 export type Api = ReturnType<typeof criarApi>
 
@@ -203,70 +290,9 @@ export function criarApi(sessao: Sessao, buscar: Buscar, o: OpcoesDaApi = {}) {
   return {
     me: (sinal?: AbortSignal) => get('/me', Me, sinal),
 
-    resumo: (filtro: FiltroDoResumo = { tags: [], estados: [] }, sinal?: AbortSignal) =>
-      get(`/targets/summary${consultaDoResumo(filtro)}`, Resumo, sinal),
-    alvos: (sinal?: AbortSignal) => get('/targets?limit=100', ListaDeAlvos, sinal),
-    alvo: (id: string, sinal?: AbortSignal) => get(caminho`/targets/${id}`, Alvo, sinal),
-    criarAlvo: (e: EntradaAlvo) => pedir({ metodo: 'POST', caminho: '/targets', corpo: e }, Alvo),
-    alterarAlvo: (id: string, a: AlteracaoAlvo) =>
-      pedir({ metodo: 'PATCH', caminho: caminho`/targets/${id}`, corpo: a }, Alvo),
-    apagarAlvo: (id: string) => pedir({ metodo: 'DELETE', caminho: caminho`/targets/${id}` }, null),
-    // Só a janela, pelo nome (B6 do Plano 10): o servidor calcula from = to −
-    // janela com o relógio dele. O from calculado aqui dependia do relógio
-    // do navegador, e o to sempre foi o do servidor.
-    serie: (id: string, janela: string, sinal?: AbortSignal) =>
-      get(caminho`/targets/${id}/checks` + consulta({ window: janela }), Serie, sinal),
-
-    incidentes: (f: FiltroIncidentes, sinal?: AbortSignal) =>
-      get(
-        `/incidents${consulta({ status: f.status, cursor: f.cursor, target_id: f.targetId, limit: f.limit })}`,
-        ListaDeIncidentes,
-        sinal,
-      ),
-    reconhecer: (id: string) =>
-      pedir({ metodo: 'POST', caminho: caminho`/incidents/${id}/ack` }, Incidente),
-
-    // Uma página de 100 é tudo: é o teto por usuário (spec da tela, T7).
-    heartbeats: (sinal?: AbortSignal) => get('/heartbeats?limit=100', ListaDeHeartbeats, sinal),
-    heartbeat: (id: string, sinal?: AbortSignal) => get(caminho`/heartbeats/${id}`, Heartbeat, sinal),
-    previaDoCron: (expr: string, timezone: string, sinal?: AbortSignal) =>
-      get(`/heartbeats/cron-preview${consulta({ expr, timezone })}`, PreviaDoCron, sinal),
-    criarHeartbeat: (e: EntradaHeartbeat) => pedir({ metodo: 'POST', caminho: '/heartbeats', corpo: e }, HeartbeatComPing),
-    alterarHeartbeat: (id: string, a: AlteracaoHeartbeat) =>
-      pedir({ metodo: 'PATCH', caminho: caminho`/heartbeats/${id}`, corpo: a }, Heartbeat),
-    apagarHeartbeat: (id: string) => pedir({ metodo: 'DELETE', caminho: caminho`/heartbeats/${id}` }, null),
-    rotacionarHeartbeat: (id: string) =>
-      pedir({ metodo: 'POST', caminho: caminho`/heartbeats/${id}/token/rotate` }, HeartbeatComPing),
-    duplicarHeartbeat: (id: string) =>
-      pedir({ metodo: 'POST', caminho: caminho`/heartbeats/${id}/clone` }, HeartbeatComPing),
-    limparEventosDoHeartbeat: (id: string) =>
-      pedir({ metodo: 'POST', caminho: caminho`/heartbeats/${id}/events/clear` }, null),
-    // Um sucesso pelo painel; a resposta é o heartbeat já atualizado.
-    sinalizarAgora: (id: string) =>
-      pedir({ metodo: 'POST', caminho: caminho`/heartbeats/${id}/ping-now` }, Heartbeat),
-    eventosDoHeartbeat: (id: string, cursor?: string, sinal?: AbortSignal) =>
-      get(caminho`/heartbeats/${id}/events` + consulta({ cursor, limit: LIMITE_DO_LOG }), ListaDeEventos, sinal),
-    incidentesDoHeartbeat: (id: string, cursor?: string, sinal?: AbortSignal) =>
-      get(caminho`/heartbeats/${id}/incidents` + consulta({ cursor, limit: LIMITE_DO_LOG }), ListaDeIncidentesDeHeartbeat, sinal),
-    reconhecerDoHeartbeat: (id: string, incidente: string) =>
-      pedir(
-        { metodo: 'POST', caminho: caminho`/heartbeats/${id}/incidents/${incidente}/ack` },
-        IncidenteDeHeartbeat,
-      ),
-    canais: (sinal?: AbortSignal) => get('/channels', ListaDeCanais, sinal),
-    criarCanal: (e: EntradaCanal) => pedir({ metodo: 'POST', caminho: '/channels', corpo: e }, Canal),
-    apagarCanal: (id: string) => pedir({ metodo: 'DELETE', caminho: caminho`/channels/${id}` }, null),
-    reenviarVerificacao: (id: string) =>
-      pedir({ metodo: 'POST', caminho: caminho`/channels/${id}/verify/resend` }, null),
-    // Spec do Plano 9 §3.3: pausar (enabled false) e retomar (true) pelo
-    // mesmo PATCH; a resposta é o canal no formato da lista.
-    pausarCanal: (id: string, enabled: boolean) =>
-      pedir({ metodo: 'PATCH', caminho: caminho`/channels/${id}`, corpo: { enabled } }, Canal),
-
-    paginas: (sinal?: AbortSignal) => get('/status-pages', ListaDePaginas, sinal),
-    criarPagina: (e: EntradaPagina) => pedir({ metodo: 'POST', caminho: '/status-pages', corpo: e }, PaginaDeStatus),
-    alterarPagina: (id: string, e: Partial<EntradaPagina>) =>
-      pedir({ metodo: 'PATCH', caminho: caminho`/status-pages/${id}`, corpo: e }, PaginaDeStatus),
+    projetos: (sinal?: AbortSignal) => get('/projects', ListaDeProjetos, sinal),
+    criarProjeto: (e: EntradaProjeto) => pedir({ metodo: 'POST', caminho: '/projects', corpo: e }, Projeto),
+    doProjeto: (id: string): ApiDoProjeto => criarApiDoProjeto(get, pedir, id),
 
     sessoes: (sinal?: AbortSignal) => get('/sessions', ListaDeSessoes, sinal),
     encerrarSessao: (id: string) => pedir({ metodo: 'DELETE', caminho: caminho`/sessions/${id}` }, null),

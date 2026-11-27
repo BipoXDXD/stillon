@@ -10,10 +10,10 @@ describe('Layout', () => {
     await renderizarPainel('/channels')
     const nav = await screen.findByRole('navigation', { name: 'Principal' })
     expect(within(nav).getAllByRole('link').map((a) => a.getAttribute('href'))).toEqual([
-      '/',
-      '/incidents',
-      '/channels',
-      '/status-pages',
+      '/projects/proj-padrao/',
+      '/projects/proj-padrao/incidents',
+      '/projects/proj-padrao/channels',
+      '/projects/proj-padrao/status-pages',
       '/settings',
     ])
     for (const nome of ['Painel', 'Canais', 'Status', 'Conta']) {

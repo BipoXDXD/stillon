@@ -9,6 +9,7 @@ import type {
   ItemDoResumo,
   Me,
   PaginaDeStatus,
+  Projeto,
   Sessao,
 } from '@/lib/api/schemas'
 
@@ -146,4 +147,8 @@ export function pagina(p: Partial<z.input<typeof PaginaDeStatus>> = {}): z.input
     created_at: '2026-09-20T10:00:00Z',
     ...p,
   }
+}
+
+export function projeto(p: Partial<z.input<typeof Projeto>> = {}): z.input<typeof Projeto> {
+  return { id: 'proj-padrao', name: 'Padrão', is_default: true, role: 'owner', created_at: '2026-09-01T10:00:00Z', ...p }
 }

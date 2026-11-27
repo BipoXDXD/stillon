@@ -1,5 +1,6 @@
 import { ArrowLeft, ChevronLeft, ChevronRight } from 'lucide-react'
 import { Link, useSearchParams } from 'react-router'
+import { usePrefixoDoProjeto, useRotaDoProjeto } from '@/app/projeto'
 import { useHeartbeats, useResumo, useResumoFiltrado } from '@/lib/api/consultas'
 import { lerFiltros, temFiltroDeApi } from './filtros'
 import { buscaDaLista, linhasDaLista, vizinhosNaLista } from './lista'
@@ -14,6 +15,7 @@ const LINK = 'alvo-de-toque inline-flex items-center gap-1 text-sm font-semibold
 // a outro lugar que não o da lista na tela.
 export function NavegacaoDaLista({ chave }: { chave: string }) {
   const [parametros] = useSearchParams()
+  const noProjeto = useRotaDoProjeto()
   const busca = buscaDaLista(parametros)
   const linhas = useLinhasDaLista(parametros)
   const vizinhos = linhas && vizinhosNaLista(linhas, chave)
@@ -21,7 +23,7 @@ export function NavegacaoDaLista({ chave }: { chave: string }) {
     <nav aria-label="Lista de monitores" className="flex flex-wrap items-center justify-between gap-4">
       {/* "Painel" visível, "Voltar ao painel" no nome acessível: não colide
           com a aba "Painel" da navegação. */}
-      <Link to={{ pathname: '/', search: busca }} aria-label="Voltar ao painel" className={LINK}>
+      <Link to={{ pathname: noProjeto('/'), search: busca }} aria-label="Voltar ao painel" className={LINK}>
         <ArrowLeft aria-hidden="true" className="size-4" />
         Painel
       </Link>
@@ -49,6 +51,7 @@ function LinkDoVizinho({ linha, busca, sentido }: { linha: LinhaDeMonitor; busca
 
 function useLinhasDaLista(parametros: URLSearchParams): LinhaDeMonitor[] | null {
   const filtros = lerFiltros(parametros)
+  const prefixo = usePrefixoDoProjeto()
   const resumo = useResumo()
   const heartbeats = useHeartbeats()
   const filtraNaApi = temFiltroDeApi(filtros)
@@ -57,5 +60,5 @@ function useLinhasDaLista(parametros: URLSearchParams): LinhaDeMonitor[] | null 
   const fonte = filtraNaApi ? filtrada : resumo
   const itens = filtraNaApi && filtrada.isPlaceholderData ? undefined : fonte.data?.items
   if (!itens || !heartbeats.data) return null
-  return linhasDaLista({ itens, heartbeats: heartbeats.data.items }, filtros, lerOrdem(parametros), new Date(fonte.dataUpdatedAt))
+  return linhasDaLista({ itens, heartbeats: heartbeats.data.items }, filtros, lerOrdem(parametros), new Date(fonte.dataUpdatedAt), prefixo)
 }

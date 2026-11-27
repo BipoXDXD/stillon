@@ -2,7 +2,9 @@ import { onlineManager } from '@tanstack/react-query'
 import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { alvo, incidente, itemDoResumo } from '@/test/fixtures'
+import { http } from 'msw'
 import { renderizarPainel } from '@/test/renderizar'
+import { servidor } from '@/test/setup'
 import { carregarConfiguracoes, carregarDetalhe, preCarregar, quandoOcioso } from './rotas-sob-demanda'
 
 // As funções de verdade, sob espiões: o teste vê quem pediu o chunk.
@@ -185,6 +187,31 @@ describe('espera por uma rota sob demanda', () => {
     expect(await aba('Canais')).not.toHaveClass('bg-primaria-100')
     soltar()
     await waitFor(() => expect(conta).toHaveAttribute('aria-current', 'page'))
+  })
+
+  // Na raiz, a pessoa clica em Conta antes de a lista de projetos chegar: o
+  // redirecionamento atrasado da raiz não pode cancelar a navegação que
+  // espera o chunk. Sabotagem: tirar a guarda do useNavigation em NoProjeto.
+  it('a lista de projetos que chega no meio da espera não atropela a navegação', async () => {
+    const soltarChunk = chunkSegurado()
+    let soltarProjetos = () => {}
+    const projetosPresos = new Promise<void>((resolve) => {
+      soltarProjetos = resolve
+    })
+    const r = await renderizarPainel('/', {
+      esperarARaiz: false,
+      // Sem resposta, o MSW passa ao handler da falsa, que responde.
+      antes: () => servidor.use(http.get('*/api/v1/projects', async () => { await projetosPresos })),
+    })
+    void r.router.navigate('/settings')
+    await waitFor(() => expect(r.router.state.navigation.state).toBe('loading'))
+    soltarProjetos()
+    await waitFor(() => expect(r.falsa.chamadas('GET /projects')).toBe(1))
+    // Um tempo para o redirecionamento, se fosse disparar, disparar.
+    await act(() => new Promise((resolve) => setTimeout(resolve, 100)))
+    soltarChunk()
+    await waitFor(() => expect(r.router.state.navigation.state).toBe('idle'))
+    expect(r.router.state.location.pathname).toBe('/settings')
   })
 
   // O atraso em si está em lib/atraso.test.ts. Sabotagem: tirar o filete, ou

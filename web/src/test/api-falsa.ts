@@ -11,6 +11,7 @@ import type {
   IncidenteDeHeartbeat,
   ItemDoResumo,
   PaginaDeStatus,
+  Projeto,
   Sessao,
 } from '@/lib/api/schemas'
 import { Agendamento } from '@/lib/api/schemas'
@@ -99,6 +100,10 @@ const MAX_LETRAS_DA_TAG = 24
 const TAG_VALIDA = /^[\p{L}\p{Nd}_-]+$/u
 const ESTADOS_DO_FILTRO = ['up', 'degraded', 'down', 'unknown', 'paused']
 const MAX_NOME_DO_HEARTBEAT = 100
+// tenancy.MaxProjectNameRunes e o que rotulo.TemInvisivel recusa (controle e
+// formato).
+const MAX_NOME_DO_PROJETO = 100
+const INVISIVEL = /[\p{Cc}\p{Cf}]/u
 const SUFIXO_DA_COPIA = ' (cópia)'
 
 // Os DTOs de entrada do servidor (decodeJSON recusa o que não estiver aqui).
@@ -148,6 +153,43 @@ function temCampoAlheio(valor: unknown, permitidos: string[]) {
   )
 }
 
+// O estado dos recursos de um projeto (alvos, incidentes, heartbeats, canais
+// e páginas).
+function novosRecursos() {
+  return {
+    alvos: [] as Entrada<typeof Alvo>[],
+    resumo: [] as Entrada<typeof ItemDoResumo>[],
+    // A query de cada GET /targets/summary: prova que o filtro foi à API, e
+    // que a busca não vai.
+    consultasDoResumo: [] as string[],
+    serie: { resolution: 'raw', items: [] } as { resolution: 'raw'; items: Entrada<typeof Check>[] } | {
+      resolution: '1h'
+      items: Entrada<typeof Hora>[]
+    },
+    incidentes: [] as Entrada<typeof Incidente>[],
+    heartbeats: [] as Entrada<typeof Heartbeat>[],
+    // O last_signal do servidor, por heartbeat: ele não sai na resposta, e por
+    // isso fica fora do item. Sem entrada, a tarefa nunca mandou sinal.
+    ultimosSinais: new Map<string, 'start' | 'success' | 'fail'>(),
+    // null responde 400 no campo expr.
+    previaDoCron: ['2026-09-25T06:00:00Z', '2026-09-26T06:00:00Z'] as string[] | null,
+    previasPedidas: [] as string[],
+    eventos: [] as Entrada<typeof EventoDeHeartbeat>[],
+    incidentesDeHeartbeat: [] as Entrada<typeof IncidenteDeHeartbeat>[],
+    canais: [] as Entrada<typeof Canal>[],
+    paginas: [] as Entrada<typeof PaginaDeStatus>[],
+    // Quanto as respostas das rotas deste projeto demoram: a resposta de um
+    // projeto que chega depois da troca para outro.
+    atrasoMs: 0,
+  }
+}
+
+export type RecursosFalsos = ReturnType<typeof novosRecursos>
+export type ProjetoFalso = { projeto: Entrada<typeof Projeto>; recursos: RecursosFalsos }
+
+// O id do projeto padrão do usuário da falsa.
+export const PROJETO_PADRAO = 'proj-padrao'
+
 export function criarApiFalsa() {
   const st = {
     pote: null as string | null,
@@ -185,31 +227,23 @@ export function criarApiFalsa() {
     desafioValido: false,
     chamadas: new Map<string, number>(),
     corpos: new Map<string, Json[]>(),
-    alvos: [] as Entrada<typeof Alvo>[],
-    resumo: [] as Entrada<typeof ItemDoResumo>[],
-    // A query de cada GET /targets/summary: prova que o filtro foi à API, e
-    // que a busca não vai.
-    consultasDoResumo: [] as string[],
-    serie: { resolution: 'raw', items: [] } as { resolution: 'raw'; items: Entrada<typeof Check>[] } | {
-      resolution: '1h'
-      items: Entrada<typeof Hora>[]
-    },
-    incidentes: [] as Entrada<typeof Incidente>[],
-    heartbeats: [] as Entrada<typeof Heartbeat>[],
-    // O last_signal do servidor, por heartbeat: ele não sai na resposta, e por
-    // isso fica fora do item. Sem entrada, a tarefa nunca mandou sinal.
-    ultimosSinais: new Map<string, 'start' | 'success' | 'fail'>(),
-    // null responde 400 no campo expr.
-    previaDoCron: ['2026-09-25T06:00:00Z', '2026-09-26T06:00:00Z'] as string[] | null,
-    previasPedidas: [] as string[],
-    eventos: [] as Entrada<typeof EventoDeHeartbeat>[],
-    incidentesDeHeartbeat: [] as Entrada<typeof IncidenteDeHeartbeat>[],
-    canais: [] as Entrada<typeof Canal>[],
-    paginas: [] as Entrada<typeof PaginaDeStatus>[],
+    // Os recursos do projeto padrão: as rotas de /projects/{padrão} leem e
+    // gravam aqui.
+    ...novosRecursos(),
     sessoes: [] as Entrada<typeof Sessao>[],
     // Respostas forçadas por rota ("POST /targets" → 409 etc.).
     forcar: new Map<string, ErroForcado>(),
+    // Os projetos de que o usuário é membro, cada um com os recursos dele.
+    // Os do padrão são o próprio st. O GET ordena como o servidor.
+    projetos: [] as ProjetoFalso[],
+    // tenancy.ProjectLimit(false): quantos projetos o usuário pode ter como
+    // titular (owner).
+    limiteDeProjetos: 3,
   }
+  st.projetos.push({
+    projeto: { id: PROJETO_PADRAO, name: 'Padrão', is_default: true, role: 'owner', created_at: '2026-09-01T10:00:00Z' },
+    recursos: st,
+  })
 
   function contar(chave: string, corpo?: Json) {
     st.chamadas.set(chave, (st.chamadas.get(chave) ?? 0) + 1)
@@ -271,7 +305,11 @@ export function criarApiFalsa() {
 
   // decodeJSON: campo desconhecido, também em objeto aninhado, é 400 sem fields.
   // Sem isto, um cliente que mandasse um nome errado passaria nos testes de tela.
-  function estrita(permitidos: string[], fn: Tratador, aninhados: Record<string, string[]> = {}): Tratador {
+  function estrita<A extends Contexto>(
+    permitidos: string[],
+    fn: (a: A) => Response | Promise<Response>,
+    aninhados: Record<string, string[]> = {},
+  ): (a: A) => Response | Promise<Response> {
     return (a) => {
       const recusado =
         temCampoAlheio(a.corpo, permitidos) ||
@@ -330,18 +368,18 @@ export function criarApiFalsa() {
   const provaCerta = (request: Request) => st.provasErradas.delete(familiaDe(request) ?? '')
 
   // finishedARun do servidor: um início sozinho não prova uma execução.
-  function terminouAlgumaExecucao(h: Entrada<typeof Heartbeat>) {
-    const sinal = st.ultimosSinais.get(h.id)
+  function terminouAlgumaExecucao(r: RecursosFalsos, h: Entrada<typeof Heartbeat>) {
+    const sinal = r.ultimosSinais.get(h.id)
     return h.last_success_at !== null || (sinal !== undefined && sinal !== 'start')
   }
 
   // statusOf do servidor. A falsa não tem failing_since: quem está em 'failing'
   // segue falhando. A retomada não precisa zerar nada, porque parte de 'paused'.
-  function statusDe(h: Entrada<typeof Heartbeat>): Entrada<typeof Heartbeat>['state'] {
+  function statusDe(r: RecursosFalsos, h: Entrada<typeof Heartbeat>): Entrada<typeof Heartbeat>['state'] {
     if (!h.enabled) return 'paused'
     if (h.state === 'failing') return 'failing'
     if (h.open_incident_id !== null || new Date(h.deadline_at) <= agora()) return 'late'
-    return terminouAlgumaExecucao(h) ? 'up' : 'waiting'
+    return terminouAlgumaExecucao(r, h) ? 'up' : 'waiting'
   }
 
   // FirstDeadline do servidor, com um período fixo: sempre no futuro.
@@ -388,6 +426,327 @@ export function criarApiFalsa() {
       if (f) return responderErro(f)
       return fn({ request, params: params as Record<string, string>, corpo })
     })
+  }
+
+  // As rotas dos recursos, sob o prefixo /projects/:projectId. Projeto que não
+  // existe (ou de que o usuário não é membro) é 404, como no servidor.
+  function rotasDosRecursos(
+    prefixo: string,
+    recursosDe: (params: Record<string, string>) => RecursosFalsos | undefined,
+  ): HttpHandler[] {
+    const rotaR = (
+      metodo: 'get' | 'post' | 'patch' | 'delete',
+      caminho: string,
+      fn: (a: Contexto & { r: RecursosFalsos }) => Response | Promise<Response>,
+    ) =>
+      rota(metodo, prefixo + caminho, async (a) => {
+        const r = recursosDe(a.params)
+        if (!r) return erro(404, 'not_found')
+        if (r.atrasoMs > 0) await delay(r.atrasoMs)
+        return fn({ ...a, r })
+      })
+    return [
+      // O filtro do servidor (targets.SummaryFilter): tags em E, estados em OU.
+      rotaR('get', '/targets/summary', ({ r, request }) => {
+        const q = new URL(request.url).searchParams
+        r.consultasDoResumo.push(q.toString())
+        const forcado = st.forcar.get(`GET ${prefixo}/targets/summary?${q.toString()}`)
+        if (forcado) return responderErro(forcado)
+        const { recusados, tags } = lerFiltroDoResumo(q)
+        if (recusados.length > 0) return erro(400, 'validation_failed', recusados)
+        const estados = q.getAll('state')
+        const items = r.resumo.filter(
+          (it) =>
+            tags.every((t) => it.tags.includes(t)) &&
+            (estados.length === 0 || estados.includes(it.enabled ? it.state : 'paused')),
+        )
+        return HttpResponse.json({ items })
+      }),
+      rotaR('get', '/targets', ({ r, request }) => paginar(r.alvos, request)),
+      rotaR('post', '/targets', estrita(CAMPOS_DO_ALVO, ({ r, corpo }) => {
+        const alvo = {
+          id: `alvo-${r.alvos.length + 1}`,
+          name: String(corpo.name),
+          url: String(corpo.url),
+          method: corpo.method as 'GET',
+          interval_sec: Number(corpo.interval_sec),
+          timeout_ms: Number(corpo.timeout_ms),
+          expected_status: Number(corpo.expected_status),
+          degraded_threshold_ms: corpo.degraded_threshold_ms === undefined ? 2000 : (corpo.degraded_threshold_ms as number | null),
+          enabled: corpo.enabled !== false,
+          header_names: Object.keys((corpo.headers as Json | undefined) ?? {}).sort(),
+          tags: (corpo.tags as string[] | undefined) ?? [],
+          // Como o servidor: o aviso de certificado nasce ligado, e a leitura
+          // só existe depois da primeira sonda.
+          tls_warn: corpo.tls_warn !== false,
+          tls: null,
+          content_rule: regraDaResposta(corpo.content_rule),
+          created_at: agora().toISOString(),
+        }
+        r.alvos.push(alvo)
+        return HttpResponse.json(alvo, { status: 201 })
+      }, CAMPOS_DA_REGRA)),
+      rotaR('get', '/targets/:id', ({ r, params }) => {
+        const a = r.alvos.find((x) => x.id === params.id)
+        return a ? HttpResponse.json(a) : erro(404, 'not_found')
+      }),
+      rotaR('patch', '/targets/:id', estrita(CAMPOS_DO_ALVO, ({ r, params, corpo }) => {
+        const recusa = recusaDeNulos(corpo, OBRIGATORIOS_DO_ALVO)
+        if (recusa) return recusa
+        const a = r.alvos.find((x) => x.id === params.id)
+        if (!a) return erro(404, 'not_found')
+        const { headers, content_rule, ...resto } = corpo
+        // B1 do Plano 10: trocar a origem da URL (esquema, host ou porta) sem
+        // mandar headers apaga os headers; só o caminho, não.
+        const outraOrigem =
+          typeof resto.url === 'string' && new URL(resto.url.trim()).origin !== new URL(a.url.trim()).origin
+        Object.assign(a, resto)
+        if (headers !== undefined) a.header_names = Object.keys((headers as Json | null) ?? {}).sort()
+        else if (outraOrigem) a.header_names = []
+        // Como mudouDeDestino no servidor: outra origem é outro certificado, e a
+        // leitura do anterior sai junto.
+        if (outraOrigem) a.tls = null
+        if (content_rule !== undefined) a.content_rule = regraDaResposta(content_rule)
+        return HttpResponse.json(a)
+      }, CAMPOS_DA_REGRA)),
+      rotaR('delete', '/targets/:id', ({ r, params }) => {
+        // Como o servidor (TargetHandlers.Delete): alvo que não existe é 404.
+        if (!r.alvos.some((x) => x.id === params.id)) return erro(404, 'not_found')
+        r.alvos = r.alvos.filter((x) => x.id !== params.id)
+        r.resumo = r.resumo.filter((x) => x.id !== params.id)
+        return new HttpResponse(null, { status: 204 })
+      }),
+      // B6 do Plano 10: a janela vai por nome (?window=), e o servidor calcula
+      // o from com o relógio dele. window fora da lista, vazio, ou junto com
+      // from é 400 (field window, reason invalid).
+      rotaR('get', '/targets/:id/checks', ({ r, request }) => {
+        const q = new URL(request.url).searchParams
+        const janela = q.get('window')
+        if (janela !== null && (!['1h', '6h', '24h', '7d', '30d', '90d'].includes(janela) || q.has('from'))) {
+          return erro(400, 'validation_failed', [{ field: 'window', reason: 'invalid' }])
+        }
+        return HttpResponse.json(r.serie)
+      }),
+
+      rotaR('get', '/incidents', ({ r, request }) => {
+        const q = new URL(request.url).searchParams
+        let itens = r.incidentes
+        if (q.get('status') === 'open') itens = itens.filter((i) => i.resolved_at === null)
+        if (q.get('status') === 'resolved') itens = itens.filter((i) => i.resolved_at !== null)
+        if (q.get('target_id')) itens = itens.filter((i) => i.target_id === q.get('target_id'))
+        return paginar(itens, request)
+      }),
+      rotaR('post', '/incidents/:id/ack', ({ r, params }) => {
+        const i = r.incidentes.find((x) => x.id === params.id)
+        if (!i) return erro(404, 'not_found')
+        i.acknowledged_at ??= agora().toISOString()
+        return HttpResponse.json(i)
+      }),
+
+      rotaR('get', '/heartbeats', ({ r, request }) => paginar(r.heartbeats, request)),
+      rotaR('post', '/heartbeats', estrita(CAMPOS_DO_HEARTBEAT, ({ r, corpo }) => {
+        const h = {
+          id: `hb-${r.heartbeats.length + 1}`,
+          name: String(corpo.name),
+          description: (corpo.description as string | undefined) ?? '',
+          tags: (corpo.tags as string[] | undefined) ?? [],
+          enabled: true,
+          schedule: corpo.schedule as Entrada<typeof Heartbeat>['schedule'],
+          grace_sec: corpo.grace_sec === undefined ? 300 : Number(corpo.grace_sec),
+          ping_resumes: corpo.ping_resumes === true,
+          state: 'waiting' as const,
+          deadline_at: primeiroPrazo(corpo.grace_sec === undefined ? 300 : Number(corpo.grace_sec)),
+          last_ping_at: null,
+          last_success_at: null,
+          last_start_at: null,
+          last_runtime_ms: null,
+          open_incident_id: null,
+          created_at: agora().toISOString(),
+        }
+        r.heartbeats.push(h)
+        return HttpResponse.json({ ...h, ping_url: PING_URL }, { status: 201 })
+      }, { schedule: CAMPOS_DO_AGENDAMENTO })),
+      rotaR('get', '/heartbeats/cron-preview', ({ r, request }) => {
+        r.previasPedidas.push(new URL(request.url).search)
+        return r.previaDoCron === null
+          ? erro(400, 'validation_failed', [{ field: 'expr', reason: 'invalid' }])
+          : HttpResponse.json({ next_runs: r.previaDoCron })
+      }),
+      rotaR('get', '/heartbeats/:id', ({ r, params }) => {
+        const h = r.heartbeats.find((x) => x.id === params.id)
+        return h ? HttpResponse.json(h) : erro(404, 'not_found')
+      }),
+      rotaR('patch', '/heartbeats/:id', estrita(CAMPOS_DO_HEARTBEAT, ({ r, params, corpo }) => {
+        const recusa = recusaDeNulos(corpo, OBRIGATORIOS_DO_HEARTBEAT)
+        if (recusa) return recusa
+        const h = r.heartbeats.find((x) => x.id === params.id)
+        if (!h) return erro(404, 'not_found')
+        const retomou = corpo.enabled === true && !h.enabled
+        const recomecaOPrazo = retomou || mudouOPrazo(h, corpo)
+        Object.assign(h, corpo)
+        if (retomou) h.last_start_at = null
+        if (recomecaOPrazo) h.deadline_at = primeiroPrazo(h.grace_sec)
+        h.state = statusDe(r, h)
+        return HttpResponse.json(h)
+      }, { schedule: CAMPOS_DO_AGENDAMENTO })),
+      rotaR('delete', '/heartbeats/:id', ({ r, params }) => {
+        if (!r.heartbeats.some((x) => x.id === params.id)) return erro(404, 'not_found')
+        r.heartbeats = r.heartbeats.filter((x) => x.id !== params.id)
+        return new HttpResponse(null, { status: 204 })
+      }),
+      rotaR('get', '/heartbeats/:id/events', ({ r, request, params }) => {
+        if (!r.heartbeats.some((x) => x.id === params.id)) return erro(404, 'not_found')
+        return paginar(r.eventos, request)
+      }),
+      rotaR('get', '/heartbeats/:id/incidents', ({ r, request, params }) => {
+        if (!r.heartbeats.some((x) => x.id === params.id)) return erro(404, 'not_found')
+        return paginar(r.incidentesDeHeartbeat.filter((i) => i.heartbeat_id === params.id), request)
+      }),
+      // O ack é idempotente, como o do alvo: reconhecer de novo não muda a data.
+      rotaR('post', '/heartbeats/:id/incidents/:incident/ack', ({ r, params }) => {
+        const i = r.incidentesDeHeartbeat.find((x) => x.id === params.incident && x.heartbeat_id === params.id)
+        if (!i) return erro(404, 'not_found')
+        i.acknowledged_at ??= agora().toISOString()
+        return HttpResponse.json(i)
+      }),
+      // O clone do servidor: sem token, eventos, last_* nem incidentes; o nome
+      // cortado para o sufixo caber em 100 caracteres (Rulings do PR 2 da SP1).
+      rotaR('post', '/heartbeats/:id/clone', ({ r, params }) => {
+        const h = r.heartbeats.find((x) => x.id === params.id)
+        if (!h) return erro(404, 'not_found')
+        if (Agendamento.parse(h.schedule).kind === 'unknown') return erro(409, 'schedule_unsupported')
+        const copia = {
+          ...h,
+          id: `hb-${r.heartbeats.length + 1}`,
+          name: `${Array.from(h.name).slice(0, MAX_NOME_DO_HEARTBEAT - SUFIXO_DA_COPIA.length).join('')}${SUFIXO_DA_COPIA}`,
+          state: h.enabled ? ('waiting' as const) : ('paused' as const),
+          deadline_at: primeiroPrazo(h.grace_sec),
+          last_ping_at: null,
+          last_success_at: null,
+          last_start_at: null,
+          last_runtime_ms: null,
+          open_incident_id: null,
+          created_at: agora().toISOString(),
+        }
+        r.heartbeats.push(copia)
+        return HttpResponse.json({ ...copia, ping_url: `${PING_URL}-copia` }, { status: 201 })
+      }),
+      // Limpar o que já está vazio também é 204.
+      rotaR('post', '/heartbeats/:id/events/clear', ({ r, params }) => {
+        if (!r.heartbeats.some((x) => x.id === params.id)) return erro(404, 'not_found')
+        r.eventos = []
+        return new HttpResponse(null, { status: 204 })
+      }),
+      // PingNow do servidor: um sucesso com source 'panel'. O log ganha a linha,
+      // o prazo recomeça e o sucesso tira o failing. O incidente aberto fica
+      // (registrarSinal não mexe nele), e com ele o statusDe segue em late.
+      rotaR('post', '/heartbeats/:id/ping-now', ({ r, params }) => {
+        const h = r.heartbeats.find((x) => x.id === params.id)
+        if (!h) return erro(404, 'not_found')
+        const quando = agora().toISOString()
+        r.eventos = [
+          { id: `ev-painel-${r.eventos.length + 1}`, at: quando, kind: 'success', runtime_ms: null, exit_code: null, run_id: null, source: 'panel' },
+          ...r.eventos,
+        ]
+        r.ultimosSinais.set(h.id, 'success')
+        Object.assign(h, {
+          last_ping_at: quando,
+          last_success_at: quando,
+          last_start_at: null,
+          deadline_at: primeiroPrazo(h.grace_sec),
+          state: 'up',
+        })
+        h.state = statusDe(r, h)
+        return HttpResponse.json(h)
+      }),
+      rotaR('post', '/heartbeats/:id/token/rotate', ({ r, params }) => {
+        const h = r.heartbeats.find((x) => x.id === params.id)
+        if (!h) return erro(404, 'not_found')
+        return HttpResponse.json({ ...h, ping_url: `${PING_URL}-novo` })
+      }),
+
+      rotaR('get', '/channels', ({ r }) => HttpResponse.json({ items: r.canais })),
+      rotaR('post', '/channels', estrita(['kind', 'url', 'email'], ({ r, corpo }) => {
+        const email = corpo.kind === 'email'
+        const c = {
+          id: `canal-${r.canais.length + 1}`,
+          kind: email ? ('email' as const) : ('discord' as const),
+          hint: email ? 'd***@exemplo.com' : 'discord.com/…/abcd',
+          status: email ? ('pending' as const) : ('verified' as const),
+          enabled: true,
+          created_at: agora().toISOString(),
+          last_error: null,
+          last_failure_at: null,
+        }
+        r.canais.push(c)
+        return HttpResponse.json(c, { status: 201 })
+      })),
+      // ChannelHandlers.Delete e Resend: canal que não existe é 404.
+      rotaR('delete', '/channels/:id', ({ r, params }) => {
+        if (!r.canais.some((c) => c.id === params.id)) return erro(404, 'not_found')
+        r.canais = r.canais.filter((c) => c.id !== params.id)
+        return new HttpResponse(null, { status: 204 })
+      }),
+      rotaR('post', '/channels/:id/verify/resend', ({ r, params }) => {
+        const c = r.canais.find((x) => x.id === params.id)
+        if (!c) return erro(404, 'not_found')
+        // ResendVerification: só e-mail ainda não verificado. O expired é um deles:
+        // o token venceu, e reenviar é o conserto. O failing já foi verificado.
+        if (c.kind !== 'email' || c.status === 'verified' || c.status === 'failing') return erro(409, 'channel_not_pending')
+        return new HttpResponse(null, { status: 204 })
+      }),
+      // ChannelHandlers.SetEnabled (spec do Plano 9 §3.3): o corpo é lido
+      // ANTES de procurar o canal. Campo desconhecido é 400 sem fields
+      // (decodeJSONStrict: o nome vem do cliente e não ecoa); sem enabled é
+      // required; enabled que não é booleano é invalid. Depois, canal que não
+      // existe (ou de outro usuário) é 404. Mudar para o valor que já está é
+      // 200 sem efeito.
+      rotaR('patch', '/channels/:id', ({ r, params, corpo }) => {
+        const chaves = Object.keys(corpo)
+        if (chaves.some((k) => k !== 'enabled')) return erro(400, 'validation_failed')
+        if (typeof corpo.enabled !== 'boolean') {
+          return erro(400, 'validation_failed', [{ field: 'enabled', reason: chaves.includes('enabled') ? 'invalid' : 'required' }])
+        }
+        const c = r.canais.find((x) => x.id === params.id)
+        if (!c) return erro(404, 'not_found')
+        c.enabled = corpo.enabled
+        return HttpResponse.json(c)
+      }),
+
+      rotaR('get', '/status-pages', ({ r }) => HttpResponse.json({ items: r.paginas })),
+      rotaR('post', '/status-pages', estrita(CAMPOS_DA_PAGINA, ({ r, corpo }) => {
+        if (r.paginas.length > 0) return erro(409, 'status_page_exists')
+        const p = {
+          id: 'pagina-1',
+          slug: String(corpo.slug),
+          title: String(corpo.title),
+          published: Boolean(corpo.published),
+          items: (corpo.items as { target_id: string; display_name: string }[]) ?? [],
+          public_url: `http://localhost:5173/p/${String(corpo.slug)}`,
+          created_at: agora().toISOString(),
+        }
+        r.paginas = [p]
+        return HttpResponse.json(p, { status: 201 })
+      }, { items: CAMPOS_DO_ITEM_DA_PAGINA })),
+      rotaR('patch', '/status-pages/:id', estrita(CAMPOS_DA_PAGINA, ({ r, params, corpo }) => {
+        const recusa = recusaDeNulos(corpo, OBRIGATORIOS_DA_PAGINA)
+        if (recusa) return recusa
+        const p = r.paginas.find((x) => x.id === params.id)
+        if (!p) return erro(404, 'not_found')
+        Object.assign(p, corpo)
+        p.public_url = `http://localhost:5173/p/${p.slug}`
+        return HttpResponse.json(p)
+      }, { items: CAMPOS_DO_ITEM_DA_PAGINA })),
+    ]
+  }
+
+  function criarProjeto(nome: string): ProjetoFalso {
+    const novo = {
+      projeto: { id: `proj-${st.projetos.length + 1}`, name: nome, is_default: false, role: 'owner', created_at: agora().toISOString() },
+      recursos: novosRecursos(),
+    }
+    st.projetos.push(novo)
+    return novo
   }
 
   const handlers: HttpHandler[] = [
@@ -453,297 +812,29 @@ export function criarApiFalsa() {
       HttpResponse.json({ id: 'u1', email: EMAIL, totp_enabled: st.totpLigado, created_at: '2026-09-01T10:00:00Z' }),
     ),
 
-    // O filtro do servidor (targets.SummaryFilter): tags em E, estados em OU.
-    rota('get', '/targets/summary', ({ request }) => {
-      const q = new URL(request.url).searchParams
-      st.consultasDoResumo.push(q.toString())
-      const forcado = st.forcar.get(`GET /targets/summary?${q.toString()}`)
-      if (forcado) return responderErro(forcado)
-      const { recusados, tags } = lerFiltroDoResumo(q)
-      if (recusados.length > 0) return erro(400, 'validation_failed', recusados)
-      const estados = q.getAll('state')
-      const items = st.resumo.filter(
-        (it) =>
-          tags.every((t) => it.tags.includes(t)) &&
-          (estados.length === 0 || estados.includes(it.enabled ? it.state : 'paused')),
-      )
-      return HttpResponse.json({ items })
-    }),
-    rota('get', '/targets', ({ request }) => paginar(st.alvos, request)),
-    rota('post', '/targets', estrita(CAMPOS_DO_ALVO, ({ corpo }) => {
-      const alvo = {
-        id: `alvo-${st.alvos.length + 1}`,
-        name: String(corpo.name),
-        url: String(corpo.url),
-        method: corpo.method as 'GET',
-        interval_sec: Number(corpo.interval_sec),
-        timeout_ms: Number(corpo.timeout_ms),
-        expected_status: Number(corpo.expected_status),
-        degraded_threshold_ms: corpo.degraded_threshold_ms === undefined ? 2000 : (corpo.degraded_threshold_ms as number | null),
-        enabled: corpo.enabled !== false,
-        header_names: Object.keys((corpo.headers as Json | undefined) ?? {}).sort(),
-        tags: (corpo.tags as string[] | undefined) ?? [],
-        // Como o servidor: o aviso de certificado nasce ligado, e a leitura
-        // só existe depois da primeira sonda.
-        tls_warn: corpo.tls_warn !== false,
-        tls: null,
-        content_rule: regraDaResposta(corpo.content_rule),
-        created_at: agora().toISOString(),
-      }
-      st.alvos.push(alvo)
-      return HttpResponse.json(alvo, { status: 201 })
-    }, CAMPOS_DA_REGRA)),
-    rota('get', '/targets/:id', ({ params }) => {
-      const a = st.alvos.find((x) => x.id === params.id)
-      return a ? HttpResponse.json(a) : erro(404, 'not_found')
-    }),
-    rota('patch', '/targets/:id', estrita(CAMPOS_DO_ALVO, ({ params, corpo }) => {
-      const recusa = recusaDeNulos(corpo, OBRIGATORIOS_DO_ALVO)
-      if (recusa) return recusa
-      const a = st.alvos.find((x) => x.id === params.id)
-      if (!a) return erro(404, 'not_found')
-      const { headers, content_rule, ...resto } = corpo
-      // B1 do Plano 10: trocar a origem da URL (esquema, host ou porta) sem
-      // mandar headers apaga os headers; só o caminho, não.
-      const outraOrigem =
-        typeof resto.url === 'string' && new URL(resto.url.trim()).origin !== new URL(a.url.trim()).origin
-      Object.assign(a, resto)
-      if (headers !== undefined) a.header_names = Object.keys((headers as Json | null) ?? {}).sort()
-      else if (outraOrigem) a.header_names = []
-      // Como mudouDeDestino no servidor: outra origem é outro certificado, e a
-      // leitura do anterior sai junto.
-      if (outraOrigem) a.tls = null
-      if (content_rule !== undefined) a.content_rule = regraDaResposta(content_rule)
-      return HttpResponse.json(a)
-    }, CAMPOS_DA_REGRA)),
-    rota('delete', '/targets/:id', ({ params }) => {
-      // Como o servidor (TargetHandlers.Delete): alvo que não existe é 404.
-      if (!st.alvos.some((x) => x.id === params.id)) return erro(404, 'not_found')
-      st.alvos = st.alvos.filter((x) => x.id !== params.id)
-      st.resumo = st.resumo.filter((x) => x.id !== params.id)
-      return new HttpResponse(null, { status: 204 })
-    }),
-    // B6 do Plano 10: a janela vai por nome (?window=), e o servidor calcula
-    // o from com o relógio dele. window fora da lista, vazio, ou junto com
-    // from é 400 (field window, reason invalid).
-    rota('get', '/targets/:id/checks', ({ request }) => {
-      const q = new URL(request.url).searchParams
-      const janela = q.get('window')
-      if (janela !== null && (!['1h', '6h', '24h', '7d', '30d', '90d'].includes(janela) || q.has('from'))) {
-        return erro(400, 'validation_failed', [{ field: 'window', reason: 'invalid' }])
-      }
-      return HttpResponse.json(st.serie)
-    }),
+    ...rotasDosRecursos('/projects/:projectId', (params) => st.projetos.find((p) => p.projeto.id === params.projectId)?.recursos),
 
-    rota('get', '/incidents', ({ request }) => {
-      const q = new URL(request.url).searchParams
-      let itens = st.incidentes
-      if (q.get('status') === 'open') itens = itens.filter((i) => i.resolved_at === null)
-      if (q.get('status') === 'resolved') itens = itens.filter((i) => i.resolved_at !== null)
-      if (q.get('target_id')) itens = itens.filter((i) => i.target_id === q.get('target_id'))
-      return paginar(itens, request)
-    }),
-    rota('post', '/incidents/:id/ack', ({ params }) => {
-      const i = st.incidentes.find((x) => x.id === params.id)
-      if (!i) return erro(404, 'not_found')
-      i.acknowledged_at ??= agora().toISOString()
-      return HttpResponse.json(i)
-    }),
-
-    rota('get', '/heartbeats', ({ request }) => paginar(st.heartbeats, request)),
-    rota('post', '/heartbeats', estrita(CAMPOS_DO_HEARTBEAT, ({ corpo }) => {
-      const h = {
-        id: `hb-${st.heartbeats.length + 1}`,
-        name: String(corpo.name),
-        description: (corpo.description as string | undefined) ?? '',
-        tags: (corpo.tags as string[] | undefined) ?? [],
-        enabled: true,
-        schedule: corpo.schedule as Entrada<typeof Heartbeat>['schedule'],
-        grace_sec: corpo.grace_sec === undefined ? 300 : Number(corpo.grace_sec),
-        ping_resumes: corpo.ping_resumes === true,
-        state: 'waiting' as const,
-        deadline_at: primeiroPrazo(corpo.grace_sec === undefined ? 300 : Number(corpo.grace_sec)),
-        last_ping_at: null,
-        last_success_at: null,
-        last_start_at: null,
-        last_runtime_ms: null,
-        open_incident_id: null,
-        created_at: agora().toISOString(),
+    // tenancy.Service.List: o padrão primeiro, depois por id.
+    rota('get', '/projects', () =>
+      HttpResponse.json({
+        items: st.projetos
+          .map((p) => p.projeto)
+          .toSorted((a, b) => Number(b.is_default) - Number(a.is_default) || a.id.localeCompare(b.id)),
+      }),
+    ),
+    // ProjectHandlers.Create: o nome como tenancy.ParseProjectName (o
+    // invisível aqui é só controle e formato, sem a exceção do ZWJ entre
+    // visíveis de rotulo.TemInvisivel) e o teto contado pelo titular.
+    rota('post', '/projects', estrita(['name'], ({ corpo }) => {
+      const nome = typeof corpo.name === 'string' ? corpo.name.trim() : ''
+      const motivo =
+        nome === '' ? 'required' : [...nome].length > MAX_NOME_DO_PROJETO ? 'too_long' : INVISIVEL.test(nome) ? 'invalid' : null
+      if (motivo) return erro(400, 'validation_failed', [{ field: 'name', reason: motivo }])
+      if (st.projetos.filter((p) => p.projeto.role === 'owner').length >= st.limiteDeProjetos) {
+        return erro(409, 'project_limit_reached')
       }
-      st.heartbeats.push(h)
-      return HttpResponse.json({ ...h, ping_url: PING_URL }, { status: 201 })
-    }, { schedule: CAMPOS_DO_AGENDAMENTO })),
-    rota('get', '/heartbeats/cron-preview', ({ request }) => {
-      st.previasPedidas.push(new URL(request.url).search)
-      return st.previaDoCron === null
-        ? erro(400, 'validation_failed', [{ field: 'expr', reason: 'invalid' }])
-        : HttpResponse.json({ next_runs: st.previaDoCron })
-    }),
-    rota('get', '/heartbeats/:id', ({ params }) => {
-      const h = st.heartbeats.find((x) => x.id === params.id)
-      return h ? HttpResponse.json(h) : erro(404, 'not_found')
-    }),
-    rota('patch', '/heartbeats/:id', estrita(CAMPOS_DO_HEARTBEAT, ({ params, corpo }) => {
-      const recusa = recusaDeNulos(corpo, OBRIGATORIOS_DO_HEARTBEAT)
-      if (recusa) return recusa
-      const h = st.heartbeats.find((x) => x.id === params.id)
-      if (!h) return erro(404, 'not_found')
-      const retomou = corpo.enabled === true && !h.enabled
-      const recomecaOPrazo = retomou || mudouOPrazo(h, corpo)
-      Object.assign(h, corpo)
-      if (retomou) h.last_start_at = null
-      if (recomecaOPrazo) h.deadline_at = primeiroPrazo(h.grace_sec)
-      h.state = statusDe(h)
-      return HttpResponse.json(h)
-    }, { schedule: CAMPOS_DO_AGENDAMENTO })),
-    rota('delete', '/heartbeats/:id', ({ params }) => {
-      if (!st.heartbeats.some((x) => x.id === params.id)) return erro(404, 'not_found')
-      st.heartbeats = st.heartbeats.filter((x) => x.id !== params.id)
-      return new HttpResponse(null, { status: 204 })
-    }),
-    rota('get', '/heartbeats/:id/events', ({ request, params }) => {
-      if (!st.heartbeats.some((x) => x.id === params.id)) return erro(404, 'not_found')
-      return paginar(st.eventos, request)
-    }),
-    rota('get', '/heartbeats/:id/incidents', ({ request, params }) => {
-      if (!st.heartbeats.some((x) => x.id === params.id)) return erro(404, 'not_found')
-      return paginar(st.incidentesDeHeartbeat.filter((i) => i.heartbeat_id === params.id), request)
-    }),
-    // O ack é idempotente, como o do alvo: reconhecer de novo não muda a data.
-    rota('post', '/heartbeats/:id/incidents/:incident/ack', ({ params }) => {
-      const i = st.incidentesDeHeartbeat.find((x) => x.id === params.incident && x.heartbeat_id === params.id)
-      if (!i) return erro(404, 'not_found')
-      i.acknowledged_at ??= agora().toISOString()
-      return HttpResponse.json(i)
-    }),
-    // O clone do servidor: sem token, eventos, last_* nem incidentes; o nome
-    // cortado para o sufixo caber em 100 caracteres (Rulings do PR 2 da SP1).
-    rota('post', '/heartbeats/:id/clone', ({ params }) => {
-      const h = st.heartbeats.find((x) => x.id === params.id)
-      if (!h) return erro(404, 'not_found')
-      if (Agendamento.parse(h.schedule).kind === 'unknown') return erro(409, 'schedule_unsupported')
-      const copia = {
-        ...h,
-        id: `hb-${st.heartbeats.length + 1}`,
-        name: `${Array.from(h.name).slice(0, MAX_NOME_DO_HEARTBEAT - SUFIXO_DA_COPIA.length).join('')}${SUFIXO_DA_COPIA}`,
-        state: h.enabled ? ('waiting' as const) : ('paused' as const),
-        deadline_at: primeiroPrazo(h.grace_sec),
-        last_ping_at: null,
-        last_success_at: null,
-        last_start_at: null,
-        last_runtime_ms: null,
-        open_incident_id: null,
-        created_at: agora().toISOString(),
-      }
-      st.heartbeats.push(copia)
-      return HttpResponse.json({ ...copia, ping_url: `${PING_URL}-copia` }, { status: 201 })
-    }),
-    // Limpar o que já está vazio também é 204.
-    rota('post', '/heartbeats/:id/events/clear', ({ params }) => {
-      if (!st.heartbeats.some((x) => x.id === params.id)) return erro(404, 'not_found')
-      st.eventos = []
-      return new HttpResponse(null, { status: 204 })
-    }),
-    // PingNow do servidor: um sucesso com source 'panel'. O log ganha a linha,
-    // o prazo recomeça e o sucesso tira o failing. O incidente aberto fica
-    // (registrarSinal não mexe nele), e com ele o statusDe segue em late.
-    rota('post', '/heartbeats/:id/ping-now', ({ params }) => {
-      const h = st.heartbeats.find((x) => x.id === params.id)
-      if (!h) return erro(404, 'not_found')
-      const quando = agora().toISOString()
-      st.eventos = [
-        { id: `ev-painel-${st.eventos.length + 1}`, at: quando, kind: 'success', runtime_ms: null, exit_code: null, run_id: null, source: 'panel' },
-        ...st.eventos,
-      ]
-      st.ultimosSinais.set(h.id, 'success')
-      Object.assign(h, {
-        last_ping_at: quando,
-        last_success_at: quando,
-        last_start_at: null,
-        deadline_at: primeiroPrazo(h.grace_sec),
-        state: 'up',
-      })
-      h.state = statusDe(h)
-      return HttpResponse.json(h)
-    }),
-    rota('post', '/heartbeats/:id/token/rotate', ({ params }) => {
-      const h = st.heartbeats.find((x) => x.id === params.id)
-      if (!h) return erro(404, 'not_found')
-      return HttpResponse.json({ ...h, ping_url: `${PING_URL}-novo` })
-    }),
-
-    rota('get', '/channels', () => HttpResponse.json({ items: st.canais })),
-    rota('post', '/channels', estrita(['kind', 'url', 'email'], ({ corpo }) => {
-      const email = corpo.kind === 'email'
-      const c = {
-        id: `canal-${st.canais.length + 1}`,
-        kind: email ? ('email' as const) : ('discord' as const),
-        hint: email ? 'd***@exemplo.com' : 'discord.com/…/abcd',
-        status: email ? ('pending' as const) : ('verified' as const),
-        enabled: true,
-        created_at: agora().toISOString(),
-        last_error: null,
-        last_failure_at: null,
-      }
-      st.canais.push(c)
-      return HttpResponse.json(c, { status: 201 })
+      return HttpResponse.json(criarProjeto(nome).projeto, { status: 201 })
     })),
-    // ChannelHandlers.Delete e Resend: canal que não existe é 404.
-    rota('delete', '/channels/:id', ({ params }) => {
-      if (!st.canais.some((c) => c.id === params.id)) return erro(404, 'not_found')
-      st.canais = st.canais.filter((c) => c.id !== params.id)
-      return new HttpResponse(null, { status: 204 })
-    }),
-    rota('post', '/channels/:id/verify/resend', ({ params }) => {
-      const c = st.canais.find((x) => x.id === params.id)
-      if (!c) return erro(404, 'not_found')
-      // ResendVerification: só e-mail ainda não verificado. O expired é um deles:
-      // o token venceu, e reenviar é o conserto. O failing já foi verificado.
-      if (c.kind !== 'email' || c.status === 'verified' || c.status === 'failing') return erro(409, 'channel_not_pending')
-      return new HttpResponse(null, { status: 204 })
-    }),
-    // ChannelHandlers.SetEnabled (spec do Plano 9 §3.3): o corpo é lido
-    // ANTES de procurar o canal. Campo desconhecido é 400 sem fields
-    // (decodeJSONStrict: o nome vem do cliente e não ecoa); sem enabled é
-    // required; enabled que não é booleano é invalid. Depois, canal que não
-    // existe (ou de outro usuário) é 404. Mudar para o valor que já está é
-    // 200 sem efeito.
-    rota('patch', '/channels/:id', ({ params, corpo }) => {
-      const chaves = Object.keys(corpo)
-      if (chaves.some((k) => k !== 'enabled')) return erro(400, 'validation_failed')
-      if (typeof corpo.enabled !== 'boolean') {
-        return erro(400, 'validation_failed', [{ field: 'enabled', reason: chaves.includes('enabled') ? 'invalid' : 'required' }])
-      }
-      const c = st.canais.find((x) => x.id === params.id)
-      if (!c) return erro(404, 'not_found')
-      c.enabled = corpo.enabled
-      return HttpResponse.json(c)
-    }),
-
-    rota('get', '/status-pages', () => HttpResponse.json({ items: st.paginas })),
-    rota('post', '/status-pages', estrita(CAMPOS_DA_PAGINA, ({ corpo }) => {
-      if (st.paginas.length > 0) return erro(409, 'status_page_exists')
-      const p = {
-        id: 'pagina-1',
-        slug: String(corpo.slug),
-        title: String(corpo.title),
-        published: Boolean(corpo.published),
-        items: (corpo.items as { target_id: string; display_name: string }[]) ?? [],
-        public_url: `http://localhost:5173/p/${String(corpo.slug)}`,
-        created_at: agora().toISOString(),
-      }
-      st.paginas = [p]
-      return HttpResponse.json(p, { status: 201 })
-    }, { items: CAMPOS_DO_ITEM_DA_PAGINA })),
-    rota('patch', '/status-pages/:id', estrita(CAMPOS_DA_PAGINA, ({ params, corpo }) => {
-      const recusa = recusaDeNulos(corpo, OBRIGATORIOS_DA_PAGINA)
-      if (recusa) return recusa
-      const p = st.paginas.find((x) => x.id === params.id)
-      if (!p) return erro(404, 'not_found')
-      Object.assign(p, corpo)
-      p.public_url = `http://localhost:5173/p/${p.slug}`
-      return HttpResponse.json(p)
-    }, { items: CAMPOS_DO_ITEM_DA_PAGINA })),
 
     rota('get', '/sessions', () => HttpResponse.json({ items: st.sessoes })),
     rota('delete', '/sessions/:id', ({ params }) => {
@@ -865,6 +956,8 @@ export function criarApiFalsa() {
   return {
     handlers,
     estado: st,
+    // Um projeto novo, vazio, de que o usuário é dono.
+    criarProjeto,
     chamadas: (rotaChave: string) => st.chamadas.get(rotaChave) ?? 0,
     corpos: (rotaChave: string) => st.corpos.get(rotaChave) ?? [],
     // O navegador tem um refresh válido no pote: o boot entra sozinho.

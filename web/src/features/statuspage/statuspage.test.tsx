@@ -5,6 +5,7 @@ import { alvo, itemDoResumo, pagina } from '@/test/fixtures'
 import { renderizarPainel } from '@/test/renderizar'
 import { servidor } from '@/test/setup'
 import { sugerirSlug } from './PaginaStatusPage'
+import { PROJETO_PADRAO } from '@/test/api-falsa'
 
 it('sugerirSlug tira acento e o que não cabe na regra', () => {
   expect(sugerirSlug('Situação da Ação — Produção!')).toBe('situacao-da-acao-producao')
@@ -26,14 +27,14 @@ describe('status page', () => {
     }
     await r.usuario.click(screen.getByRole('button', { name: 'Subir Site' }))
 
-    r.falsa.estado.forcar.set('POST /status-pages', { status: 409, code: 'slug_taken' })
+    r.falsa.estado.forcar.set('POST /projects/:projectId/status-pages', { status: 409, code: 'slug_taken' })
     await r.usuario.click(screen.getByRole('button', { name: 'Criar status page' }))
     await waitFor(() => expect(screen.getByLabelText('Endereço (slug)')).toHaveAccessibleDescription(/já está em uso/))
 
-    r.falsa.estado.forcar.delete('POST /status-pages')
+    r.falsa.estado.forcar.delete('POST /projects/:projectId/status-pages')
     await r.usuario.click(screen.getByRole('button', { name: 'Criar status page' }))
-    await waitFor(() => expect(r.falsa.chamadas('POST /status-pages')).toBe(2))
-    expect(r.falsa.corpos('POST /status-pages')[1]).toEqual({
+    await waitFor(() => expect(r.falsa.chamadas('POST /projects/:projectId/status-pages')).toBe(2))
+    expect(r.falsa.corpos('POST /projects/:projectId/status-pages')[1]).toEqual({
       title: 'Minha Empresa',
       slug: 'minha-empresa',
       published: false,
@@ -123,17 +124,17 @@ describe('status page', () => {
     })
     servidor.use(
       http.get(
-        '*/api/v1/targets/summary',
+        '*/api/v1/projects/:projectId/targets/summary',
         async () => {
           await liberada
           return HttpResponse.json({ items: [itemDoResumo({ state: 'down' })] })
         },
       ),
     )
-    const leitura = r.cliente.resetQueries({ queryKey: ['targets', 'summary'] })
+    const leitura = r.cliente.resetQueries({ queryKey: ['projeto', PROJETO_PADRAO, 'targets', 'summary'] })
     try {
       const previa = await screen.findByRole('region', { name: 'Prévia aproximada' })
-      await waitFor(() => expect(r.cliente.getQueryState(['targets', 'summary'])?.status).toBe('pending'))
+      await waitFor(() => expect(r.cliente.getQueryState(['projeto', PROJETO_PADRAO, 'targets', 'summary'])?.status).toBe('pending'))
       expect(within(previa).queryByText(/Sem dados recentes|fora do ar\.|Todos os sistemas/)).not.toBeInTheDocument()
     } finally {
       soltar()
@@ -147,7 +148,7 @@ describe('status page', () => {
     const r = await renderizarPainel('/status-pages')
     r.falsa.estado.alvos = [alvo()]
     r.falsa.estado.paginas = [pagina()]
-    r.falsa.estado.forcar.set('GET /targets/summary', { status: 503, code: 'unavailable' })
+    r.falsa.estado.forcar.set('GET /projects/:projectId/targets/summary', { status: 503, code: 'unavailable' })
     await r.cliente.resetQueries()
     const previa = await screen.findByRole('region', { name: 'Prévia aproximada' })
     const aviso = await within(previa).findByText('Não foi possível carregar o estado dos alvos.')
@@ -215,7 +216,7 @@ describe('status page', () => {
     await r.usuario.tab()
     // Enquanto isso, outra aba criou a página no servidor.
     r.falsa.estado.paginas = [salva()]
-    r.falsa.estado.forcar.set('POST /status-pages', { status: 409, code: 'status_page_exists' })
+    r.falsa.estado.forcar.set('POST /projects/:projectId/status-pages', { status: 409, code: 'status_page_exists' })
     await r.usuario.click(screen.getByRole('button', { name: 'Criar status page' }))
     expect(await screen.findByRole('button', { name: 'Salvar' })).toBeInTheDocument()
     expect(screen.getByLabelText('Título')).toHaveValue('Minha salva')
@@ -241,8 +242,8 @@ describe('status page', () => {
     await r.usuario.click(await screen.findByRole('button', { name: 'Subir Banco' }))
     await r.usuario.click(screen.getByRole('button', { name: 'Tirar API da página' }))
     await r.usuario.click(screen.getByRole('button', { name: 'Salvar' }))
-    await waitFor(() => expect(r.falsa.chamadas('PATCH /status-pages/:id')).toBe(1))
-    expect(r.falsa.corpos('PATCH /status-pages/:id')[0]).toEqual({
+    await waitFor(() => expect(r.falsa.chamadas('PATCH /projects/:projectId/status-pages/:id')).toBe(1))
+    expect(r.falsa.corpos('PATCH /projects/:projectId/status-pages/:id')[0]).toEqual({
       title: 'Minha salva',
       slug: 'minha',
       published: true,
@@ -337,7 +338,7 @@ describe('status page', () => {
       }),
     ]
     await r.cliente.refetchQueries()
-    r.falsa.estado.forcar.set('PATCH /status-pages/:id', {
+    r.falsa.estado.forcar.set('PATCH /projects/:projectId/status-pages/:id', {
       status: 400,
       code: 'validation_failed',
       fields: [{ field: 'items[1].display_name', reason: 'required' }],
@@ -359,7 +360,7 @@ describe('status page', () => {
     r.falsa.estado.alvos = [alvo()]
     r.falsa.estado.paginas = [salva()]
     await r.cliente.refetchQueries()
-    r.falsa.estado.forcar.set('PATCH /status-pages/:id', {
+    r.falsa.estado.forcar.set('PATCH /projects/:projectId/status-pages/:id', {
       status: 400,
       code: 'validation_failed',
       fields: [{ field: 'owner_id', reason: 'forbidden' }],
