@@ -160,7 +160,7 @@ function NovoCanal({ aoCriar }: { aoCriar: (c: Canal) => void }) {
           {(a) => <Entrada {...a} type="url" {...f.register('url')} />}
         </Campo>
       ) : (
-        <Campo key="email" rotulo="E-mail" erro={erroDe('email')} ajuda="Mandamos um link de verificação, válido por 24 horas.">
+        <Campo key="email" rotulo="E-mail" erro={erroDe('email')} ajuda="O link de verificação vale por 24 horas.">
           {(a) => <Entrada {...a} type="email" {...f.register('email')} />}
         </Campo>
       )}
@@ -220,7 +220,7 @@ export function PaginaCanais() {
     setErro(null)
     try {
       await api.reenviarVerificacao(c.id)
-      avisar('Link de verificação reenviado.')
+      avisar('Pedido de reenvio recebido. Confira sua caixa de entrada.')
     } catch (e) {
       if (!(await listaVelha(e))) setErro(textoDoErro(e, 'reenviar'))
     } finally {
@@ -365,7 +365,9 @@ export function PaginaCanais() {
           aoCriar={(c) => {
             setCriando(false)
             void recarregar()
-            avisar(c.kind === 'email' ? 'Enviamos o link de verificação.' : 'Canal verificado com a mensagem de teste.')
+            avisar(c.kind === 'email'
+              ? 'Canal cadastrado. Se receber o e-mail, abra o link para verificar.'
+              : 'Canal verificado com a mensagem de teste.')
           }}
         />
       </Dialogo>
