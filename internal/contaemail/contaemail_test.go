@@ -12,6 +12,7 @@ import (
 
 	"github.com/BipoXDXD/stillon/internal/contaemail"
 	"github.com/BipoXDXD/stillon/internal/crypto"
+	"github.com/BipoXDXD/stillon/internal/notify"
 )
 
 var chaveDeTeste = bytes.Repeat([]byte{7}, crypto.KeySize)
@@ -279,13 +280,13 @@ func TestRodarDrenaAoEncerrar(t *testing.T) {
 }
 
 func TestVerificacaoComTetoPassaPeloTeto(t *testing.T) {
-	t.Run("teto esgotado suprime sem erro", func(t *testing.T) {
+	t.Run("teto esgotado sinaliza supressão", func(t *testing.T) {
 		c := novoCenario(true, false)
 		m := novoTransporte()
 		v := contaemail.NovaVerificacaoComTeto(c.enviador, m)
 
-		if err := v.SendVerification(context.Background(), crypto.Secret("p@x.com"), "https://v.dev/l"); err != nil {
-			t.Errorf("SendVerification = %v, queria nil", err)
+		if err := v.SendVerification(context.Background(), crypto.Secret("p@x.com"), "https://v.dev/l"); !errors.Is(err, notify.ErrVerificationSuppressed) {
+			t.Errorf("SendVerification com teto esgotado = %v, queria ErrVerificationSuppressed", err)
 		}
 		if n := m.total(); n != 0 {
 			t.Errorf("o mailer recebeu %d envios com o teto esgotado, queria 0", n)
@@ -296,8 +297,8 @@ func TestVerificacaoComTetoPassaPeloTeto(t *testing.T) {
 		m := novoTransporte()
 		v := contaemail.NovaVerificacaoComTeto(c.enviador, m)
 
-		if err := v.SendVerification(context.Background(), crypto.Secret("p@x.com"), "https://v.dev/l"); err != nil {
-			t.Errorf("SendVerification = %v, queria nil", err)
+		if err := v.SendVerification(context.Background(), crypto.Secret("p@x.com"), "https://v.dev/l"); !errors.Is(err, notify.ErrVerificationSuppressed) {
+			t.Errorf("SendVerification sem ficha no balde = %v, queria ErrVerificationSuppressed", err)
 		}
 		if m.total() != 0 || c.teto.total() != 0 {
 			t.Errorf("mailer = %d, Reservar = %d; queria 0 e 0", m.total(), c.teto.total())
