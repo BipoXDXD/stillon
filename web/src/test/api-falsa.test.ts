@@ -664,13 +664,36 @@ describe('o cadastro público', () => {
     falsa.estado.emailConfirmado = false
     falsa.estado.cadastro.tokens.set('token-1', 'confirm_email')
 
-    const primeira = await pedirPublico('/auth/email/confirm', { token: 'token-1' })
-    const segunda = await pedirPublico('/auth/email/confirm', { token: 'token-1' })
+    const primeira = await pedirPublico('/auth/email/confirm', { token: 'token-1', password: SENHA })
+    const segunda = await pedirPublico('/auth/email/confirm', { token: 'token-1', password: SENHA })
 
     expect(primeira.status).toBe(204)
     expect(falsa.estado.emailConfirmado).toBe(true)
     expect(segunda.status).toBe(400)
     expect(await segunda.json()).toMatchObject({ error: { code: 'token_invalid' } })
+  })
+
+  it('confirm com senha errada dá 401 e não gasta o token', async () => {
+    const falsa = usarApiFalsa()
+    falsa.estado.emailConfirmado = false
+    falsa.estado.cadastro.tokens.set('token-1', 'confirm_email')
+
+    const errada = await pedirPublico('/auth/email/confirm', { token: 'token-1', password: 'outra senha qualquer' })
+
+    expect(errada.status).toBe(401)
+    expect(await errada.json()).toMatchObject({ error: { code: 'invalid_credentials' } })
+    expect(falsa.estado.emailConfirmado).toBe(false)
+    expect((await pedirPublico('/auth/email/confirm', { token: 'token-1', password: SENHA })).status).toBe(204)
+  })
+
+  it('confirm confere a senha escolhida no cadastro', async () => {
+    const falsa = usarApiFalsa()
+    const escolhida = 'a senha que a conta nova escolheu'
+    await pedirPublico('/auth/signup', { ...cadastro('nova@exemplo.com'), password: escolhida })
+    const [token] = [...falsa.estado.cadastro.tokens.keys()]
+
+    expect((await pedirPublico('/auth/email/confirm', { token, password: SENHA })).status).toBe(401)
+    expect((await pedirPublico('/auth/email/confirm', { token, password: escolhida })).status).toBe(204)
   })
 })
 
@@ -759,7 +782,7 @@ describe('trava de e-mail antes da criação', () => {
     const corpo = { kind: 'email', email: 'avisos@exemplo.com' }
 
     expect((await pedirNaRota('POST', caminho, corpo)).status).toBe(403)
-    expect((await pedirNaRota('POST', '/auth/email/confirm', { token: 'token-1' })).status).toBe(204)
+    expect((await pedirNaRota('POST', '/auth/email/confirm', { token: 'token-1', password: SENHA })).status).toBe(204)
     expect((await pedirNaRota('POST', caminho, corpo)).status).toBe(201)
     expect((await pedirNaRota('POST', `/projects/${PROJETO_PADRAO}${caminho}`, corpo)).status).toBe(201)
     expect(falsa.estado.canais).toHaveLength(2)

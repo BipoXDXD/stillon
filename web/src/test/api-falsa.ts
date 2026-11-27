@@ -243,11 +243,14 @@ export function criarApiFalsa() {
     emailConfirmado: true,
     // O cadastro público. Habilitado, ao contrário do padrão do servidor:
     // as telas do cadastro são o caso comum dos testes. contas são os e-mails
-    // com conta; tokens, os de uso único que os e-mails levariam.
+    // com conta; tokens, os de uso único que os e-mails levariam. O confirm
+    // exige a senha da conta do token: a escolhida no signup desta falsa, ou
+    // SENHA para os tokens postos à mão e os do resend.
     cadastro: {
       habilitado: true,
       contas: new Set<string>([EMAIL]),
       tokens: new Map<string, TipoDeToken>(),
+      senhasDosTokens: new Map<string, string>(),
     },
     // Respostas forçadas por rota ("POST /targets" → 409 etc.).
     forcar: new Map<string, ErroForcado>(),
@@ -910,7 +913,7 @@ export function criarApiFalsa() {
         const email = String(corpo.email)
         if (!st.cadastro.contas.has(email)) {
           st.cadastro.contas.add(email)
-          novoTokenDeConta('confirm_email')
+          st.cadastro.senhasDosTokens.set(novoTokenDeConta('confirm_email'), String(corpo.password))
         }
         return aceito()
       })),
@@ -919,8 +922,15 @@ export function criarApiFalsa() {
     rota(
       'post',
       '/auth/email/confirm',
-      estrita(['token'], ({ corpo }) => {
-        if (!consumirToken(corpo.token, 'confirm_email')) return erro(400, 'token_invalid')
+      // O token primeiro (400); a senha errada (401) não gasta o token.
+      estrita(['token', 'password'], ({ corpo }) => {
+        const token = String(corpo.token ?? '')
+        if (st.cadastro.tokens.get(token) !== 'confirm_email') return erro(400, 'token_invalid')
+        if (corpo.password !== (st.cadastro.senhasDosTokens.get(token) ?? SENHA)) {
+          return erro(401, 'invalid_credentials')
+        }
+        consumirToken(token, 'confirm_email')
+        st.cadastro.senhasDosTokens.delete(token)
         st.emailConfirmado = true
         return new HttpResponse(null, { status: 204 })
       }),

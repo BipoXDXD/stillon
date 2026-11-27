@@ -1,105 +1,107 @@
+import { zodResolver } from '@hookform/resolvers/zod'
 import { useQueryClient } from '@tanstack/react-query'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useState } from 'react'
+import { useForm } from 'react-hook-form'
 import { Link } from 'react-router'
+import { z } from 'zod'
 import { useApi } from '@/app/contexto'
 import { Titulo } from '@/components/Titulo'
 import { Botao } from '@/components/ui/botao'
-import { ErroDoFormulario } from '@/components/ui/campo'
+import { Campo, Entrada, ErroDoFormulario } from '@/components/ui/campo'
 import { chaves } from '@/lib/api/consultas'
 import { ApiError } from '@/lib/api/http'
 import { mensagemDe } from '@/lib/api/mensagens'
-import { MolduraPublica, TextoDeApoio, useTokenDoFragmento } from './comum'
+import { MolduraPublica, TextoDeApoio, useEnvioDoFormulario, useTokenDoFragmento } from './comum'
 
-type Estado = { fase: 'confirmando' } | { fase: 'confirmado' } | { fase: 'invalido' } | { fase: 'falhou'; mensagem: string }
+const esquema = z.object({ senha: z.string().min(1, 'Informe a senha do cadastro.') })
 
-// /confirm-email#token=…: o POST sai sozinho na carga, com o token do
-// fragmento. Um GET de scanner de e-mail não executa script e não consome
-// nada.
+// /confirm-email#token=…: o token sai do fragmento, mas nada vai ao servidor
+// na carga. A confirmação exige a senha escolhida no cadastro: quem abre o
+// link em outro aparelho, ou o dono de um e-mail que alguém usou, não
+// habilita a conta sem ela. A senha errada não gasta o link.
 export function PaginaConfirmarEmail() {
   const token = useTokenDoFragmento()
   const api = useApi()
   const cliente = useQueryClient()
-  const [estado, setEstado] = useState<Estado>(token ? { fase: 'confirmando' } : { fase: 'invalido' })
+  const [invalido, setInvalido] = useState(token === null)
+  const [confirmado, setConfirmado] = useState(false)
+  const [erro, setErro] = useState<string | null>(null)
+  const form = useForm({ resolver: zodResolver(esquema), defaultValues: { senha: '' } })
+  const { enviando, enviar } = useEnvioDoFormulario(form, 'senha')
 
-  const confirmar = useCallback(
-    async (t: string) => {
-      setEstado({ fase: 'confirmando' })
-      try {
-        await api.confirmarEmail(t)
-        // O /me tem staleTime Infinity: sem isto, o painel aberto seguiria
-        // com o aviso de e-mail não confirmado.
-        void cliente.invalidateQueries({ queryKey: chaves.me })
-        setEstado({ fase: 'confirmado' })
-      } catch (e) {
-        setEstado(
-          e instanceof ApiError && e.code === 'token_invalid'
-            ? { fase: 'invalido' }
-            : { fase: 'falhou', mensagem: mensagemDe(e) },
-        )
+  if (invalido || token === null) {
+    return (
+      <MolduraPublica>
+        <Titulo key="invalido" aba="Link inválido ou vencido">
+          Link inválido ou vencido
+        </Titulo>
+        <TextoDeApoio>
+          O link de confirmação vale 24 horas e só funciona uma vez. Entre no StillOn e peça outro pelo aviso no topo do
+          painel.
+        </TextoDeApoio>
+        <Botao asChild className="w-full">
+          <Link to="/login">Entrar</Link>
+        </Botao>
+      </MolduraPublica>
+    )
+  }
+
+  if (confirmado) {
+    return (
+      <MolduraPublica>
+        <Titulo key="confirmado" aba="E-mail confirmado">
+          E-mail confirmado
+        </Titulo>
+        <TextoDeApoio>Sua conta está pronta para criar monitores.</TextoDeApoio>
+        {/* Sem sessão, o guarda do painel leva ao login e volta para cá. */}
+        <Botao asChild className="w-full">
+          <Link to="/">Ir para o painel</Link>
+        </Botao>
+      </MolduraPublica>
+    )
+  }
+
+  async function confirmar(v: z.infer<typeof esquema>, t: string) {
+    setErro(null)
+    try {
+      await api.confirmarEmail(t, v.senha)
+    } catch (e) {
+      if (e instanceof ApiError && e.code === 'token_invalid') {
+        setInvalido(true)
+        return
       }
-    },
-    [api, cliente],
-  )
-
-  // Uma vez por carga: o token é de uso único, e o StrictMode roda o efeito
-  // duas vezes (o segundo POST voltaria token_invalid).
-  const enviado = useRef(false)
-  useEffect(() => {
-    if (!token || enviado.current) return
-    enviado.current = true
-    void confirmar(token)
-  }, [token, confirmar])
+      if (e instanceof ApiError && e.code === 'invalid_credentials') {
+        form.setError('senha', { message: 'Senha incorreta. O link continua valendo: tente de novo.' })
+        return { campo: 'senha' as const }
+      }
+      setErro(mensagemDe(e))
+      return {}
+    }
+    // O /me tem staleTime Infinity: sem isto, o painel aberto seguiria com o
+    // aviso de e-mail não confirmado.
+    void cliente.invalidateQueries({ queryKey: chaves.me })
+    setConfirmado(true)
+  }
 
   return (
     <MolduraPublica>
-      {estado.fase === 'confirmando' && (
-        <>
-          <Titulo key="confirmando" aba="Confirmar e-mail">
-            Confirmando seu e-mail
-          </Titulo>
-          <p aria-busy="true" className="text-sm text-suave">
-            Só um instante.
-          </p>
-        </>
-      )}
-      {estado.fase === 'confirmado' && (
-        <>
-          <Titulo key="confirmado" aba="E-mail confirmado">
-            E-mail confirmado
-          </Titulo>
-          <TextoDeApoio>Sua conta está pronta para criar monitores.</TextoDeApoio>
-          {/* Sem sessão, o guarda do painel leva ao login e volta para cá. */}
-          <Botao asChild className="w-full">
-            <Link to="/">Ir para o painel</Link>
+      <Titulo key="formulario" aba="Confirmar e-mail">
+        Confirme seu e-mail
+      </Titulo>
+      <TextoDeApoio>
+        Digite a senha que você escolheu no cadastro. Ela garante que só quem criou a conta consegue ativá-la.
+      </TextoDeApoio>
+      <ErroDoFormulario>{erro}</ErroDoFormulario>
+      <form noValidate onSubmit={enviar((v) => confirmar(v, token))}>
+        <fieldset disabled={enviando} className="min-w-0 space-y-4">
+          <Campo rotulo="Senha" erro={form.formState.errors.senha?.message}>
+            {(a) => <Entrada {...a} type="password" autoComplete="current-password" {...form.register('senha')} />}
+          </Campo>
+          <Botao type="submit" className="w-full">
+            {enviando ? 'Confirmando…' : 'Confirmar e-mail'}
           </Botao>
-        </>
-      )}
-      {estado.fase === 'invalido' && (
-        <>
-          <Titulo key="invalido" aba="Link inválido ou vencido">
-            Link inválido ou vencido
-          </Titulo>
-          <TextoDeApoio>
-            O link de confirmação vale 24 horas e só funciona uma vez. Entre no StillOn e peça outro pelo aviso no topo
-            do painel.
-          </TextoDeApoio>
-          <Botao asChild className="w-full">
-            <Link to="/login">Entrar</Link>
-          </Botao>
-        </>
-      )}
-      {estado.fase === 'falhou' && (
-        <>
-          <Titulo key="falhou" aba="Não foi possível confirmar">
-            Não foi possível confirmar
-          </Titulo>
-          <ErroDoFormulario>{estado.mensagem}</ErroDoFormulario>
-          {/* O token ficou em memória; ele não volta à barra. */}
-          <Botao className="w-full" onClick={() => token && void confirmar(token)}>
-            Tentar de novo
-          </Botao>
-        </>
-      )}
+        </fieldset>
+      </form>
     </MolduraPublica>
   )
 }

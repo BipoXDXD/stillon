@@ -321,8 +321,9 @@ export function criarApi(sessao: Sessao, buscar: Buscar, o: OpcoesDaApi = {}) {
     configDoCadastro: (sinal?: AbortSignal) =>
       get<ConfigDoCadastro>('/auth/signup-config', ConfigDoCadastro, sinal, publico),
     cadastrar: (e: EntradaCadastro) => publico({ metodo: 'POST', caminho: '/auth/signup', corpo: e }, null),
-    confirmarEmail: (token: string) =>
-      publico({ metodo: 'POST', caminho: '/auth/email/confirm', corpo: { token } }, null),
+    // A senha do cadastro: o link sozinho não habilita a conta.
+    confirmarEmail: (token: string, senha: string) =>
+      publico({ metodo: 'POST', caminho: '/auth/email/confirm', corpo: { token, password: senha } }, null),
     reenviarConfirmacao: () => pedir({ metodo: 'POST', caminho: '/auth/email/resend' }, null),
     pedirRedefinicao: (e: PedidoDeRedefinicao) =>
       publico({ metodo: 'POST', caminho: '/auth/password/forgot', corpo: e }, null),

@@ -2,7 +2,7 @@ import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { http, HttpResponse } from 'msw'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { chaves } from '@/lib/api/consultas'
-import { EMAIL, SITE_KEY_DO_TURNSTILE, TOKEN_DO_TURNSTILE } from '@/test/api-falsa'
+import { EMAIL, SENHA, SITE_KEY_DO_TURNSTILE, TOKEN_DO_TURNSTILE } from '@/test/api-falsa'
 import { renderizarPainel } from '@/test/renderizar'
 import { servidor } from '@/test/setup'
 import { esquecerOScriptDoTurnstile, URL_DO_TURNSTILE, type OpcoesDoTurnstile } from './Turnstile'
@@ -227,22 +227,25 @@ describe('verificação de segurança', () => {
 
 describe('confirmação de e-mail', () => {
   // O token vai no fragmento do link: o navegador não o manda ao servidor,
-  // e a tela o tira da barra antes de qualquer coisa. Três sabotagens
-  // previstas: ler o token de ?token= (sem token, nada de POST), não limpar a
-  // barra, e trocar o fragmento por ?token= na limpeza.
-  it('confirmar lê o token do fragmento, limpa a barra e confirma', async () => {
+  // e a tela o tira da barra antes de qualquer coisa. Sabotagens previstas:
+  // ler o token de ?token=, não limpar a barra, trocar o fragmento por
+  // ?token= na limpeza, e voltar a confirmar sozinho na carga.
+  it('o link lê o token do fragmento, limpa a barra e pede a senha sem confirmar sozinho', async () => {
     const { falsa, router } = await renderizarPainel('/login', { logado: false, navegador: true })
     await screen.findByRole('heading', { name: 'Entrar no StillOn' })
     falsa.estado.emailConfirmado = false
     falsa.estado.cadastro.tokens.set('token-da-caixa', 'confirm_email')
     const trocas = vi.spyOn(window.history, 'replaceState')
     await act(() => router.navigate('/confirm-email#token=token-da-caixa'))
-    expect(await screen.findByRole('heading', { name: 'E-mail confirmado' })).toBeInTheDocument()
-    expect(screen.getByText('Sua conta está pronta para criar monitores.')).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: 'Ir para o painel' })).toHaveAttribute('href', '/')
-    // Um POST só (o StrictMode roda o efeito duas vezes; o token é de uso único).
-    expect(falsa.corpos('POST /auth/email/confirm')).toEqual([{ token: 'token-da-caixa' }])
-    expect(falsa.estado.emailConfirmado).toBe(true)
+    expect(await screen.findByRole('heading', { name: 'Confirme seu e-mail' })).toBeInTheDocument()
+    const senha = screen.getByLabelText('Senha')
+    expect(senha).toHaveAttribute('type', 'password')
+    expect(senha).toHaveAttribute('autocomplete', 'current-password')
+    expect(screen.getByRole('main')).toHaveTextContent(
+      'Digite a senha que você escolheu no cadastro. Ela garante que só quem criou a conta consegue ativá-la.',
+    )
+    expect(falsa.chamadas('POST /auth/email/confirm')).toBe(0)
+    expect(falsa.estado.emailConfirmado).toBe(false)
     const destinos = trocas.mock.calls.map((c) => String(c[2]))
     expect(destinos.length).toBeGreaterThan(0)
     expect(destinos.every((d) => !d.includes('token-da-caixa'))).toBe(true)
@@ -251,20 +254,80 @@ describe('confirmação de e-mail', () => {
     expect(urls.filter((u) => u.includes('token-da-caixa'))).toEqual([])
   })
 
+  it('confirmar com a senha certa mostra e-mail confirmado', async () => {
+    const { falsa, usuario } = await renderizarPainel('/confirm-email#token=token-da-caixa', { logado: false })
+    falsa.estado.emailConfirmado = false
+    falsa.estado.cadastro.tokens.set('token-da-caixa', 'confirm_email')
+    await usuario.type(await screen.findByLabelText('Senha'), SENHA)
+    await usuario.click(screen.getByRole('button', { name: 'Confirmar e-mail' }))
+    expect(await screen.findByRole('heading', { name: 'E-mail confirmado' })).toBeInTheDocument()
+    expect(screen.getByText('Sua conta está pronta para criar monitores.')).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Ir para o painel' })).toHaveAttribute('href', '/')
+    expect(falsa.estado.emailConfirmado).toBe(true)
+  })
+
+  it('confirmar envia o token e a senha no corpo, sem nada na URL', async () => {
+    const { falsa, usuario } = await renderizarPainel('/confirm-email#token=token-da-caixa', { logado: false })
+    falsa.estado.cadastro.tokens.set('token-da-caixa', 'confirm_email')
+    await usuario.type(await screen.findByLabelText('Senha'), SENHA)
+    await usuario.click(screen.getByRole('button', { name: 'Confirmar e-mail' }))
+    await screen.findByRole('heading', { name: 'E-mail confirmado' })
+    expect(falsa.corpos('POST /auth/email/confirm')).toEqual([{ token: 'token-da-caixa', password: SENHA }])
+    expect(urls.filter((u) => u.includes('token-da-caixa') || u.includes(encodeURIComponent(SENHA)))).toEqual([])
+  })
+
+  it('senha errada mantém o formulário com o erro no campo, o foco nele e o link valendo', async () => {
+    const { falsa, usuario } = await renderizarPainel('/confirm-email#token=token-da-caixa', { logado: false })
+    falsa.estado.emailConfirmado = false
+    falsa.estado.cadastro.tokens.set('token-da-caixa', 'confirm_email')
+    const senha = await screen.findByLabelText('Senha')
+    await usuario.type(senha, 'outra senha qualquer')
+    await usuario.click(screen.getByRole('button', { name: 'Confirmar e-mail' }))
+    await waitFor(() => expect(senha).toHaveAttribute('aria-invalid', 'true'))
+    expect(senha).toHaveAccessibleDescription(
+      expect.stringContaining('Senha incorreta. O link continua valendo: tente de novo.'),
+    )
+    expect(senha).toHaveFocus()
+    expect(screen.getByRole('heading', { name: 'Confirme seu e-mail' })).toBeInTheDocument()
+    expect(falsa.estado.cadastro.tokens.get('token-da-caixa')).toBe('confirm_email')
+
+    // O mesmo link aceita a senha certa depois.
+    await usuario.clear(senha)
+    await usuario.type(senha, SENHA)
+    await usuario.click(screen.getByRole('button', { name: 'Confirmar e-mail' }))
+    expect(await screen.findByRole('heading', { name: 'E-mail confirmado' })).toBeInTheDocument()
+  })
+
   it('confirmar com token_invalid mostra link inválido ou vencido com caminho para reenviar', async () => {
     const r = await renderizarPainel('/confirm-email#token=usado-ou-vencido', { logado: false })
+    await r.usuario.type(await screen.findByLabelText('Senha'), SENHA)
+    await r.usuario.click(screen.getByRole('button', { name: 'Confirmar e-mail' }))
     expect(await screen.findByRole('heading', { name: 'Link inválido ou vencido' })).toBeInTheDocument()
-    expect(r.falsa.corpos('POST /auth/email/confirm')).toEqual([{ token: 'usado-ou-vencido' }])
+    expect(r.falsa.corpos('POST /auth/email/confirm')).toEqual([{ token: 'usado-ou-vencido', password: SENHA }])
     expect(screen.getByRole('main')).toHaveTextContent(
       'O link de confirmação vale 24 horas e só funciona uma vez. Entre no StillOn e peça outro pelo aviso no topo do painel.',
     )
     expect(screen.getByRole('link', { name: 'Entrar' })).toHaveAttribute('href', '/login')
     r.tela.unmount()
 
-    // Sem token na URL: o mesmo estado, e nada vai ao servidor.
+    // Sem token na URL: o mesmo estado, sem formulário, e nada vai ao servidor.
     const sem = await renderizarPainel('/confirm-email', { logado: false })
     expect(await screen.findByRole('heading', { name: 'Link inválido ou vencido' })).toBeInTheDocument()
+    expect(screen.queryByLabelText('Senha')).not.toBeInTheDocument()
     expect(sem.falsa.chamadas('POST /auth/email/confirm')).toBe(0)
+  })
+
+  it('muitas tentativas pede para aguardar e mantém o formulário', async () => {
+    const { falsa, usuario } = await renderizarPainel('/confirm-email#token=token-da-caixa', { logado: false })
+    falsa.estado.cadastro.tokens.set('token-da-caixa', 'confirm_email')
+    falsa.estado.forcar.set('POST /auth/email/confirm', { status: 429, code: 'rate_limited' })
+    const senha = await screen.findByLabelText('Senha')
+    await usuario.type(senha, SENHA)
+    await usuario.click(screen.getByRole('button', { name: 'Confirmar e-mail' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('Aguarde um minuto e tente de novo.')
+    expect(screen.getByRole('heading', { name: 'Confirme seu e-mail' })).toBeInTheDocument()
+    expect(senha).toHaveValue(SENHA)
+    expect(screen.getByRole('button', { name: 'Confirmar e-mail' })).toBeEnabled()
   })
 })
 
@@ -384,6 +447,7 @@ describe('envio dos formulários públicos', () => {
       campos: [{ rotulo: 'E-mail', valor: NOVO }, { rotulo: 'Senha', valor: SENHA_NOVA }],
       desafio: true,
       via: 'enter',
+      mostrarSenha: true,
     },
     {
       rota: '/forgot-password',
@@ -393,6 +457,7 @@ describe('envio dos formulários públicos', () => {
       campos: [{ rotulo: 'E-mail', valor: NOVO }],
       desafio: true,
       via: 'botão',
+      mostrarSenha: false,
     },
     {
       rota: '/reset-password#token=token-de-reset',
@@ -402,10 +467,21 @@ describe('envio dos formulários públicos', () => {
       campos: [{ rotulo: 'Senha nova', valor: SENHA_NOVA }],
       desafio: false,
       via: 'enter',
+      mostrarSenha: true,
       moverFocoPara: 'Escolha uma senha nova',
     },
+    {
+      rota: '/confirm-email#token=token-da-caixa',
+      endpoint: '/auth/email/confirm',
+      acao: 'Confirmar e-mail',
+      enviando: 'Confirmando…',
+      campos: [{ rotulo: 'Senha', valor: SENHA }],
+      desafio: false,
+      via: 'enter',
+      mostrarSenha: false,
+    },
   ])('$rota bloqueia os controles enquanto envia e recupera os valores e o foco na falha', async ({
-    rota, endpoint, acao, enviando, campos, desafio, via, moverFocoPara,
+    rota, endpoint, acao, enviando, campos, desafio, via, mostrarSenha, moverFocoPara,
   }) => {
     let liberar!: () => void
     const resposta = new Promise<void>((resolve) => { liberar = resolve })
@@ -428,7 +504,7 @@ describe('envio dos formulários públicos', () => {
 
     const botao = screen.getByRole('button', { name: acao })
     const botoesDeSenha = screen.queryAllByRole('button', { name: 'Mostrar senha' })
-    expect(botoesDeSenha).toHaveLength(campos.some(({ rotulo }) => rotulo.startsWith('Senha')) ? 1 : 0)
+    expect(botoesDeSenha).toHaveLength(mostrarSenha ? 1 : 0)
     const primeiroCampo = preenchidos[0]!.entrada
     const origem = via === 'enter' ? primeiroCampo : botao
     const focoExterno = moverFocoPara ? screen.getByRole('heading', { name: moverFocoPara }) : null

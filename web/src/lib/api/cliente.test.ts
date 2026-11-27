@@ -927,11 +927,23 @@ describe('o cadastro público', () => {
     const falsa = usarApiFalsa()
     const { api } = novaSessao()
 
-    const e = await api.confirmarEmail('token-que-nao-existe').catch((x: unknown) => x)
+    const e = await api.confirmarEmail('token-que-nao-existe', SENHA).catch((x: unknown) => x)
 
     expect(e).toBeInstanceOf(ApiError)
     expect(e).toMatchObject({ status: 400, code: 'token_invalid' })
-    expect(falsa.corpos('POST /auth/email/confirm')).toEqual([{ token: 'token-que-nao-existe' }])
+    expect(falsa.corpos('POST /auth/email/confirm')).toEqual([{ token: 'token-que-nao-existe', password: SENHA }])
+    expect(falsa.chamadas('POST /auth/refresh')).toBe(0)
+  })
+
+  it('confirmarEmail com senha errada rejeita com invalid_credentials sem tentar o refresh', async () => {
+    const falsa = usarApiFalsa()
+    falsa.estado.cadastro.tokens.set('token-1', 'confirm_email')
+    const { api } = novaSessao()
+
+    const e = await api.confirmarEmail('token-1', 'outra senha qualquer').catch((x: unknown) => x)
+
+    expect(e).toBeInstanceOf(ApiError)
+    expect(e).toMatchObject({ status: 401, code: 'invalid_credentials' })
     expect(falsa.chamadas('POST /auth/refresh')).toBe(0)
   })
 
