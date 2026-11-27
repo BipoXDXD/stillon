@@ -899,10 +899,10 @@ describe('o id hostil vai codificado em toda rota com id', () => {
   })
 })
 
-// O cadastro público (PR 3): as rotas sem sessão vão como o /auth/login,
-// sem access token e sem renovar em 401.
+// As rotas públicas do cadastro dispensam as credenciais da sessão.
+// Se a API responder 401, o cliente devolve o erro sem renovar a sessão.
 describe('o cadastro público', () => {
-  it('cadastrar envia o corpo exato e não manda Authorization', async () => {
+  it('cadastrar envia o corpo exato sem credenciais da sessão', async () => {
     const falsa = usarApiFalsa()
     const cabecalhos: Headers[] = []
     const buscar = vi.fn<Buscar>((entrada, init) => {
@@ -919,6 +919,7 @@ describe('o cadastro público', () => {
     expect(falsa.corpos('POST /auth/signup')).toEqual([entrada])
     const doCadastro = cabecalhos.at(-1)!
     expect(doCadastro.has('Authorization')).toBe(false)
+    expect(buscar.mock.lastCall?.[1].credentials).toBe('omit')
     expect(doCadastro.get('X-Requested-With')).toBe('stillon')
   })
 

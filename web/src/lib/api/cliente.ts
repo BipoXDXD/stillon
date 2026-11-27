@@ -260,15 +260,14 @@ export function criarApi(sessao: Sessao, buscar: Buscar, o: OpcoesDaApi = {}) {
     return lerCorpo(r, esquema)
   }
 
-  // As rotas públicas do cadastro vão como o /auth/login (sessao.entrar):
-  // sem access token, e um 401 nunca renova. Mandar o token de uma sessão
-  // aberta noutra conta não muda nada no servidor e só o exporia.
+  // As rotas públicas do cadastro dispensam o token de acesso e os cookies
+  // de sessão. Um 401 volta ao chamador sem renovar a sessão.
   function publico(p: Omit<Pedido, 'token'>, esquema: null): Promise<void>
   function publico<T>(p: Omit<Pedido, 'token'>, esquema: z.ZodType<T>): Promise<T>
   async function publico<T>(p: Omit<Pedido, 'token'>, esquema: z.ZodType<T> | null): Promise<T | undefined> {
     // O GET já chega com o prazo do get(); as mutações ganham o mesmo prazo
     // do login, para uma rede presa não deixar o formulário sem resposta.
-    const r = await enviar(buscar, { ...p, sinal: p.sinal ?? AbortSignal.timeout(PRAZO_DA_CONSULTA_MS) })
+    const r = await enviar(buscar, { ...p, sinal: p.sinal ?? AbortSignal.timeout(PRAZO_DA_CONSULTA_MS) }, 'omit')
     if (!r.ok) throw await lerErro(r)
     return esquema === null ? undefined : lerCorpo(r, esquema)
   }
