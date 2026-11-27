@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"go/ast"
 	"go/format"
 	"go/parser"
@@ -83,8 +84,8 @@ func TestVerificadorDeCanalPassaPeloTeto(t *testing.T) {
 		t.Fatalf("verificador = %#v, queria o decorador do contaemail", v)
 	}
 
-	if err := v.SendVerification(context.Background(), crypto.Secret("dono@exemplo.test"), "https://x/verify/1"); err != nil {
-		t.Fatalf("SendVerification com o balde vazio = %v, queria nil", err)
+	if err := v.SendVerification(context.Background(), crypto.Secret("dono@exemplo.test"), "https://x/verify/1"); !errors.Is(err, notify.ErrVerificationSuppressed) {
+		t.Fatalf("SendVerification com o balde vazio = %v, queria ErrVerificationSuppressed", err)
 	}
 	if n := len(rf.lista()); n != 0 {
 		t.Fatalf("com o balde vazio, o Resend recebeu %d e-mails, queria 0", n)
