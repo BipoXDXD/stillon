@@ -166,8 +166,13 @@ var ErrLocked = errors.New("auth: tentativas bloqueadas")
 // Argon2id. Assim as reservas pendentes nunca passam do teto de vagas, e N
 // confirmações simultâneas com a senha certa não travam a conta enquanto o teto
 // fica abaixo de LockThreshold (o padrão, DefaultArgon2MaxConcurrent, é no
-// máximo 4). Falhar ao devolver só vai para o log: a senha estava certa, e o
-// pior caso é uma tentativa a mais contada.
+// máximo 4). A garantia vale POR INSTÂNCIA: o semáforo do Argon2id é da
+// memória de cada processo, e o contador da conta é um só no banco, então
+// réplicas somam as reservas pendentes, e com R réplicas o que conta é R vezes
+// o teto. Falhar ao devolver só vai para o log: a senha estava certa, e o pior
+// caso é uma tentativa a mais contada. A devolução usa o contexto sem o
+// cancelamento da requisição: o cliente que desistiu depois do Argon2id não
+// deixa a senha certa contada como errada.
 func CheckPasswordOrLocked(ctx context.Context, t Attempts, u User, plain string) (ok bool, err error) {
 	reservou, ok, _, err := reservarEVerificar(ctx, t, u, plain, true)
 	if err != nil {
@@ -200,7 +205,7 @@ func reservarEVerificar(ctx context.Context, t Attempts, u User, plain string, d
 	}
 	ok, needsRehash, err = verificarSenha(u.PasswordHash, plain)
 	if ok && err == nil && devolverSeCerta {
-		if err := t.Refund(ctx); err != nil {
+		if err := t.Refund(context.WithoutCancel(ctx)); err != nil {
 			slog.ErrorContext(ctx, "devolver a reserva da senha certa", "erro", err,
 				"user_id", u.ID, "trace_id", observability.TraceID(ctx))
 		}
