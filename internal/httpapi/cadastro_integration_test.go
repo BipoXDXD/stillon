@@ -3,6 +3,7 @@ package httpapi_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"maps"
@@ -431,6 +432,35 @@ func TestReenvioJaConfirmadoRespondeIgualSemEmail(t *testing.T) {
 	}
 }
 
+func TestReenvioLimitePorUsuario(t *testing.T) {
+	a := newAPI(t)
+	outraConta := outroUsuario(t, a)
+	if _, err := a.pool.Exec(t.Context(),
+		`UPDATE users SET email_verified_at = NULL WHERE id IN ($1, $2)`, a.userID, outraConta); err != nil {
+		t.Fatal(err)
+	}
+	primeiraSessao := tokenDe(t, a, a.userID)
+	segundaSessao := tokenDe(t, a, a.userID)
+	sessaoOutraConta := tokenDe(t, a, outraConta)
+
+	reenviar := func(token string) respostaCrua {
+		status, corpo := lerCru(t, a, http.MethodPost, "/api/v1/auth/email/resend", token, nil)
+		return respostaCrua{status: status, corpo: corpo}
+	}
+	for i := range 3 {
+		exigir202SemCorpo(t, fmt.Sprintf("reenvio %d da primeira conta", i+1), reenviar(primeiraSessao))
+	}
+	exigirErro(t, "quarto reenvio", reenviar(primeiraSessao), http.StatusTooManyRequests, apierr.CodeRateLimited)
+	exigirErro(t, "outra sessão da mesma conta", reenviar(segundaSessao), http.StatusTooManyRequests, apierr.CodeRateLimited)
+	exigir202SemCorpo(t, "reenvio de outra conta no mesmo IP", reenviar(sessaoOutraConta))
+
+	a.clk.Advance(10*time.Minute - time.Millisecond)
+	exigirErro(t, "antes de dez minutos", reenviar(primeiraSessao), http.StatusTooManyRequests, apierr.CodeRateLimited)
+	a.clk.Advance(time.Millisecond)
+	exigir202SemCorpo(t, "reenvio aos dez minutos", reenviar(primeiraSessao))
+	exigirErro(t, "segunda tentativa aos dez minutos", reenviar(primeiraSessao), http.StatusTooManyRequests, apierr.CodeRateLimited)
+}
+
 // transporteContado conta as entregas que chegaram ao provedor.
 type transporteContado struct{ entregas atomic.Int32 }
 
@@ -450,88 +480,91 @@ func (tf *tetoFalso) Reservar(context.Context) (bool, error) {
 	return tf.libera, nil
 }
 
-// baldeQueLibera é o balde do destinatário sempre com ficha.
-type baldeQueLibera struct{}
+// baldeDeDestinatarioFalso libera ou recusa toda consulta do trabalhador.
+type baldeDeDestinatarioFalso struct {
+	libera    bool
+	consultas atomic.Int32
+}
 
-func (baldeQueLibera) Gastar(context.Context, string, []byte, time.Duration, int) (time.Duration, bool, error) {
-	return 0, true, nil
+func (b *baldeDeDestinatarioFalso) Gastar(context.Context, string, []byte, time.Duration, int) (time.Duration, bool, error) {
+	b.consultas.Add(1)
+	return 0, b.libera, nil
 }
 
 // cenarioDeTeto sobe a API com o contaemail.Enviador real atrás do Cadastro e
-// da Recuperacao, com o teto dado, e devolve as respostas de signup e forgot,
-// com e sem conta, e as entregas ao transporte.
-func cenarioDeTeto(t *testing.T, libera bool) (respostas []respostaCrua, entregas int32) {
+// da Recuperacao. Aguarda o fim do dreno antes de contar as entregas.
+func cenarioDeTeto(t *testing.T, balde *baldeDeDestinatarioFalso, teto *tetoFalso) ([]respostaCrua, int32) {
 	t.Helper()
 	a := newAPI(t)
-	transporte, teto := &transporteContado{}, &tetoFalso{libera: libera}
-	enviador := contaemail.New(transporte, teto, baldeQueLibera{}, testIPHashKey, slog.New(slog.DiscardHandler))
+	transporte := &transporteContado{}
+	enviador := contaemail.New(transporte, teto, balde, testIPHashKey, slog.New(slog.DiscardHandler))
 	ctx, parar := context.WithCancel(context.Background())
 	rodando := make(chan struct{})
 	go func() { defer close(rodando); enviador.Rodar(ctx) }()
 	t.Cleanup(func() { parar(); <-rodando })
 	a.trocarMailerDeConta(t, enviador)
 
-	respostas = []respostaCrua{
+	respostas := []respostaCrua{
 		signup(t, a, "nova@exemplo.com"),
 		signup(t, a, testEmail),
 		forgot(t, a, testEmail),
 		forgot(t, a, "ninguem@exemplo.com"),
-	}
-	// Três e-mails na fila (os dois do signup e o forgot com conta): espera o
-	// enviador consultar o teto para os três antes de contar as entregas.
-	prazo := time.Now().Add(10 * time.Second)
-	for teto.consultas.Load() < 3 {
-		if time.Now().After(prazo) {
-			t.Fatalf("o enviador consultou o teto %d vezes, queria 3", teto.consultas.Load())
-		}
-		time.Sleep(10 * time.Millisecond)
 	}
 	parar()
 	<-rodando
 	return respostas, transporte.entregas.Load()
 }
 
-// Review Focus 4: com o teto esgotado, signup e forgot respondem byte a byte
-// como com o teto livre, com conta e sem conta, e nada chega ao transporte.
+// Signup e forgot respondem da mesma forma com conta e sem conta, inclusive
+// quando o teto ou o balde do destinatário impede a entrega.
 func TestRespostasIdenticasComTetoEsgotado(t *testing.T) {
 	if testing.Short() {
 		t.Skip("precisa de Docker; pulado em -short")
 	}
 	// O banco é restaurado após cada subteste, e a conta existente nasce de novo.
 	cenarios := []struct {
-		nome     string
-		libera   bool
-		entregas int32
+		nome        string
+		liberaBalde bool
+		liberaTeto  bool
+		reservas    int32
+		entregas    int32
 	}{
-		{"teto livre", true, 3},
-		{"teto esgotado", false, 0},
+		{nome: "teto livre", liberaBalde: true, liberaTeto: true, reservas: 3, entregas: 3},
+		{nome: "teto esgotado", liberaBalde: true, reservas: 3},
+		{nome: "balde do destinatário esgotado", liberaTeto: true},
 	}
 	nomes := []string{"signup conta nova", "signup conta existente", "forgot com conta", "forgot sem conta"}
-	var respostas [2][]respostaCrua
+	var livre []respostaCrua
 	for i, c := range cenarios {
 		t.Run(c.nome, func(t *testing.T) {
-			recebidas, entregas := cenarioDeTeto(t, c.libera)
-			if len(recebidas) != len(nomes) {
-				t.Fatalf("%d respostas; queria %d", len(recebidas), len(nomes))
+			balde := &baldeDeDestinatarioFalso{libera: c.liberaBalde}
+			teto := &tetoFalso{libera: c.liberaTeto}
+			recebidas, entregas := cenarioDeTeto(t, balde, teto)
+			// Os dois signups e o forgot com conta enfileiram três mensagens.
+			if n := balde.consultas.Load(); n != 3 {
+				t.Errorf("%d consultas ao balde do destinatário, queria 3", n)
+			}
+			if n := teto.consultas.Load(); n != c.reservas {
+				t.Errorf("%d tentativas de reservar o teto, queria %d", n, c.reservas)
 			}
 			if entregas != c.entregas {
-				t.Errorf("%d entregas; queria %d", entregas, c.entregas)
+				t.Errorf("%d entregas, queria %d", entregas, c.entregas)
 			}
 			for j, nome := range nomes {
 				exigir202SemCorpo(t, nome, recebidas[j])
 			}
 			exigirIguais(t, "signup: nova × existente", recebidas[0], recebidas[1])
 			exigirIguais(t, "forgot: com × sem conta", recebidas[2], recebidas[3])
-			respostas[i] = recebidas
+			if i == 0 {
+				livre = recebidas
+			}
+			// Um filtro -run pode selecionar só um cenário de supressão.
+			if i > 0 && livre != nil {
+				for j, nome := range nomes {
+					exigirIguais(t, nome+": comparado ao teto livre", livre[j], recebidas[j])
+				}
+			}
 		})
-	}
-	livre, esgotado := respostas[0], respostas[1]
-	// Um filtro -run pode selecionar só um cenário.
-	if livre == nil || esgotado == nil {
-		return
-	}
-	for i, nome := range nomes {
-		exigirIguais(t, nome+": teto livre × esgotado", livre[i], esgotado[i])
 	}
 }
 

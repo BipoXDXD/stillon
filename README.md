@@ -72,28 +72,30 @@ O envio de e-mail fica desligado por padrão. Para habilitar, primeiro guarde a 
 Resend no Bitwarden, na pasta **StillOn**. No seu computador, copie `.env.example`
 para `.env`, restrinja a leitura com `chmod 600 .env` e preencha no editor local:
 
-- `RESEND_API_KEY`: a chave do Resend guardada no Bitwarden.
-- `EMAIL_FROM`: um remetente de domínio verificado no Resend, no formato
-  `StillOn <alertas@seu-dominio>`.
+- `RESEND_API_KEY` e `EMAIL_FROM` formam o par de envio. Preencha as duas para habilitar
+  o e-mail ou deixe ambas vazias. Use a chave guardada no Bitwarden e um remetente
+  de domínio verificado no Resend, no formato `StillOn <alertas@seu-dominio>`.
 - `ACCOUNT_EMAIL_FROM` (opcional): o remetente dos e-mails de conta (confirmação e
-  redefinição de senha). Vazio, vale o `EMAIL_FROM`.
-- `TURNSTILE_SITE_KEY` e `TURNSTILE_SECRET_KEY`: o par do Turnstile da Cloudflare, que liga o
-  cadastro público junto com o e-mail. Sem o par (ou sem o e-mail), o cadastro fica
-  **desligado**, o padrão: só o CLI cria conta. No Compose local, vazias, valem as chaves de
-  teste públicas da Cloudflare; em produção, o boot as recusa, e as de verdade ficam no
-  Bitwarden e no Coolify.
+  redefinição de senha). Vazio, vale o `EMAIL_FROM`. O Resend precisa autorizar o envio
+  do remetente efetivo com a `RESEND_API_KEY`.
+- `TURNSTILE_SITE_KEY` e `TURNSTILE_SECRET_KEY` formam o par do Turnstile da Cloudflare.
+  Configure as duas juntas. O cadastro público exige os pares de e-mail e Turnstile.
+  Com um par inteiro ausente, o cadastro público fica desligado e só o CLI cria conta.
+  Se o processo receber só uma variável de qualquer par, o app recusa a configuração
+  ao iniciar. No Compose local, deixar ambas as chaves do Turnstile vazias usa as chaves
+  públicas de teste da Cloudflare. Em produção, o boot recusa essas chaves de teste.
+  Guarde as chaves do widget de produção no Bitwarden.
 
-As duas variáveis devem estar preenchidas juntas. O `.env` não vai para o Git nem
-para a imagem Docker. Aplique a configuração ao serviço local:
+Mantenha o `.env` fora do Git e da imagem Docker. Aplique a configuração ao serviço local:
 
 ```sh
 docker compose up -d --no-deps --wait app
 ```
 
 Depois, cadastre o canal de e-mail no painel. Na demonstração, o link recebido usa
-`localhost` e deve ser aberto no mesmo computador que executa o StillOn. Em produção, as duas
-variáveis são segredos de interpolação do recurso no Coolify, nunca arquivos do repositório
-([`deploy/coolify/README.md`](deploy/coolify/README.md)).
+`localhost` e deve ser aberto no mesmo computador que executa o StillOn. Em produção, configure
+esses valores nas variáveis de interpolação do recurso no Coolify e siga o roteiro de ativação
+para repassá-los ao contêiner. [Cadastro público no runbook](docs/deploy/vps.md#cadastro-público-turnstile-e-remetente-de-conta).
 
 ## O que faz
 
