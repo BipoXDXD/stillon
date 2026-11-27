@@ -2480,13 +2480,14 @@ vc exec app /stillon user create --email voce@exemplo.com
 
 Ele pede `Senha:` e `Confirme a senha:`, sem eco. Cole a senha da entrada nas duas perguntas.
 
-**Por quê:** o sistema é de um dono só, e não há cadastro pela web: o primeiro usuário nasce pelo
-CLI, dentro do contêiner que já tem a `DATABASE_URL`. A senha vem do terminal, nunca de argumento
+**Por quê:** o cadastro pela web sai desligado (só liga com o Turnstile e o e-mail, na seção
+"Cadastro público" mais adiante): a conta do operador nasce pelo CLI, dentro do contêiner que já
+tem a `DATABASE_URL`. A senha vem do terminal, nunca de argumento
 (argumento aparece no `ps` e no histórico). O `docker compose exec` já abre um terminal, por isso
 não ecoa.
 
 **Deve aparecer:** `usuário criado: voce@exemplo.com (id …)`. Se disser
-`já existe um usuário; nada foi alterado` (código 3), alguém já criou: use
+`já existe uma conta com esse e-mail; nada foi alterado` (código 3), a conta já existe: use
 `vc exec app /stillon user set-password --email <e-mail>` para trocar a senha.
 
 ### 5.2 Entrar e ligar o 2FA
@@ -2519,13 +2520,21 @@ volta se o celular sumir; sem eles e sem o app, só o `reset-2fa` pelo CLI (bloc
 **Por quê:** confere ponta a ponta o Resend (domínio verificado, chave, remetente) e os links, que
 usam a `PUBLIC_BASE_URL` de produção.
 
-**Deve aparecer:** `Enviamos o link de verificação.` e, em até alguns minutos, um e-mail do
-remetente `StillOn <alertas@avisos.seu-domínio>` com um link para `https://seu-domínio/…`.
-Clique nele.
+**Deve aparecer:** `Canal cadastrado. Se receber o e-mail, abra o link para verificar.`
+Confira se chegou um e-mail do remetente configurado com um link para
+`https://seu-domínio/…`. Se chegar, abra o link e clique em **Confirmar**.
 
-**Confira:** o canal aparece como verificado. Se o e-mail não chegar: a caixa de spam; depois
-`vc logs app | grep -i resend | tail` (um `403` é domínio não verificado ou `EMAIL_FROM` com
-outro domínio).
+**Confira:** o canal aparece como verificado. Se o e-mail não chegar, confira a caixa de spam e
+procure por `resend` ou `e-mail de conta suprimido` nos logs do app. O comando abaixo roda na VPS
+desta instalação.
+
+```bash
+vc logs app | grep -Ei 'resend|e-mail de conta suprimido' | tail
+```
+
+No registro `e-mail de conta suprimido`, o motivo `destino` indica o limite por destinatário e
+`teto` indica o limite diário. Se o Resend retornar `403`, confira se o domínio do remetente
+configurado está verificado e autorizado para envio.
 
 (Opcional: um canal do Discord pelo mesmo caminho; ele manda uma mensagem de teste na hora.)
 
@@ -4493,6 +4502,55 @@ escolhe o ID. (O backup pela chave só entrega o dump **cifrado**: sem a sua cha
    ela. Restaure uma cópia do backup **anterior à data anotada** no seu computador (passo 7.2) e
    compare no painel dela com a produção (usuários, alvos, canais). Se algo foi mexido, restaure
    esse backup na produção ("A VPS morreu", item 4), perdendo o que veio depois dele.
+
+### Cadastro público: Turnstile e remetente de conta
+
+O cadastro público fica desligado até o app ter o par do Turnstile e o e-mail configurados
+(`SignupEnabled`). Este roteiro guarda as chaves e liga a configuração no recurso do app no
+Coolify. Um passo por vez; só siga depois do **Confira**.
+
+1. **Bitwarden.** Na pasta "StillOn", crie a entrada **"StillOn / Turnstile"**, ainda vazia.
+   **Por quê:** as chaves vão do painel da Cloudflare direto para ela, sem passar pelo chat nem
+   por arquivo. **Confira:** a entrada aparece na pasta.
+2. **Cloudflare.** No painel, abra **Turnstile → Add widget**: nome `StillOn`, hostname
+   `stillon.tech`, modo **Managed**. Copie a **site key** e o **secret key** e cole cada uma num
+   campo da entrada do passo 1. **Por quê:** o hostname faz a Cloudflare recusar token gerado em
+   outro site. **Confira:** a entrada tem os dois valores, e o widget aparece na lista do
+   Turnstile.
+3. **Resend.** Se for usar um domínio separado para o remetente de conta, adicione-o em
+   **Domains → Add domain** (por exemplo, `conta.stillon.tech`). Crie na área **DNS records**
+   do domínio na Hostinger cada registro que o Resend mostrar. Em **Nameservers**, a Hostinger
+   retorna "invalid nameserver structure".
+   **Por quê:** o remetente de conta separado não mistura a reputação dos avisos com a dos
+   e-mails de cadastro. **Confira:** os registros aparecem na lista de DNS records da Hostinger.
+4. **Resend.** Se adicionou o domínio, clique em **Verify** e espere. **Confira:** o domínio fica
+   **Verified** (de minutos a algumas horas). A ativação depende de o Resend autorizar o envio do
+   remetente de conta com a `RESEND_API_KEY`. A chave do passo 1.5 é restrita a envios no domínio
+   dos avisos. Com essa chave, deixe `ACCOUNT_EMAIL_FROM` vazia para usar o `EMAIL_FROM`, ou
+   escolha um endereço de conta autorizado nesse mesmo domínio.
+5. **Coolify.** No recurso do app, em **Environment Variables**, cadastre
+   `TURNSTILE_SITE_KEY` e `TURNSTILE_SECRET_KEY` colando do Bitwarden. Preencha
+   `ACCOUNT_EMAIL_FROM` se escolheu um remetente autorizado no passo 4. Confira também o par
+   `RESEND_API_KEY` e `EMAIL_FROM` no recurso. **Por quê:** o Coolify usa as variáveis do recurso
+   para preencher os valores referenciados pelo manifesto na publicação. **Confira:** as chaves
+   do Turnstile aparecem na lista, com o secret mascarado.
+6. **Ativação.** Após a publicação dos termos de uso, salvo decisão contrária do dono, siga a
+   seção "Ativação em produção" do
+   [plano do cadastro público](../superpowers/plans/2026-11-23-pr3-cadastro-publico.md)
+   para atualizar `deploy/coolify/app.json`, fixar o novo commit de infraestrutura no recurso
+   pelo Passo 7 e publicá-lo. **Por quê:** o par do Turnstile e `ACCOUNT_EMAIL_FROM` só chegam
+   ao processo quando a publicação usa um manifesto que os repassa em
+   `services.app.environment`. Na inicialização desse contêiner, o app recusa um par de e-mail
+   ou Turnstile incompleto, uma chave de teste da Cloudflare (prefixos `1x00000000`, `2x00000000`
+   e `3x00000000`) ou `ACCOUNT_EMAIL_FROM` sem o par de e-mail. O Resend verifica a autorização
+   do remetente no envio.
+
+   **Confira:** no seu computador, `curl -s https://stillon.tech/api/v1/auth/signup-config` mostra
+   `"enabled":true`. Faça um cadastro com seu e-mail e confirme que a mensagem chegou do
+   remetente esperado.
+
+Para trocar o secret do Turnstile: em **Turnstile → widget → Rotate secret key** na Cloudflare,
+cole o novo no Bitwarden e no Coolify e publique de novo.
 
 ### Minutos de Actions
 

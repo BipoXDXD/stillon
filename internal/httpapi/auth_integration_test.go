@@ -33,6 +33,8 @@ import (
 	"github.com/BipoXDXD/stillon/internal/targets"
 	"github.com/BipoXDXD/stillon/internal/tenancy"
 	"github.com/BipoXDXD/stillon/internal/tenancy/pgstore"
+	"github.com/BipoXDXD/stillon/internal/turnstile"
+	"github.com/BipoXDXD/stillon/internal/turnstile/turnstiletest"
 )
 
 const (
@@ -75,6 +77,10 @@ type api struct {
 	// discord e email substituem os envios de verificação dos canais.
 	discord *discordFalso
 	email   *carteiroFalso
+	// conta grava os e-mails de conta (confirmação, "já tem conta",
+	// redefinição); turnstile é o verificador ligado ao siteverify falso.
+	conta     *mailerDeContaFalso
+	turnstile *turnstile.Verificador
 	// rotacao é o rotation da última troca de autenticador que o iniciarTrocaHTTP
 	// viu aceita: o confirmarTrocaHTTP o manda de volta.
 	rotacao string
@@ -124,7 +130,7 @@ func newAPICom(t *testing.T, ajustar func(*config.Config), ajustarDeps func(*htt
 
 	userID := uuid.New()
 	if _, err := pool.Exec(context.Background(),
-		`INSERT INTO users (id, email, password_hash) VALUES ($1, $2, $3)`,
+		`INSERT INTO users (id, email, password_hash, email_verified_at) VALUES ($1, $2, $3, now())`,
 		userID, testEmail, hashDaFixture()); err != nil {
 		t.Fatal(err)
 	}
@@ -155,18 +161,28 @@ func newAPICom(t *testing.T, ajustar func(*config.Config), ajustarDeps func(*htt
 	segundoFator := auth.NewTOTP(pool, box, "StillOn")
 
 	discord, email := &discordFalso{}, &carteiroFalso{}
+	contas := account.NewService(pool, segundoFator, clk, cfg.IPHashKey)
+	// O cadastro público sai ligado, com o siteverify falso que aceita o
+	// token das chaves de teste da Cloudflare.
+	emailsDeConta := &mailerDeContaFalso{}
+	desafio := turnstiletest.Verificador(t, turnstiletest.SecretPassa)
 	deps := httpapi.Deps{
 		Store: store, Sessions: mgr, TOTP: segundoFator,
-		Accounts:    account.NewService(pool, segundoFator, clk, cfg.IPHashKey),
-		Proofs:      auth.NewFamilyProofs(pool, clk),
-		Targets:     targets.NewService(pool, box, clk),
-		Incidents:   history.NewService(pool, clk),
-		Channels:    notify.NewChannelService(pool, box, clk, discord, email, cfg.PublicBaseURL),
-		StatusPages: statuspage.NewService(pool, clk),
-		Pings:       heartbeat.NewPingService(pool, clk),
-		Heartbeats:  heartbeat.NewService(pool, clk),
-		Projects:    tenancy.NewService(pgstore.New(pool), clk),
-		Clock:       clk, Ready: pool.Ping,
+		Accounts:        contas,
+		EmailConfirmado: contas,
+		Cadastro:        account.NewCadastro(pool, clk, emailsDeConta, linksDoPainel),
+		Recuperacao:     account.NewRecuperacao(pool, clk, emailsDeConta, linksDoPainel),
+		Turnstile:       desafio,
+		CadastroPublico: httpapi.ConfigCadastro{Habilitado: true, SiteKey: turnstiletest.SiteKeyPassa},
+		Proofs:          auth.NewFamilyProofs(pool, clk),
+		Targets:         targets.NewService(pool, box, clk),
+		Incidents:       history.NewService(pool, clk),
+		Channels:        notify.NewChannelService(pool, box, clk, discord, email, cfg.PublicBaseURL),
+		StatusPages:     statuspage.NewService(pool, clk),
+		Pings:           heartbeat.NewPingService(pool, clk),
+		Heartbeats:      heartbeat.NewService(pool, clk),
+		Projects:        tenancy.NewService(pgstore.New(pool), clk),
+		Clock:           clk, Ready: pool.Ping,
 		LimitesIP: storage.NewOrcamentosPorIP(pool, clk),
 	}
 	if ajustarDeps != nil {
@@ -175,7 +191,7 @@ func newAPICom(t *testing.T, ajustar func(*config.Config), ajustarDeps func(*htt
 	srv := httptest.NewServer(httpapi.Routes(ctx, cfg, deps))
 	t.Cleanup(srv.Close)
 	return &api{srv: srv, pool: pool, clk: clk, userID: userID, discord: discord, email: email,
-		ctx: ctx, cfg: cfg, deps: deps}
+		conta: emailsDeConta, turnstile: desafio, ctx: ctx, cfg: cfg, deps: deps}
 }
 
 func post(t *testing.T, c *http.Client, url string, body any) *http.Response {

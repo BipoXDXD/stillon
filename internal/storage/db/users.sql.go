@@ -12,21 +12,6 @@ import (
 	"github.com/google/uuid"
 )
 
-const countUsers = `-- name: CountUsers :one
-
-SELECT count(*) FROM users
-`
-
-// Conta do usuário. users não tem RLS: o login a
-// consulta por e-mail antes de existir usuário na transação. Toda query daqui
-// que parte de um usuário recebe o id dele.
-func (q *Queries) CountUsers(ctx context.Context) (int64, error) {
-	row := q.db.QueryRow(ctx, countUsers)
-	var count int64
-	err := row.Scan(&count)
-	return count, err
-}
-
 const deleteRecoveryCodes = `-- name: DeleteRecoveryCodes :exec
 DELETE FROM totp_recovery_codes WHERE user_id = $1
 `
@@ -38,19 +23,21 @@ func (q *Queries) DeleteRecoveryCodes(ctx context.Context, userID uuid.UUID) err
 }
 
 const getAccount = `-- name: GetAccount :one
-SELECT id, email, (totp_confirmed_at IS NOT NULL)::bool AS totp_enabled, created_at
+SELECT id, email, (totp_confirmed_at IS NOT NULL)::bool AS totp_enabled, created_at, email_verified_at
   FROM users WHERE id = $1
 `
 
 type GetAccountRow struct {
-	ID          uuid.UUID
-	Email       string
-	TotpEnabled bool
-	CreatedAt   time.Time
+	ID              uuid.UUID
+	Email           string
+	TotpEnabled     bool
+	CreatedAt       time.Time
+	EmailVerifiedAt *time.Time
 }
 
 // GET /me. totp_enabled é o segundo fator CONFIRMADO: um cadastro iniciado e
 // abandonado não conta (o mesmo critério de auth.TOTP.IsEnabled).
+// email_verified_at é nulo na conta do cadastro público ainda não confirmada.
 func (q *Queries) GetAccount(ctx context.Context, id uuid.UUID) (GetAccountRow, error) {
 	row := q.db.QueryRow(ctx, getAccount, id)
 	var i GetAccountRow
@@ -59,6 +46,7 @@ func (q *Queries) GetAccount(ctx context.Context, id uuid.UUID) (GetAccountRow, 
 		&i.Email,
 		&i.TotpEnabled,
 		&i.CreatedAt,
+		&i.EmailVerifiedAt,
 	)
 	return i, err
 }
@@ -79,9 +67,13 @@ func (q *Queries) GetUserHash(ctx context.Context, id uuid.UUID) (string, error)
 }
 
 const getUserIDByEmail = `-- name: GetUserIDByEmail :one
+
 SELECT id FROM users WHERE email = $1
 `
 
+// Conta do usuário. users não tem RLS: o login a
+// consulta por e-mail antes de existir usuário na transação. Toda query daqui
+// que parte de um usuário recebe o id dele.
 func (q *Queries) GetUserIDByEmail(ctx context.Context, email string) (uuid.UUID, error) {
 	row := q.db.QueryRow(ctx, getUserIDByEmail, email)
 	var id uuid.UUID
@@ -119,6 +111,34 @@ func (q *Queries) InsertAuditEntry(ctx context.Context, arg InsertAuditEntryPara
 	return err
 }
 
+const insertSignupUser = `-- name: InsertSignupUser :one
+INSERT INTO users (id, email, password_hash, created_at) VALUES ($1, $2, $3, $4)
+ON CONFLICT (email) DO NOTHING
+RETURNING id
+`
+
+type InsertSignupUserParams struct {
+	ID           uuid.UUID
+	Email        string
+	PasswordHash string
+	CreatedAt    time.Time
+}
+
+// O cadastro público (PR 3). E-mail repetido (citext: a caixa não importa) não
+// grava nada e não devolve linha (pgx.ErrNoRows), sem erro de UNIQUE que
+// abortaria a transação do cadastro.
+func (q *Queries) InsertSignupUser(ctx context.Context, arg InsertSignupUserParams) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, insertSignupUser,
+		arg.ID,
+		arg.Email,
+		arg.PasswordHash,
+		arg.CreatedAt,
+	)
+	var id uuid.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
 const insertUser = `-- name: InsertUser :exec
 INSERT INTO users (id, email, password_hash, created_at) VALUES ($1, $2, $3, $4)
 `
@@ -140,14 +160,19 @@ func (q *Queries) InsertUser(ctx context.Context, arg InsertUserParams) error {
 	return err
 }
 
-const lockUserCreation = `-- name: LockUserCreation :exec
-SELECT pg_advisory_xact_lock(hashtextextended('stillon.user_create', 0))
+const markEmailVerified = `-- name: MarkEmailVerified :exec
+UPDATE users SET email_verified_at = COALESCE(email_verified_at, $1::timestamptz) WHERE id = $2
 `
 
-// Serializa dois `stillon user create` simultâneos: sem ela, os dois contam
-// zero usuários e os dois criam.
-func (q *Queries) LockUserCreation(ctx context.Context) error {
-	_, err := q.db.Exec(ctx, lockUserCreation)
+type MarkEmailVerifiedParams struct {
+	Now time.Time
+	ID  uuid.UUID
+}
+
+// A confirmação do e-mail (pelo link ou pela redefinição de senha). O
+// COALESCE guarda o primeiro instante: confirmar de novo não o move.
+func (q *Queries) MarkEmailVerified(ctx context.Context, arg MarkEmailVerifiedParams) error {
+	_, err := q.db.Exec(ctx, markEmailVerified, arg.Now, arg.ID)
 	return err
 }
 
@@ -278,6 +303,18 @@ func (q *Queries) SwapUserHash(ctx context.Context, arg SwapUserHashParams) (int
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const userEmailVerified = `-- name: UserEmailVerified :one
+SELECT (email_verified_at IS NOT NULL)::bool AS verified FROM users WHERE id = $1
+`
+
+// A trava de criação de recursos de conta não confirmada.
+func (q *Queries) UserEmailVerified(ctx context.Context, id uuid.UUID) (bool, error) {
+	row := q.db.QueryRow(ctx, userEmailVerified, id)
+	var verified bool
+	err := row.Scan(&verified)
+	return verified, err
 }
 
 const userIsOperator = `-- name: UserIsOperator :one

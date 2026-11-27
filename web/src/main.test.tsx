@@ -107,7 +107,7 @@ it('o bootstrap real reidrata a sessão e entrega tema, avisos e estilos autoriz
   await usuario.click(within(dialogo).getByRole('radio', { name: 'E-mail' }))
   await usuario.type(within(dialogo).getByRole('textbox', { name: 'E-mail' }), 'avisos@exemplo.com')
   await usuario.click(within(dialogo).getByRole('button', { name: 'Cadastrar canal' }))
-  expect(await screen.findByText('Enviamos o link de verificação.')).toBeInTheDocument()
+  expect(await screen.findByText('Canal cadastrado. Se receber o e-mail, abra o link para verificar.')).toBeInTheDocument()
 
   // StrictMode e uma segunda importação do entrypoint não gastam outro cookie.
   await import('./main')

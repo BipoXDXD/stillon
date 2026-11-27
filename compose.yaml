@@ -107,6 +107,11 @@ services:
       # Opcionais: defina as duas no .env privado para avisos por e-mail.
       RESEND_API_KEY: "${RESEND_API_KEY:-}"
       EMAIL_FROM: "${EMAIL_FROM:-}"
+      ACCOUNT_EMAIL_FROM: "${ACCOUNT_EMAIL_FROM:-}"
+      # Chaves de teste públicas da Cloudflare (sempre passam), só para dev.
+      # O cadastro ainda exige o e-mail configurado para ligar.
+      TURNSTILE_SITE_KEY: "${TURNSTILE_SITE_KEY:-1x00000000000000000000AA}"
+      TURNSTILE_SECRET_KEY: "${TURNSTILE_SECRET_KEY:-1x0000000000000000000000000000000AA}"
       # Opcional aqui (http em localhost não é produção): IPs da hospedagem
       # que a sonda recusa, além da lista fixa.
       PROBE_BLOCKED_CIDRS: "${PROBE_BLOCKED_CIDRS:-}"

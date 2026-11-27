@@ -25,7 +25,7 @@ const (
 	saidaOK            = 0
 	saidaAmbiente      = 1 // banco, papel com rolsuper/rolbypassrls, migration
 	saidaUso           = 2 // flag, e-mail, DATABASE_URL, senha fora da política
-	saidaJaExiste      = 3 // create: já existe usuário; nada mudou
+	saidaJaExiste      = 3 // create: o e-mail já tem conta; nada mudou
 	saidaNaoCadastrado = 4 // set-password, reset-2fa: e-mail não cadastrado; nada mudou
 	// saidaInterrompida é Ctrl-C ou SIGTERM, em qualquer fase: 128 + SIGINT,
 	// o que o shell mostra para um programa interrompido por Ctrl-C. Separado
@@ -109,7 +109,7 @@ func lerOuDesistir(ctx context.Context, ler func() ([]byte, error)) ([]byte, err
 }
 
 const usoUser = `uso:
-  stillon user create --email <e-mail>        cria o dono (só se não houver usuário)
+  stillon user create --email <e-mail>        cria um operador (recusa e-mail já cadastrado)
   stillon user set-password --email <e-mail>  redefine a senha e encerra todas as sessões
   stillon user reset-2fa --email <e-mail>     desliga o 2FA e encerra todas as sessões
 
@@ -254,15 +254,16 @@ func (c cliUser) runReset2FA(svc *account.Service, e string) int {
 	return saidaOK
 }
 
-// runCreate cria o dono. A pré-condição vem ANTES da senha: ninguém digita
-// duas vezes à toa.
+// msgJaExiste é a recusa de create com e-mail já cadastrado.
+const msgJaExiste = "já existe uma conta com esse e-mail; nada foi alterado (use `stillon user set-password` para trocar a senha)"
+
+// runCreate cria um operador. A pré-condição (o e-mail ainda não tem conta)
+// vem ANTES da senha: ninguém digita duas vezes à toa.
 func (c cliUser) runCreate(svc *account.Service, e string) int {
-	existe, err := svc.HasUsers(c.ctx)
-	if err != nil {
+	if _, err := svc.UserIDByEmail(c.ctx, e); err == nil {
+		return c.falhar(saidaJaExiste, msgJaExiste)
+	} else if !errors.Is(err, account.ErrUserNotFound) {
 		return c.falhar(saidaAmbiente, "%v", err)
-	}
-	if existe {
-		return c.falhar(saidaJaExiste, "já existe um usuário; nada foi alterado (use `stillon user set-password` para trocar a senha)")
 	}
 	senha, err := lerSenha(c.ctx, c.in, c.stderr)
 	if err != nil {
@@ -271,8 +272,9 @@ func (c cliUser) runCreate(svc *account.Service, e string) int {
 	// A política da senha é a do serviço, e só dele: uma segunda checagem aqui
 	// poderia divergir, e o PolicyError sairia como erro de ambiente (1).
 	id, err := svc.CreateUser(c.ctx, e, senha)
-	if errors.Is(err, account.ErrUserExists) {
-		return c.falhar(saidaJaExiste, "já existe um usuário; nada foi alterado")
+	if errors.Is(err, account.ErrEmailTaken) {
+		// Outro create com o mesmo e-mail venceu a corrida depois da conferência.
+		return c.falhar(saidaJaExiste, msgJaExiste)
 	}
 	if err != nil {
 		return c.falharDoServico(err)

@@ -47,53 +47,185 @@ func novo(t *testing.T) (*account.Service, *pgxpool.Pool) {
 	return comHasherBarato(svc), pool
 }
 
-// Dois `stillon user create` ao mesmo tempo não criam dois donos. O gancho
-// segura cada criação entre a contagem e a inserção até as duas chegarem ali,
-// ou por meio segundo: com a trava, a segunda não chega à contagem enquanto a
-// primeira não comitar, e espera o meio segundo sozinha; sem a trava, as duas
-// contam zero e as duas inserem.
-func TestConcurrentCreateMakesOneUser(t *testing.T) {
-	svc, pool := novo(t)
-	var chegaram sync.WaitGroup
-	chegaram.Add(2)
-	todas := make(chan struct{})
-	go func() { chegaram.Wait(); close(todas) }()
-	svc.SetDepoisDeContar(func() {
-		chegaram.Done()
-		select {
-		case <-todas:
-		case <-time.After(500 * time.Millisecond):
-		}
-	})
-
-	erros := make([]error, 2)
-	var wg sync.WaitGroup
-	for i, email := range []string{"a@exemplo.com", "b@exemplo.com"} {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			_, erros[i] = svc.CreateUser(context.Background(), email, senha)
-		}()
-	}
-	wg.Wait()
-
-	var ok, recusadas int
-	for _, err := range erros {
-		switch {
-		case err == nil:
-			ok++
-		case errors.Is(err, account.ErrUserExists):
-			recusadas++
-		default:
-			t.Fatalf("erro inesperado: %v", err)
-		}
-	}
+// projetosPadraoDe conta, fora da RLS, os Projetos padrão do titular.
+func projetosPadraoDe(t *testing.T, titular uuid.UUID) int {
+	t.Helper()
 	var n int
-	if err := pool.QueryRow(context.Background(), `SELECT count(*) FROM users`).Scan(&n); err != nil {
+	if err := testdb.Admin(t).QueryRow(context.Background(),
+		`SELECT count(*) FROM projects WHERE titular_id = $1 AND is_default`, titular).Scan(&n); err != nil {
 		t.Fatal(err)
 	}
-	if ok != 1 || recusadas != 1 || n != 1 {
-		t.Errorf("%d criações, %d recusas, %d usuários; queria 1, 1 e 1", ok, recusadas, n)
+	return n
+}
+
+// Sem a trava de usuário único: e-mails diferentes dão duas contas, cada uma
+// com o seu Projeto padrão.
+func TestCreateUserAceitaSegundaConta(t *testing.T) {
+	svc, pool := novo(t)
+	ctx := context.Background()
+	ids := make([]uuid.UUID, 0, 2)
+	for _, email := range []string{"a@exemplo.com", "b@exemplo.com"} {
+		id, err := svc.CreateUser(ctx, email, senha)
+		if err != nil {
+			t.Fatalf("%s: %v", email, err)
+		}
+		ids = append(ids, id)
+	}
+	var n int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM users`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 2 || ids[0] == ids[1] {
+		t.Fatalf("%d usuários, ids %v; queria 2 distintos", n, ids)
+	}
+	for _, id := range ids {
+		if p := projetosPadraoDe(t, id); p != 1 {
+			t.Errorf("usuário %v com %d Projetos padrão, queria 1", id, p)
+		}
+	}
+}
+
+// E-mail repetido, também com outra caixa (citext), é ErrEmailTaken e não
+// cria nada.
+func TestCreateUserRecusaEmailRepetido(t *testing.T) {
+	svc, pool := novo(t)
+	ctx := context.Background()
+	if _, err := svc.CreateUser(ctx, "dono@exemplo.com", senha); err != nil {
+		t.Fatal(err)
+	}
+	for _, email := range []string{"dono@exemplo.com", "Dono@Exemplo.COM"} {
+		if _, err := svc.CreateUser(ctx, email, senha); !errors.Is(err, account.ErrEmailTaken) {
+			t.Errorf("%s: err = %v, queria ErrEmailTaken", email, err)
+		}
+	}
+	var usuarios, projetos int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM users`).Scan(&usuarios); err != nil {
+		t.Fatal(err)
+	}
+	if err := testdb.Admin(t).QueryRow(ctx, `SELECT count(*) FROM projects`).Scan(&projetos); err != nil {
+		t.Fatal(err)
+	}
+	if usuarios != 1 || projetos != 1 {
+		t.Errorf("%d usuários e %d projetos depois das recusas, queria 1 e 1", usuarios, projetos)
+	}
+}
+
+func TestCreateUserSimultaneoRecusaEmailRepetido(t *testing.T) {
+	svc, _ := novo(t)
+	ctx := t.Context()
+	admin := testdb.Admin(t)
+	trava, err := admin.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var criacoes sync.WaitGroup
+	defer func() {
+		_ = trava.Rollback(context.Background())
+		criacoes.Wait()
+	}()
+	// A primeira criação tem o e-mail reservado enquanto espera para gravar
+	// o Projeto. A segunda precisa encontrar a conta ainda em transação.
+	if _, err := trava.Exec(ctx, `LOCK TABLE projects IN ACCESS EXCLUSIVE MODE`); err != nil {
+		t.Fatal(err)
+	}
+	type resultado struct {
+		id  uuid.UUID
+		err error
+	}
+	fim := make(chan resultado, 2)
+	for _, email := range []string{"Dono@exemplo.com", "dono@exemplo.com"} {
+		criacoes.Go(func() {
+			id, err := svc.CreateUser(ctx, email, senha)
+			fim <- resultado{id: id, err: err}
+		})
+	}
+	if !testdb.EsperarBloqueados(t, admin, 2, fim) {
+		t.Fatal("uma criação terminou antes de as duas alcançarem as travas")
+	}
+	if err := trava.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	var vencedor uuid.UUID
+	var sucessos, conflitos int
+	for range 2 {
+		r := <-fim
+		switch {
+		case r.err == nil && r.id != uuid.Nil:
+			sucessos++
+			vencedor = r.id
+		case errors.Is(r.err, account.ErrEmailTaken) && r.id == uuid.Nil:
+			conflitos++
+		default:
+			t.Errorf("CreateUser devolveu id %v e erro %v", r.id, r.err)
+		}
+	}
+	if sucessos != 1 || conflitos != 1 {
+		t.Fatalf("%d criações e %d conflitos de e-mail; queria 1 de cada", sucessos, conflitos)
+	}
+
+	if n := contar(t, `SELECT count(*) FROM users`); n != 1 {
+		t.Fatalf("%d usuários; queria 1", n)
+	}
+	if n := contar(t, `SELECT count(*) FROM users WHERE id = $1 AND is_operator AND email_verified_at IS NOT NULL`, vencedor); n != 1 {
+		t.Fatal("o ID devolvido não identifica uma conta de operador confirmada")
+	}
+	if n := contar(t, `SELECT count(*) FROM projects`); n != 1 {
+		t.Fatalf("%d projetos; queria 1", n)
+	}
+	conferirVinculoDoTitular(t, vencedor)
+}
+
+// inserirComoNoSignup grava o usuário como o cadastro público grava: sem
+// email_verified_at.
+func inserirComoNoSignup(t *testing.T, pool *pgxpool.Pool, email string) uuid.UUID {
+	t.Helper()
+	id := uuid.New()
+	if _, err := pool.Exec(context.Background(),
+		`INSERT INTO users (id, email, password_hash) VALUES ($1, $2, 'barato$x')`, id, email); err != nil {
+		t.Fatal(err)
+	}
+	return id
+}
+
+// O /me diz se o e-mail foi confirmado: falso no cadastro público ainda sem
+// confirmação, verdadeiro no operador do CLI.
+func TestMeTrazEmailVerified(t *testing.T) {
+	svc, pool := novo(t)
+	ctx := context.Background()
+	semConfirmar := inserirComoNoSignup(t, pool, "novo@exemplo.com")
+	operador, err := svc.CreateUser(ctx, "dono@exemplo.com", senha)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for id, queria := range map[uuid.UUID]bool{semConfirmar: false, operador: true} {
+		conta, err := svc.Me(ctx, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if conta.EmailVerified != queria {
+			t.Errorf("Me(%v).EmailVerified = %v, queria %v", id, conta.EmailVerified, queria)
+		}
+	}
+}
+
+// EmailConfirmado acompanha a coluna: falso antes da confirmação, verdadeiro
+// depois. Usuário inexistente é ErrUserNotFound, nunca "confirmado".
+func TestEmailConfirmadoSegueAConfirmacao(t *testing.T) {
+	svc, pool := novo(t)
+	ctx := context.Background()
+	id := inserirComoNoSignup(t, pool, "novo@exemplo.com")
+	if ok, err := svc.EmailConfirmado(ctx, id); err != nil || ok {
+		t.Fatalf("antes da confirmação: %v, %v; queria false, nil", ok, err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE users SET email_verified_at = now() WHERE id = $1`, id); err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := svc.EmailConfirmado(ctx, id); err != nil || !ok {
+		t.Fatalf("depois da confirmação: %v, %v; queria true, nil", ok, err)
+	}
+	if ok, err := svc.EmailConfirmado(ctx, uuid.New()); !errors.Is(err, account.ErrUserNotFound) || ok {
+		t.Errorf("usuário inexistente: %v, %v; queria false, ErrUserNotFound", ok, err)
 	}
 }
 

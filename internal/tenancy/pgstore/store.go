@@ -70,30 +70,15 @@ func (s *Store) EnsureDefault(ctx context.Context, userID uuid.UUID, now time.Ti
 	return s.criarPadrao(ctx, userID, now)
 }
 
-// criarPadrao é o caminho lento de EnsureDefault: INSERT ON CONFLICT do
-// projeto, leitura do id e vínculo de owner, numa transação só.
+// criarPadrao é o caminho lento de EnsureDefault: storage.CriarProjetoPadraoNaTx
+// (INSERT ON CONFLICT do projeto, leitura do id e vínculo de owner) numa
+// transação só, no escopo do usuário.
 func (s *Store) criarPadrao(ctx context.Context, userID uuid.UUID, now time.Time) (tenancy.ProjectScope, error) {
-	novo, err := uuid.NewV7()
-	if err != nil {
-		return tenancy.ProjectScope{}, fmt.Errorf("gerar id do projeto: %w", err)
-	}
 	var projeto uuid.UUID
-	err = storage.InUserTx(ctx, s.pool, userID, func(q *db.Queries) error {
-		if err := q.EnsureDefaultProject(ctx, db.EnsureDefaultProjectParams{
-			ID: novo, Name: tenancy.DefaultProjectName, TitularID: userID, Now: now,
-		}); err != nil {
-			return fmt.Errorf("criar Projeto padrão: %w", err)
-		}
-		projeto, err = q.GetDefaultProjectID(ctx, userID)
-		if err != nil {
-			return fmt.Errorf("ler Projeto padrão: %w", err)
-		}
-		if err := q.EnsureProjectOwner(ctx, db.EnsureProjectOwnerParams{
-			ProjectID: projeto, UserID: userID, Now: now,
-		}); err != nil {
-			return fmt.Errorf("vincular owner ao Projeto padrão: %w", err)
-		}
-		return nil
+	err := storage.InUserTx(ctx, s.pool, userID, func(q *db.Queries) error {
+		var err error
+		projeto, err = storage.CriarProjetoPadraoNaTx(ctx, q, userID, now)
+		return err
 	})
 	if err != nil {
 		return tenancy.ProjectScope{}, err

@@ -45,6 +45,10 @@ const (
 	CodeMethodNotAllowed    ErrorCode = "method_not_allowed"
 	CodeScheduleUnsupported ErrorCode = "schedule_unsupported"
 	CodeProjectLimit        ErrorCode = "project_limit_reached"
+	CodeEmailNotVerified    ErrorCode = "email_not_verified"
+	CodeTurnstileFailed     ErrorCode = "turnstile_failed"
+	// #nosec G101 -- o regex do gosec bate no NOME da constante ("Token"); o valor é um código de erro da API, não um segredo.
+	CodeTokenInvalid ErrorCode = "token_invalid"
 )
 
 // A mensagem vem sempre desta tabela, nunca do erro subjacente.
@@ -89,6 +93,16 @@ var errorTable = map[ErrorCode]struct {
 	CodeScheduleUnsupported: {http.StatusConflict, "Agendamento não suportado nesta versão."},
 	// O teto de projetos de que a conta é titular (o padrão conta).
 	CodeProjectLimit: {http.StatusConflict, "Limite de projetos atingido."},
+	// A conta do cadastro público ainda não confirmou o e-mail e por isso não
+	// cria recurso. Separado de forbidden para o painel mostrar "confirme seu
+	// e-mail", e não "sem permissão".
+	CodeEmailNotVerified: {http.StatusForbidden, "Confirme seu e-mail para criar recursos."},
+	// O desafio do Turnstile foi recusado. Sai antes de qualquer consulta ao
+	// banco: não diz nada sobre o e-mail.
+	CodeTurnstileFailed: {http.StatusBadRequest, "Não foi possível confirmar que você não é um robô."},
+	// Token de confirmação ou de redefinição inexistente, já usado ou vencido:
+	// a mesma resposta para os três.
+	CodeTokenInvalid: {http.StatusBadRequest, "Link inválido ou expirado."},
 }
 
 // FieldError aponta o campo culpado de um 400. Field e Reason vêm de

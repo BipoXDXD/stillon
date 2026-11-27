@@ -133,6 +133,25 @@ func InVerifyTx(ctx context.Context, b Beginner, tokenHash []byte, fn func(*db.Q
 	return inTx(ctx, b, `SELECT set_config('app.verify_token_hash', $1, true)`, hex.EncodeToString(tokenHash), fn)
 }
 
+// InAccountTokenTx roda fn no escopo do link de conta (confirmação de e-mail
+// e redefinição de senha). Em account_tokens, o escopo do hash permite ler e
+// atualizar a linha correspondente. Inserções e remoções exigem o escopo do
+// dono (app.user_id). Quem clica no link não tem sessão. É o único lugar do
+// código que liga app.account_token_hash.
+func InAccountTokenTx(ctx context.Context, b Beginner, tokenHash []byte, fn func(*db.Queries) error) error {
+	if len(tokenHash) != sha256.Size {
+		return ErrNoToken
+	}
+	return inTx(ctx, b, `SELECT set_config('app.account_token_hash', $1, true)`, hex.EncodeToString(tokenHash), fn)
+}
+
+// InAccountEmailTx roda fn no escopo do teto diário de e-mails de conta: a
+// RLS abre só account_email_daily, a contagem sem dono que todas as réplicas
+// dividem. É o único lugar do código que liga esse escopo.
+func InAccountEmailTx(ctx context.Context, b Beginner, fn func(*db.Queries) error) error {
+	return inTx(ctx, b, `SELECT set_config('app.scope', $1, true)`, "account_email", fn)
+}
+
 // InPingTx roda fn no escopo do ping público (POST /ping/{token}): a RLS
 // enxerga só a linha de heartbeats cujo ping_token_hash é tokenHash e os
 // eventos dela. Incidentes ficam de fora: quem os abre é o avaliador. É o

@@ -142,7 +142,7 @@ func segundoUsuario(t *testing.T, a *api) uuid.UUID {
 	t.Helper()
 	id := uuid.New()
 	if _, err := a.pool.Exec(context.Background(),
-		`INSERT INTO users (id, email, password_hash) VALUES ($1, $2, $3)`,
+		`INSERT INTO users (id, email, password_hash, email_verified_at) VALUES ($1, $2, $3, now())`,
 		id, "vizinho@exemplo.com", hashDaFixture()); err != nil {
 		t.Fatal(err)
 	}

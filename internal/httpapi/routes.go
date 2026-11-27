@@ -70,7 +70,22 @@ type Deps struct {
 	// Obrigatório; os testes sem banco passam um tenancy.Service sobre um
 	// repositório falso.
 	Projects *tenancy.Service
-	Clock    clock.Clock
+	// EmailConfirmado é a trava "sem e-mail confirmado não cria" de toda rota
+	// de criação: o account.Service em produção. Obrigatório; os testes sem
+	// banco passam um conferidor falso.
+	EmailConfirmado middleware.ConferidorDeEmail
+	// Cadastro, Recuperacao e Turnstile servem as rotas públicas do cadastro,
+	// da confirmação de e-mail e da redefinição de senha: account.Cadastro,
+	// account.Recuperacao e turnstile.Verificador em produção. Obrigatórios,
+	// mesmo com o cadastro desligado (a confirmação, o reenvio e a
+	// redefinição continuam no ar); os testes sem banco passam falsos.
+	Cadastro    Cadastrador
+	Recuperacao Recuperador
+	Turnstile   VerificadorTurnstile
+	// CadastroPublico liga o signup e o forgot e dá a site key do widget.
+	// Desligado (o zero), os dois respondem 404.
+	CadastroPublico ConfigCadastro
+	Clock           clock.Clock
 	// LimitesIP guarda os baldes por IP do login e do /totp/verify. Em
 	// produção é o Postgres (storage.OrcamentosPorIP), para que réplicas
 	// dividam o orçamento de cada origem; os testes sem banco passam
@@ -105,6 +120,22 @@ func Routes(ctx context.Context, cfg *config.Config, d Deps) http.Handler {
 	if d.Projects == nil {
 		panic("httpapi: Deps sem Projects; passe tenancy.NewService(pgstore.New(pool), clk)")
 	}
+	// Sem conferidor, a trava de criação não teria como recusar a conta não
+	// confirmada: defeito de montagem, e não "deixa criar".
+	if d.EmailConfirmado == nil {
+		panic("httpapi: Deps sem EmailConfirmado; passe o account.Service (ou, sem banco, um conferidor falso)")
+	}
+	// Sem eles, as rotas públicas da conta cairiam em panic no primeiro
+	// pedido: defeito de montagem, recusado aqui.
+	if d.Cadastro == nil {
+		panic("httpapi: Deps sem Cadastro; passe o account.Cadastro (ou, sem banco, um falso)")
+	}
+	if d.Recuperacao == nil {
+		panic("httpapi: Deps sem Recuperacao; passe o account.Recuperacao (ou, sem banco, um falso)")
+	}
+	if d.Turnstile == nil {
+		panic("httpapi: Deps sem Turnstile; passe o turnstile.Verificador (ou, sem banco, um falso)")
+	}
 	secureCookie := config.EhHTTPS(cfg.PublicBaseURL)
 	// O teto de Argon2id simultâneos é do processo, e quem o
 	// paga é a API: o config.Load sempre o preenche; um Config montado à mão
@@ -128,7 +159,19 @@ func Routes(ctx context.Context, cfg *config.Config, d Deps) http.Handler {
 	sp := NewStatusPageHandlers(d.StatusPages, cfg.PublicBaseURL)
 	ah := NewAccountHandlers(d.Accounts, proxiesDe(cfg), secureCookie, provas)
 	ph := NewProjectHandlers(d.Projects)
+	cad := NewCadastroHandlers(d.Cadastro, d.Recuperacao, d.Turnstile, d.CadastroPublico, proxiesDe(cfg))
 	authn := middleware.Authn(cfg.JWTSecret, d.Clock)
+	// criacao é a trava "sem e-mail confirmado não cria" (403
+	// email_not_verified), em todo POST que cria targets, heartbeats (inclusive
+	// o clone), canais, páginas de status e projetos, nas duas variantes, e no
+	// enroll do 2FA: quem cadastrasse o e-mail da vítima e ligasse o 2FA a
+	// trancaria para fora, porque a redefinição de senha mantém o fator. Vem
+	// por último, colada no handler: depois da sessão viva e do projeto, então
+	// quem não é membro continua vendo o 404 do projeto, e não o 403. Ler,
+	// editar e apagar ficam liberados. TestContaNaoConfirmadaNaoCriaPorNenhumaRota
+	// enumera as rotas registradas: POST novo sem a trava reprova lá.
+	exigeEmail := middleware.ExigeEmailConfirmado(d.EmailConfirmado)
+	criacao := func(fn http.HandlerFunc) http.HandlerFunc { return exigeEmail(fn).ServeHTTP }
 
 	mux := http.NewServeMux()
 
@@ -176,9 +219,29 @@ func Routes(ctx context.Context, cfg *config.Config, d Deps) http.Handler {
 	mux.Handle("POST /api/v1/auth/refresh", http.HandlerFunc(h.Refresh))
 	mux.Handle("POST /api/v1/auth/logout", http.HandlerFunc(h.Logout))
 
+	// O cadastro público e a recuperação de senha: sem sessão, cada rota com o
+	// seu balde por IP em d.LimitesIP (somado entre réplicas). Signup e forgot
+	// são os mais apertados (2/min, rajada 5): cada um custa um Argon2id ou um
+	// e-mail, e o Turnstile só vem depois da validação. Confirm e reset têm o
+	// token de 256 bits como credencial, e o balde só segura a martelada.
+	baldeIP := func(b middleware.BaldeIP, fn http.HandlerFunc) http.Handler {
+		return middleware.RateLimitIPCompartilhado(d.LimitesIP, b, proxiesDe(cfg), cfg.IPHashKey)(fn)
+	}
+	mux.Handle("GET /api/v1/auth/signup-config", http.HandlerFunc(cad.Config))
+	mux.Handle("POST /api/v1/auth/signup",
+		baldeIP(middleware.BaldeIP{Nome: "signup", PorMinuto: 2, Rajada: 5}, cad.Signup))
+	mux.Handle("POST /api/v1/auth/password/forgot",
+		baldeIP(middleware.BaldeIP{Nome: "password_forgot", PorMinuto: 2, Rajada: 5}, cad.EsqueciASenha))
+	mux.Handle("POST /api/v1/auth/email/confirm",
+		baldeIP(middleware.BaldeIP{Nome: "email_confirm", PorMinuto: 10, Rajada: 10}, cad.ConfirmarEmail))
+	mux.Handle("POST /api/v1/auth/password/reset",
+		baldeIP(middleware.BaldeIP{Nome: "password_reset", PorMinuto: 10, Rajada: 5}, cad.RedefinirSenha))
+
 	// Todas exigem a família do token viva: um token de sessão encerrada não mexe
 	// no 2FA.
-	mux.Handle("POST /api/v1/auth/totp/enroll", autenticadaComLimite(h.TOTPEnroll))
+	// O enroll passa pela trava de e-mail (criacao): conta não confirmada não
+	// liga 2FA. O confirm e o rotate dependem de um enroll, e não precisam dela.
+	mux.Handle("POST /api/v1/auth/totp/enroll", autenticadaComLimite(criacao(h.TOTPEnroll)))
 	mux.Handle("POST /api/v1/auth/totp/confirm", autenticadaComLimite(h.TOTPConfirm))
 	// Desativar é a saída que a recusa do recadastro tirou. Exige senha E posse do
 	// fator, no handler — a sessão sozinha aqui seria o bypass de volta.
@@ -234,10 +297,16 @@ func Routes(ctx context.Context, cfg *config.Config, d Deps) http.Handler {
 	// criação depois do comum e antes da consulta de sessão.
 	porProjetoNovo := middleware.RateLimitUserEvery(ctx, d.Clock, projetoNovoACada, projetoNovoBurst)
 	criacaoDeProjeto := func(fn http.HandlerFunc) http.Handler { return authn(porUsuario(porProjetoNovo(viva(fn)))) }
-	mux.Handle("POST /api/v1/projects", criacaoDeProjeto(ph.Create))
+	mux.Handle("POST /api/v1/projects", criacaoDeProjeto(criacao(ph.Create)))
+	// O reenvio da confirmação é da conta, com sessão, e manda um e-mail: balde
+	// próprio por usuário (3 de uma vez, depois 1 a cada 10 min), antes da
+	// consulta de sessão. Sem a trava de e-mail, claro: é para quem não
+	// confirmou.
+	porReenvio := middleware.RateLimitUserEvery(ctx, d.Clock, 10*time.Minute, 3)
+	mux.Handle("POST /api/v1/auth/email/resend", authn(porUsuario(porReenvio(viva(http.HandlerFunc(cad.ReenviarConfirmacao))))))
 
 	mux.Handle("GET /api/v1/targets", recursoLegado(th.List))
-	mux.Handle("POST /api/v1/targets", recursoLegado(th.Create))
+	mux.Handle("POST /api/v1/targets", recursoLegado(criacao(th.Create)))
 	// O literal é mais específico que {id} e ganha no ServeMux, sem conflito.
 	mux.Handle("GET /api/v1/targets/summary", recursoLegado(th.Summary))
 	mux.Handle("GET /api/v1/targets/{id}", recursoLegado(th.Get))
@@ -246,7 +315,7 @@ func Routes(ctx context.Context, cfg *config.Config, d Deps) http.Handler {
 	mux.Handle("GET /api/v1/targets/{id}/checks", recursoLegado(th.Checks))
 
 	mux.Handle("GET /api/v1/projects/{projectID}/targets", noProjeto(th.List))
-	mux.Handle("POST /api/v1/projects/{projectID}/targets", noProjeto(th.Create))
+	mux.Handle("POST /api/v1/projects/{projectID}/targets", noProjeto(criacao(th.Create)))
 	mux.Handle("GET /api/v1/projects/{projectID}/targets/summary", noProjeto(th.Summary))
 	mux.Handle("GET /api/v1/projects/{projectID}/targets/{id}", noProjeto(th.Get))
 	mux.Handle("PATCH /api/v1/projects/{projectID}/targets/{id}", noProjeto(th.Update))
@@ -259,13 +328,13 @@ func Routes(ctx context.Context, cfg *config.Config, d Deps) http.Handler {
 	mux.Handle("POST /api/v1/projects/{projectID}/incidents/{id}/ack", noProjeto(ih.Ack))
 
 	mux.Handle("GET /api/v1/heartbeats", recursoLegado(hb.List))
-	mux.Handle("POST /api/v1/heartbeats", recursoLegado(hb.Create))
+	mux.Handle("POST /api/v1/heartbeats", recursoLegado(criacao(hb.Create)))
 	mux.Handle("GET /api/v1/heartbeats/cron-preview", recursoLegado(hb.CronPreview))
 	mux.Handle("GET /api/v1/heartbeats/{id}", recursoLegado(hb.Get))
 	mux.Handle("PATCH /api/v1/heartbeats/{id}", recursoLegado(hb.Update))
 	mux.Handle("DELETE /api/v1/heartbeats/{id}", recursoLegado(hb.Delete))
 	mux.Handle("POST /api/v1/heartbeats/{id}/token/rotate", recursoLegado(hb.RotateToken))
-	mux.Handle("POST /api/v1/heartbeats/{id}/clone", recursoLegado(hb.Clone))
+	mux.Handle("POST /api/v1/heartbeats/{id}/clone", recursoLegado(criacao(hb.Clone)))
 	mux.Handle("POST /api/v1/heartbeats/{id}/ping-now", recursoLegado(hb.PingNow))
 	mux.Handle("GET /api/v1/heartbeats/{id}/events", recursoLegado(hb.Events))
 	mux.Handle("POST /api/v1/heartbeats/{id}/events/clear", recursoLegado(hb.ClearEvents))
@@ -273,13 +342,13 @@ func Routes(ctx context.Context, cfg *config.Config, d Deps) http.Handler {
 	mux.Handle("POST /api/v1/heartbeats/{id}/incidents/{incident_id}/ack", recursoLegado(hb.AckIncident))
 
 	mux.Handle("GET /api/v1/projects/{projectID}/heartbeats", noProjeto(hb.List))
-	mux.Handle("POST /api/v1/projects/{projectID}/heartbeats", noProjeto(hb.Create))
+	mux.Handle("POST /api/v1/projects/{projectID}/heartbeats", noProjeto(criacao(hb.Create)))
 	mux.Handle("GET /api/v1/projects/{projectID}/heartbeats/cron-preview", noProjeto(hb.CronPreview))
 	mux.Handle("GET /api/v1/projects/{projectID}/heartbeats/{id}", noProjeto(hb.Get))
 	mux.Handle("PATCH /api/v1/projects/{projectID}/heartbeats/{id}", noProjeto(hb.Update))
 	mux.Handle("DELETE /api/v1/projects/{projectID}/heartbeats/{id}", noProjeto(hb.Delete))
 	mux.Handle("POST /api/v1/projects/{projectID}/heartbeats/{id}/token/rotate", noProjeto(hb.RotateToken))
-	mux.Handle("POST /api/v1/projects/{projectID}/heartbeats/{id}/clone", noProjeto(hb.Clone))
+	mux.Handle("POST /api/v1/projects/{projectID}/heartbeats/{id}/clone", noProjeto(criacao(hb.Clone)))
 	mux.Handle("POST /api/v1/projects/{projectID}/heartbeats/{id}/ping-now", noProjeto(hb.PingNow))
 	mux.Handle("GET /api/v1/projects/{projectID}/heartbeats/{id}/events", noProjeto(hb.Events))
 	mux.Handle("POST /api/v1/projects/{projectID}/heartbeats/{id}/events/clear", noProjeto(hb.ClearEvents))
@@ -289,7 +358,7 @@ func Routes(ctx context.Context, cfg *config.Config, d Deps) http.Handler {
 	porEnvio := middleware.RateLimitUserEvery(ctx, d.Clock, envioACada, envioBurst)
 	comEnvioLegado := func(fn http.HandlerFunc) http.Handler { return authn(porUsuario(porEnvio(viva(padrao(fn))))) }
 	mux.Handle("GET /api/v1/channels", recursoLegado(ch.List))
-	mux.Handle("POST /api/v1/channels", comEnvioLegado(ch.Create))
+	mux.Handle("POST /api/v1/channels", comEnvioLegado(criacao(ch.Create)))
 	mux.Handle("DELETE /api/v1/channels/{id}", recursoLegado(ch.Delete))
 	// Pausar e retomar não manda mensagem para fora: fica no
 	// limitador comum, e não no balde de envio.
@@ -298,17 +367,17 @@ func Routes(ctx context.Context, cfg *config.Config, d Deps) http.Handler {
 
 	comEnvioNoProjeto := func(fn http.HandlerFunc) http.Handler { return authn(porUsuario(porEnvio(viva(doCaminho(fn))))) }
 	mux.Handle("GET /api/v1/projects/{projectID}/channels", noProjeto(ch.List))
-	mux.Handle("POST /api/v1/projects/{projectID}/channels", comEnvioNoProjeto(ch.Create))
+	mux.Handle("POST /api/v1/projects/{projectID}/channels", comEnvioNoProjeto(criacao(ch.Create)))
 	mux.Handle("DELETE /api/v1/projects/{projectID}/channels/{id}", noProjeto(ch.Delete))
 	mux.Handle("PATCH /api/v1/projects/{projectID}/channels/{id}", noProjeto(ch.SetEnabled))
 	mux.Handle("POST /api/v1/projects/{projectID}/channels/{id}/verify/resend", comEnvioNoProjeto(ch.Resend))
 
 	mux.Handle("GET /api/v1/status-pages", recursoLegado(sp.List))
-	mux.Handle("POST /api/v1/status-pages", recursoLegado(sp.Create))
+	mux.Handle("POST /api/v1/status-pages", recursoLegado(criacao(sp.Create)))
 	mux.Handle("PATCH /api/v1/status-pages/{id}", recursoLegado(sp.Update))
 
 	mux.Handle("GET /api/v1/projects/{projectID}/status-pages", noProjeto(sp.List))
-	mux.Handle("POST /api/v1/projects/{projectID}/status-pages", noProjeto(sp.Create))
+	mux.Handle("POST /api/v1/projects/{projectID}/status-pages", noProjeto(criacao(sp.Create)))
 	mux.Handle("PATCH /api/v1/projects/{projectID}/status-pages/{id}", noProjeto(sp.Update))
 
 	// Spec §13: /healthz é raso (o processo responde); /readyz verifica o

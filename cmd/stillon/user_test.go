@@ -145,26 +145,49 @@ func TestUserPasswordLineHandling(t *testing.T) {
 	}
 }
 
-// Usuário único (spec §2.1): com qualquer usuário no banco, create sai com 3
-// e não muda nada — nem cria outro, nem mexe na senha do existente.
-func TestUserCreateRefusesWhenAUserExists(t *testing.T) {
+// E-mail já cadastrado (também com outra caixa): create sai com 3 e não muda
+// nada, nem cria outro, nem mexe na senha do existente. O seed do compose
+// conta com esse 3 para ser idempotente.
+func TestUserCreateRefusesWhenEmailExists(t *testing.T) {
 	pool := testdb.New(t)
 	dsn := testdb.DSN(t)
 	if r := rodarUser(t, dsn, senhaMarcada, "create", "--email", "dono@exemplo.com"); r.codigo != saidaOK {
 		t.Fatalf("primeiro create: código %d; %s", r.codigo, r.stderr)
 	}
 
-	for _, email := range []string{"dono@exemplo.com", "outra@exemplo.com"} {
+	for _, email := range []string{"dono@exemplo.com", "Dono@Exemplo.com"} {
 		r := rodarUser(t, dsn, "uma-senha-nova-bem-longa", "create", "--email", email)
 		if r.codigo != saidaJaExiste {
 			t.Errorf("%s: código %d, queria 3", email, r.codigo)
 		}
+		if !strings.Contains(r.stderr, "já existe uma conta com esse e-mail") {
+			t.Errorf("%s: stderr %q não diz que o e-mail já tem conta", email, r.stderr)
+		}
+	}
+	// A conferência vem antes da senha: com o stdin vazio, sai 3, e não o 2
+	// de "senha muito curta".
+	if r := rodarUser(t, dsn, "", "create", "--email", "dono@exemplo.com"); r.codigo != saidaJaExiste {
+		t.Errorf("stdin vazio: código %d, queria 3 antes de ler a senha; %s", r.codigo, r.stderr)
 	}
 	if n := usuarios(t, pool); n != 1 {
 		t.Errorf("%d usuários depois das recusas, queria 1", n)
 	}
 	if !senhaGravadaConfere(t, pool, "dono@exemplo.com", senhaMarcada) {
 		t.Error("a recusa trocou a senha do usuário existente")
+	}
+}
+
+// Sem a trava de usuário único: outro e-mail cria outra conta.
+func TestUserCreateAcceptsSecondEmail(t *testing.T) {
+	pool := testdb.New(t)
+	dsn := testdb.DSN(t)
+	for _, email := range []string{"dono@exemplo.com", "outra@exemplo.com"} {
+		if r := rodarUser(t, dsn, senhaMarcada, "create", "--email", email); r.codigo != saidaOK {
+			t.Fatalf("%s: código %d, queria 0; %s", email, r.codigo, r.stderr)
+		}
+	}
+	if n := usuarios(t, pool); n != 2 {
+		t.Errorf("%d usuários, queria 2", n)
 	}
 }
 

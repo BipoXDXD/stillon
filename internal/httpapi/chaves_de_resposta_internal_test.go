@@ -42,7 +42,7 @@ func TestDTOsDeSaidaTemExatamenteAsChavesDoContrato(t *testing.T) {
 			[]string{"created_at", "id", "items", "public_url", "published", "slug", "title"},
 		},
 		"item da página": {statusPageItemJSON{}, []string{"display_name", "target_id"}},
-		"conta":          {meResponse{}, []string{"created_at", "email", "id", "totp_enabled"}},
+		"conta":          {meResponse{}, []string{"created_at", "email", "email_verified", "id", "totp_enabled"}},
 		"check":          {checkResponse{}, []string{"checked_at", "error_kind", "latency_ms", "status", "status_code"}},
 		"hora da série":  {rollupResponse{}, []string{"bucket", "max_ms", "ok", "p50_ms", "p95_ms", "p99_ms", "total"}},
 		"token":          {tokenResponse{}, []string{"access_token", "expires_in"}},

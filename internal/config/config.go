@@ -127,10 +127,50 @@ type Config struct {
 	// de e-mail fica indisponível.
 	ResendAPIKey string
 	EmailFrom    string
+
+	// AccountEmailFrom é o remetente dos e-mails de conta (confirmação,
+	// redefinição de senha, verificação de canal). Opcional: vazio, vale o
+	// EmailFrom. Exige o Resend configurado.
+	AccountEmailFrom string
+
+	// Par do Turnstile da Cloudflare, para o cadastro público e o "esqueci
+	// a senha". Os dois andam juntos; vazios, o cadastro fica desligado. A
+	// site key é pública (vai ao painel); o secret, não.
+	TurnstileSiteKey   string
+	TurnstileSecretKey string
 }
 
 // EmailEnabled diz se o operador configurou o envio de e-mail.
 func (c *Config) EmailEnabled() bool { return c.ResendAPIKey != "" }
+
+// SignupEnabled diz se o cadastro público está ligado: exige o par do
+// Turnstile e o e-mail, porque sem e-mail ninguém confirma a conta.
+func (c *Config) SignupEnabled() bool {
+	return c.TurnstileSiteKey != "" && c.TurnstileSecretKey != "" && c.EmailEnabled()
+}
+
+// RemetenteDeConta é o remetente dos e-mails de conta: ACCOUNT_EMAIL_FROM
+// ou, vazio, o EMAIL_FROM.
+func (c *Config) RemetenteDeConta() string {
+	if c.AccountEmailFrom != "" {
+		return c.AccountEmailFrom
+	}
+	return c.EmailFrom
+}
+
+// HostDoTurnstile é o hostname que o siteverify precisa devolver: o da
+// PUBLIC_BASE_URL em produção. Em dev, vazio desliga a conferência, porque
+// as chaves de teste respondem sempre example.com.
+func (c *Config) HostDoTurnstile() string {
+	if !emProducao(c.PublicBaseURL) {
+		return ""
+	}
+	u, err := url.Parse(c.PublicBaseURL)
+	if err != nil {
+		return ""
+	}
+	return u.Hostname()
+}
 
 // Load recebe getenv como parâmetro em vez de chamar os.Getenv diretamente.
 // Isso torna a função pura e testável sem mexer no ambiente do processo de
@@ -164,12 +204,18 @@ func Load(getenv func(string) string) (*Config, error) {
 		ContentRulesPerHost: l.regrasPorHost("CONTENT_RULES_PER_HOST"),
 		ResendAPIKey:        strings.TrimSpace(getenv("RESEND_API_KEY")),
 		EmailFrom:           strings.TrimSpace(getenv("EMAIL_FROM")),
+		AccountEmailFrom:    strings.TrimSpace(getenv("ACCOUNT_EMAIL_FROM")),
+		TurnstileSiteKey:    strings.TrimSpace(getenv("TURNSTILE_SITE_KEY")),
+		TurnstileSecretKey:  strings.TrimSpace(getenv("TURNSTILE_SECRET_KEY")),
 	}
 
 	l.exigirEmailPareado(cfg)
+	l.exigirRemetenteDeConta(cfg)
+	l.exigirTurnstilePareado(cfg)
 	avisarSeFaltaListaDeProxies(cfg)
 	l.exigirListaDaHospedagem(cfg)
 	l.recusarChavesDeDemo(cfg)
+	l.recusarTurnstileDeTeste(cfg)
 	cfg.LogLevel = l.nivelDeLog()
 
 	if len(l.errs) > 0 {
@@ -415,6 +461,29 @@ func (l *leitor) exigirEmailPareado(cfg *Config) {
 	}
 }
 
+// exigirRemetenteDeConta aplica ao ACCOUNT_EMAIL_FROM a regra do
+// exigirEmailPareado: sem o Resend, o remetente não serve para nada, e o
+// boot recusa o esquecimento; com ele, precisa ser um endereço válido.
+func (l *leitor) exigirRemetenteDeConta(cfg *Config) {
+	switch {
+	case cfg.AccountEmailFrom == "":
+	case cfg.ResendAPIKey == "":
+		l.errs = append(l.errs, errors.New("ACCOUNT_EMAIL_FROM exige RESEND_API_KEY e EMAIL_FROM: defina as três, ou deixe ACCOUNT_EMAIL_FROM vazia"))
+	default:
+		if _, err := mail.ParseAddress(cfg.AccountEmailFrom); err != nil {
+			l.errs = append(l.errs, errors.New("ACCOUNT_EMAIL_FROM não é um endereço válido (use \"Nome <a@b.com>\" ou a@b.com)"))
+		}
+	}
+}
+
+// exigirTurnstilePareado cobra que o par do Turnstile anda junto. Sem
+// nenhuma das duas, o cadastro fica desligado; com só uma, o boot recusa.
+func (l *leitor) exigirTurnstilePareado(cfg *Config) {
+	if (cfg.TurnstileSiteKey == "") != (cfg.TurnstileSecretKey == "") {
+		l.errs = append(l.errs, errors.New("TURNSTILE_SITE_KEY e TURNSTILE_SECRET_KEY andam juntas: defina as duas, ou nenhuma"))
+	}
+}
+
 // avisarSeFaltaListaDeProxies cobre o https sem lista de proxies, que quase
 // sempre significa "esqueci de configurar": o deploy é atrás de um proxy, e sem
 // a lista todo o rate limit por IP e todo o ip_hash da auditoria colapsam num
@@ -452,6 +521,35 @@ func (l *leitor) recusarChavesDeDemo(cfg *Config) {
 			l.falha("%s é uma chave de demonstração do compose.yaml, pública no repositório; "+
 				"ela só é aceita com PUBLIC_BASE_URL http em localhost ou num IP de loopback; "+
 				"gere uma com `openssl rand -base64 32`", k.nome)
+		}
+	}
+}
+
+// prefixosDeTesteDoTurnstile são os das chaves de teste públicas da
+// Cloudflare (site keys e secrets): 1x passa sempre, 2x falha sempre, 3x
+// força o desafio interativo ou responde token já usado.
+var prefixosDeTesteDoTurnstile = []string{"1x00000000", "2x00000000", "3x00000000"}
+
+// recusarTurnstileDeTeste faz as chaves de teste do Turnstile só valerem
+// fora de produção (a mesma regra das chaves de demo). O secret de teste
+// aceita o token fixo que qualquer um conhece: em produção, o cadastro
+// ficaria aberto a robôs. Recusa com o e-mail ligado ou não, porque ligar o
+// e-mail depois não deve abrir o cadastro com a chave errada.
+func (l *leitor) recusarTurnstileDeTeste(cfg *Config) {
+	if !emProducao(cfg.PublicBaseURL) {
+		return
+	}
+	for _, k := range []struct{ nome, valor string }{
+		{"TURNSTILE_SITE_KEY", cfg.TurnstileSiteKey},
+		{"TURNSTILE_SECRET_KEY", cfg.TurnstileSecretKey},
+	} {
+		for _, p := range prefixosDeTesteDoTurnstile {
+			if strings.HasPrefix(k.valor, p) {
+				l.falha("%s é uma chave de teste do Turnstile, pública na documentação da Cloudflare; "+
+					"ela só é aceita com PUBLIC_BASE_URL http em localhost ou num IP de loopback; "+
+					"use as chaves do widget criado no painel da Cloudflare", k.nome)
+				break
+			}
 		}
 	}
 }
@@ -623,5 +721,9 @@ func (c *Config) LogValue() slog.Value {
 		slog.Bool("email_enabled", c.EmailEnabled()),
 		slog.String("email_from", c.EmailFrom),
 		slog.String("resend_api_key", "[REDACTED]"),
+		slog.String("account_email_from", c.AccountEmailFrom),
+		slog.Bool("signup_enabled", c.SignupEnabled()),
+		slog.String("turnstile_site_key", c.TurnstileSiteKey),
+		slog.String("turnstile_secret_key", "[REDACTED]"),
 	)
 }
