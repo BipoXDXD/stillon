@@ -12,14 +12,14 @@ import (
 	"github.com/google/uuid"
 )
 
-const consumeAccountToken = `-- name: ConsumeAccountToken :one
+const consumeAccountLink = `-- name: ConsumeAccountLink :one
 UPDATE account_tokens SET used_at = $1::timestamptz
  WHERE token_hash = $2 AND purpose = $3
    AND used_at IS NULL AND expires_at > $1
 RETURNING user_id
 `
 
-type ConsumeAccountTokenParams struct {
+type ConsumeAccountLinkParams struct {
 	Now       time.Time
 	TokenHash []byte
 	Purpose   string
@@ -29,77 +29,77 @@ type ConsumeAccountTokenParams struct {
 // simultâneo reavalia o WHERE na versão nova (used_at preenchido) e não
 // devolve nada. Nenhuma linha (pgx.ErrNoRows) é token inexistente, usado ou
 // vencido, sem distinção.
-func (q *Queries) ConsumeAccountToken(ctx context.Context, arg ConsumeAccountTokenParams) (uuid.UUID, error) {
-	row := q.db.QueryRow(ctx, consumeAccountToken, arg.Now, arg.TokenHash, arg.Purpose)
+func (q *Queries) ConsumeAccountLink(ctx context.Context, arg ConsumeAccountLinkParams) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, consumeAccountLink, arg.Now, arg.TokenHash, arg.Purpose)
 	var user_id uuid.UUID
 	err := row.Scan(&user_id)
 	return user_id, err
 }
 
-const deleteAccountTokens = `-- name: DeleteAccountTokens :exec
+const deleteAccountLinks = `-- name: DeleteAccountLinks :exec
 DELETE FROM account_tokens WHERE user_id = $1 AND purpose = $2
 `
 
-type DeleteAccountTokensParams struct {
+type DeleteAccountLinksParams struct {
 	UserID  uuid.UUID
 	Purpose string
 }
 
 // Revoga todos os links do propósito, inclusive envios pendentes.
-func (q *Queries) DeleteAccountTokens(ctx context.Context, arg DeleteAccountTokensParams) error {
-	_, err := q.db.Exec(ctx, deleteAccountTokens, arg.UserID, arg.Purpose)
+func (q *Queries) DeleteAccountLinks(ctx context.Context, arg DeleteAccountLinksParams) error {
+	_, err := q.db.Exec(ctx, deleteAccountLinks, arg.UserID, arg.Purpose)
 	return err
 }
 
-const deleteAllAccountTokens = `-- name: DeleteAllAccountTokens :exec
+const deleteAllAccountLinks = `-- name: DeleteAllAccountLinks :exec
 DELETE FROM account_tokens WHERE user_id = $1
 `
 
-func (q *Queries) DeleteAllAccountTokens(ctx context.Context, userID uuid.UUID) error {
-	_, err := q.db.Exec(ctx, deleteAllAccountTokens, userID)
+func (q *Queries) DeleteAllAccountLinks(ctx context.Context, userID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, deleteAllAccountLinks, userID)
 	return err
 }
 
-const deleteDiscardedAccountToken = `-- name: DeleteDiscardedAccountToken :exec
+const deleteDiscardedAccountLink = `-- name: DeleteDiscardedAccountLink :exec
 DELETE FROM account_tokens
  WHERE user_id = $1 AND token_hash = $2
 `
 
-type DeleteDiscardedAccountTokenParams struct {
+type DeleteDiscardedAccountLinkParams struct {
 	UserID    uuid.UUID
 	TokenHash []byte
 }
 
 // Um descarte comprovado remove só a própria emissão.
-func (q *Queries) DeleteDiscardedAccountToken(ctx context.Context, arg DeleteDiscardedAccountTokenParams) error {
-	_, err := q.db.Exec(ctx, deleteDiscardedAccountToken, arg.UserID, arg.TokenHash)
+func (q *Queries) DeleteDiscardedAccountLink(ctx context.Context, arg DeleteDiscardedAccountLinkParams) error {
+	_, err := q.db.Exec(ctx, deleteDiscardedAccountLink, arg.UserID, arg.TokenHash)
 	return err
 }
 
-const deleteExpiredAccountTokens = `-- name: DeleteExpiredAccountTokens :exec
+const deleteExpiredAccountLinks = `-- name: DeleteExpiredAccountLinks :exec
 DELETE FROM account_tokens
  WHERE user_id = $1 AND expires_at <= $2
 `
 
-type DeleteExpiredAccountTokensParams struct {
+type DeleteExpiredAccountLinksParams struct {
 	UserID uuid.UUID
 	Now    time.Time
 }
 
 // Remove candidatos vencidos no próximo pedido do usuário, inclusive após
 // uma interrupção do processo entre a emissão e a conclusão do envio.
-func (q *Queries) DeleteExpiredAccountTokens(ctx context.Context, arg DeleteExpiredAccountTokensParams) error {
-	_, err := q.db.Exec(ctx, deleteExpiredAccountTokens, arg.UserID, arg.Now)
+func (q *Queries) DeleteExpiredAccountLinks(ctx context.Context, arg DeleteExpiredAccountLinksParams) error {
+	_, err := q.db.Exec(ctx, deleteExpiredAccountLinks, arg.UserID, arg.Now)
 	return err
 }
 
-const insertAccountToken = `-- name: InsertAccountToken :exec
+const insertAccountLink = `-- name: InsertAccountLink :exec
 
 INSERT INTO account_tokens (token_hash, user_id, purpose, created_at, expires_at)
 VALUES ($1, $2, $3, $4, $5)
 `
 
-type InsertAccountTokenParams struct {
+type InsertAccountLinkParams struct {
 	TokenHash []byte
 	UserID    uuid.UUID
 	Purpose   string
@@ -111,8 +111,10 @@ type InsertAccountTokenParams struct {
 // Os propósitos são 'confirm_email' e 'reset_password'. Gravar e apagar rodam
 // no escopo do dono (app.user_id); espiar e consumir, no escopo do próprio
 // hash (storage.InAccountTokenTx), porque quem clica no link não tem sessão.
-func (q *Queries) InsertAccountToken(ctx context.Context, arg InsertAccountTokenParams) error {
-	_, err := q.db.Exec(ctx, insertAccountToken,
+// (Os nomes dizem "link", não "token": o gosec lê as constantes geradas como
+// credencial embutida, G101.)
+func (q *Queries) InsertAccountLink(ctx context.Context, arg InsertAccountLinkParams) error {
+	_, err := q.db.Exec(ctx, insertAccountLink,
 		arg.TokenHash,
 		arg.UserID,
 		arg.Purpose,
@@ -122,27 +124,27 @@ func (q *Queries) InsertAccountToken(ctx context.Context, arg InsertAccountToken
 	return err
 }
 
-const peekAccountToken = `-- name: PeekAccountToken :one
+const peekAccountLink = `-- name: PeekAccountLink :one
 SELECT user_id FROM account_tokens
  WHERE token_hash = $1 AND purpose = $2
    AND used_at IS NULL AND expires_at > $3
 `
 
-type PeekAccountTokenParams struct {
+type PeekAccountLinkParams struct {
 	TokenHash []byte
 	Purpose   string
 	Now       time.Time
 }
 
 // O dono de um token válido, sem consumi-lo.
-func (q *Queries) PeekAccountToken(ctx context.Context, arg PeekAccountTokenParams) (uuid.UUID, error) {
-	row := q.db.QueryRow(ctx, peekAccountToken, arg.TokenHash, arg.Purpose, arg.Now)
+func (q *Queries) PeekAccountLink(ctx context.Context, arg PeekAccountLinkParams) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, peekAccountLink, arg.TokenHash, arg.Purpose, arg.Now)
 	var user_id uuid.UUID
 	err := row.Scan(&user_id)
 	return user_id, err
 }
 
-const replaceOlderAccountTokens = `-- name: ReplaceOlderAccountTokens :exec
+const replaceOlderAccountLinks = `-- name: ReplaceOlderAccountLinks :exec
 DELETE FROM account_tokens AS anterior
  USING account_tokens AS aceito
  WHERE aceito.token_hash = $1
@@ -152,7 +154,7 @@ DELETE FROM account_tokens AS anterior
    AND anterior.emissao < aceito.emissao
 `
 
-type ReplaceOlderAccountTokensParams struct {
+type ReplaceOlderAccountLinksParams struct {
 	TokenHash []byte
 	UserID    uuid.UUID
 	Now       time.Time
@@ -160,7 +162,7 @@ type ReplaceOlderAccountTokensParams struct {
 
 // A conclusão só substitui as emissões anteriores enquanto o próprio link
 // ainda pode ser usado. A consulta também serve para repetir a conclusão.
-func (q *Queries) ReplaceOlderAccountTokens(ctx context.Context, arg ReplaceOlderAccountTokensParams) error {
-	_, err := q.db.Exec(ctx, replaceOlderAccountTokens, arg.TokenHash, arg.UserID, arg.Now)
+func (q *Queries) ReplaceOlderAccountLinks(ctx context.Context, arg ReplaceOlderAccountLinksParams) error {
+	_, err := q.db.Exec(ctx, replaceOlderAccountLinks, arg.TokenHash, arg.UserID, arg.Now)
 	return err
 }

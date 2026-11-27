@@ -154,7 +154,7 @@ func (c *Cadastro) ConfirmarEmail(ctx context.Context, token string) error {
 		if err := q.MarkEmailVerified(ctx, db.MarkEmailVerifiedParams{Now: now, ID: userID}); err != nil {
 			return fmt.Errorf("marcar e-mail confirmado: %w", err)
 		}
-		if err := q.DeleteAccountTokens(ctx, db.DeleteAccountTokensParams{
+		if err := q.DeleteAccountLinks(ctx, db.DeleteAccountLinksParams{
 			UserID: userID, Purpose: propositoConfirmacao,
 		}); err != nil {
 			return fmt.Errorf("revogar links de confirmação: %w", err)

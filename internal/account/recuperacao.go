@@ -151,7 +151,7 @@ func trocarSenhaPeloLink(ctx context.Context, q *db.Queries, userID uuid.UUID, h
 	if err := q.MarkEmailVerified(ctx, db.MarkEmailVerifiedParams{Now: now, ID: userID}); err != nil {
 		return fmt.Errorf("confirmar e-mail: %w", err)
 	}
-	if err := q.DeleteAllAccountTokens(ctx, userID); err != nil {
+	if err := q.DeleteAllAccountLinks(ctx, userID); err != nil {
 		return fmt.Errorf("revogar links de conta: %w", err)
 	}
 	return audit(ctx, q, userID, "user.password_reset_by_email", nil, nil, nil, now)

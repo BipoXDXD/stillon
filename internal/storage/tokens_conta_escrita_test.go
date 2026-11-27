@@ -24,13 +24,13 @@ func TestTokenDeContaInsercaoExigeEscopoDoDono(t *testing.T) {
 	ctx := t.Context()
 	dono, outro := novoUsuario(t, pool), novoUsuario(t, pool)
 	hash := hashDe("fixture-insercao")
-	parametros := db.InsertAccountTokenParams{
+	parametros := db.InsertAccountLinkParams{
 		TokenHash: hash, UserID: dono, Purpose: propositoConfirmar,
 		CreatedAt: agora, ExpiresAt: agora.Add(24 * time.Hour),
 	}
 
 	inserir := func(q *db.Queries) error {
-		return q.InsertAccountToken(ctx, parametros)
+		return q.InsertAccountLink(ctx, parametros)
 	}
 	if err := storage.InUserTx(ctx, pool, outro, inserir); codigoPG(err) != "42501" {
 		t.Errorf("inserção fora do escopo do dono: %v; queria SQLSTATE 42501", err)
@@ -52,16 +52,16 @@ func TestTokenDeContaRemocaoExigeEscopoDoDono(t *testing.T) {
 	dono := novoUsuario(t, pool)
 	hash := hashDe("fixture-remocao")
 	gravarTokenDeConta(t, pool, dono, hash, propositoRedefinir, time.Hour)
-	parametros := db.DeleteAccountTokensParams{UserID: dono, Purpose: propositoRedefinir}
+	parametros := db.DeleteAccountLinksParams{UserID: dono, Purpose: propositoRedefinir}
 
 	// A leitura confirma que a linha está visível à transação de remoção.
 	err := storage.InAccountTokenTx(ctx, pool, hash, func(q *db.Queries) error {
-		if _, err := q.PeekAccountToken(ctx, db.PeekAccountTokenParams{
+		if _, err := q.PeekAccountLink(ctx, db.PeekAccountLinkParams{
 			TokenHash: hash, Purpose: propositoRedefinir, Now: agora,
 		}); err != nil {
 			return err
 		}
-		return q.DeleteAccountTokens(ctx, parametros)
+		return q.DeleteAccountLinks(ctx, parametros)
 	})
 	if err != nil {
 		t.Fatalf("leitura e remoção no escopo do hash: %v", err)

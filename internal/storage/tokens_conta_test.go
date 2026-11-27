@@ -27,7 +27,7 @@ func gravarTokenDeConta(t *testing.T, pool *pgxpool.Pool, dono uuid.UUID, hash [
 	t.Helper()
 	ctx := context.Background()
 	err := storage.InUserTx(ctx, pool, dono, func(q *db.Queries) error {
-		return q.InsertAccountToken(ctx, db.InsertAccountTokenParams{
+		return q.InsertAccountLink(ctx, db.InsertAccountLinkParams{
 			TokenHash: hash, UserID: dono, Purpose: proposito,
 			CreatedAt: agora, ExpiresAt: agora.Add(validade),
 		})
@@ -44,7 +44,7 @@ func espiarToken(t *testing.T, pool *pgxpool.Pool, hash []byte, proposito string
 	var dono uuid.UUID
 	err := storage.InAccountTokenTx(ctx, pool, hash, func(q *db.Queries) error {
 		var err error
-		dono, err = q.PeekAccountToken(ctx, db.PeekAccountTokenParams{TokenHash: hash, Purpose: proposito, Now: em})
+		dono, err = q.PeekAccountLink(ctx, db.PeekAccountLinkParams{TokenHash: hash, Purpose: proposito, Now: em})
 		return err
 	})
 	return dono, err
@@ -57,7 +57,7 @@ func consumirToken(t *testing.T, pool *pgxpool.Pool, escopoHash, tokenHash []byt
 	var dono uuid.UUID
 	err := storage.InAccountTokenTx(ctx, pool, escopoHash, func(q *db.Queries) error {
 		var err error
-		dono, err = q.ConsumeAccountToken(ctx, db.ConsumeAccountTokenParams{TokenHash: tokenHash, Purpose: proposito, Now: em})
+		dono, err = q.ConsumeAccountLink(ctx, db.ConsumeAccountLinkParams{TokenHash: tokenHash, Purpose: proposito, Now: em})
 		return err
 	})
 	return dono, err
@@ -127,7 +127,7 @@ func TestConsumoExigeOHashDoEscopo(t *testing.T) {
 	// dono), e só a de UPDATE impede consumi-lo sem o hash no escopo.
 	ctx := context.Background()
 	err := storage.InUserTx(ctx, pool, dono, func(q *db.Queries) error {
-		_, err := q.ConsumeAccountToken(ctx, db.ConsumeAccountTokenParams{TokenHash: hash, Purpose: propositoRedefinir, Now: agora})
+		_, err := q.ConsumeAccountLink(ctx, db.ConsumeAccountLinkParams{TokenHash: hash, Purpose: propositoRedefinir, Now: agora})
 		return err
 	})
 	if !errors.Is(err, pgx.ErrNoRows) {
@@ -165,10 +165,10 @@ func TestDonoApagaSoOsProprios(t *testing.T) {
 	ctx := context.Background()
 	// O WHERE nomeia B de propósito: só a política impede A de apagar o de B.
 	err := storage.InUserTx(ctx, pool, a, func(q *db.Queries) error {
-		if err := q.DeleteAccountTokens(ctx, db.DeleteAccountTokensParams{UserID: a, Purpose: propositoConfirmar}); err != nil {
+		if err := q.DeleteAccountLinks(ctx, db.DeleteAccountLinksParams{UserID: a, Purpose: propositoConfirmar}); err != nil {
 			return err
 		}
-		return q.DeleteAccountTokens(ctx, db.DeleteAccountTokensParams{UserID: b, Purpose: propositoConfirmar})
+		return q.DeleteAccountLinks(ctx, db.DeleteAccountLinksParams{UserID: b, Purpose: propositoConfirmar})
 	})
 	if err != nil {
 		t.Fatalf("apagar tokens no escopo de A: %v", err)
