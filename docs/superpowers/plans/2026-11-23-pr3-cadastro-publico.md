@@ -113,7 +113,7 @@ Cada tarefa roda numa worktree própria, criada a partir do ramo do sub-PR (`fea
 |---|---|---|---|
 | `GET /api/v1/auth/signup-config` | — | 200 `{"enabled": bool, "turnstile_site_key": string}` (chave vazia se desligado) | — |
 | `POST /api/v1/auth/signup` | `{email, password, turnstile_token}` | 202 sem corpo | 400 `validation_failed` (`email`: `invalid`; `password`: `too_short`/`too_long`); 400 `turnstile_failed`; 404 `not_found` se desligado; 429; 503 `unavailable` |
-| `POST /api/v1/auth/email/confirm` | `{token}` | 204 | 400 `token_invalid`; 429 |
+| `POST /api/v1/auth/email/confirm` | `{token, password}` (a senha do cadastro; desde o PR 3a.2) | 204 | 400 `token_invalid` (antes de olhar a senha); 401 `invalid_credentials` (senha errada ou vazia; o link não é gasto); 429 `rate_limited` (balde por IP, Argon2 cheio ou conta travada pelo bloqueio do login, com `Retry-After: 900`) |
 | `POST /api/v1/auth/email/resend` (com sessão) | — | 202 sem corpo | 401; 429 |
 | `POST /api/v1/auth/password/forgot` | `{email, turnstile_token}` | 202 sem corpo | 400 `validation_failed` (`email`); 400 `turnstile_failed`; 404 se desligado; 429; 503 |
 | `POST /api/v1/auth/password/reset` | `{token, new_password}` | 204 | 400 `validation_failed` (`new_password`); 400 `token_invalid`; 429 (Argon2 cheio) |
