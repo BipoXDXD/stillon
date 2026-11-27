@@ -100,6 +100,10 @@ services:
       # Vazios, o canal de e-mail fica indisponível (o app sobe).
       RESEND_API_KEY: ${RESEND_API_KEY:-}
       EMAIL_FROM: ${EMAIL_FROM:-}
+      ACCOUNT_EMAIL_FROM: ${ACCOUNT_EMAIL_FROM:-}
+      # Vazias, o cadastro público fica desligado (o app sobe); o par vai junto.
+      TURNSTILE_SITE_KEY: ${TURNSTILE_SITE_KEY:-}
+      TURNSTILE_SECRET_KEY: ${TURNSTILE_SECRET_KEY:-}
     healthcheck:
       # A imagem não tem shell: o próprio binário checa o /readyz (D5 do
       # Plano 7). O stillon-entrada espera este healthcheck no deploy.
