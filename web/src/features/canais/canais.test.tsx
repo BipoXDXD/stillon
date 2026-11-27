@@ -216,7 +216,7 @@ describe('canais', () => {
     const dialogo = await screen.findByRole('dialog')
     await r.usuario.type(within(dialogo).getByLabelText('URL do webhook'), 'https://discord.com/api/webhooks/1/abc')
     const casos: [ErroForcado, string][] = [
-      [{ status: 409, code: 'channel_limit_reached' }, 'Limite de 10 canais atingido.'],
+      [{ status: 409, code: 'channel_limit_reached' }, 'Limite de canais deste projeto atingido.'],
       [{ status: 429, code: 'rate_limited' }, 'Limite de envios atingido (1 a cada 6 minutos): tente de novo em alguns minutos.'],
       [
         { status: 400, code: 'validation_failed', fields: [{ field: 'url', reason: 'invalid' }] },

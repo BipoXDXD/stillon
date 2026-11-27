@@ -1,7 +1,7 @@
 import { act, screen, waitFor, within } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 import { alvo } from '@/test/fixtures'
-import { PROJETO_PADRAO } from '@/test/api-falsa'
+import { PROJETO_PADRAO, type ApiFalsa } from '@/test/api-falsa'
 import { renderizarPainel } from '@/test/renderizar'
 import { esperarNavegacao } from '@/test/esperar-navegacao'
 import { Alvo } from '@/lib/api/schemas'
@@ -256,12 +256,12 @@ describe('cadastrar', () => {
     expect(mensagemDoErro(status)).toBeVisible()
   })
 
-  it('o teto de 100 alvos (Plano 5, D24) aparece como erro do formulário', async () => {
+  it('o teto de alvos aparece como erro do formulário, sem número (o teto é do titular)', async () => {
     const r = await renderizarPainel('/targets/new')
     r.falsa.estado.forcar.set('POST /projects/:projectId/targets', { status: 409, code: 'target_limit_reached' })
     await preencher(r.usuario)
     await r.usuario.click(screen.getByRole('button', { name: 'Cadastrar' }))
-    expect(await screen.findByRole('alert')).toHaveTextContent('Limite de 100 alvos atingido.')
+    expect(await screen.findByRole('alert')).toHaveTextContent('Limite de alvos da conta atingido.')
   })
 })
 
@@ -485,8 +485,8 @@ describe('ajustes da revisão (rodada 1)', () => {
   it('na edição, a URL já guardada não passa de novo pelo espelho; uma nova, sim', () => {
     const base = { url: 'http://0x7f.1/' }
     const v = { ...valoresPadrao, name: 'API', modoHeaders: 'manter' as const }
-    expect(esquemaDoAlvo(base).safeParse({ ...v, url: 'http://0x7f.1/' }).success).toBe(true)
-    expect(esquemaDoAlvo(base).safeParse({ ...v, url: 'http://127.0.0.1/' }).success).toBe(false)
+    expect(esquemaDoAlvo(30, base).safeParse({ ...v, url: 'http://0x7f.1/' }).success).toBe(true)
+    expect(esquemaDoAlvo(30, base).safeParse({ ...v, url: 'http://127.0.0.1/' }).success).toBe(false)
     expect(esquemaAlvo.safeParse({ ...v, url: 'http://0x7f.1/' }).success).toBe(false)
   })
 
@@ -540,5 +540,58 @@ describe('formulário de alvo no sistema visual', () => {
       const opcao = await screen.findByRole('radio', { name: rotulo })
       expect(opcao.closest('label')).toHaveClass('min-h-11')
     }
+  })
+})
+
+// PR 5: o mínimo é o do titular do projeto (limits.min_interval_sec), e sem
+// limits (a API anterior, durante o release) vale 30.
+// Sabotagem: no FormularioAlvo, listar INTERVALOS sem filtrar pelo mínimo.
+describe('intervalo mínimo do projeto', () => {
+  const limitesGratis = {
+    projects: 3, members_per_project: 3, targets: 20, heartbeats: 20, channels_per_project: 5, min_interval_sec: 300,
+  }
+  // O projeto padrão da falsa passa a ser de titular grátis.
+  const comLimites = (falsa: ApiFalsa) => {
+    const padrao = falsa.estado.projetos.find((p) => p.projeto.id === PROJETO_PADRAO)
+    if (padrao) padrao.projeto.limits = limitesGratis
+  }
+  const opcoes = () => within(screen.getByLabelText('Intervalo')).getAllByRole('option').map((o) => o.textContent)
+
+  it('seletor de intervalo esconde opções abaixo do mínimo', async () => {
+    const r = await renderizarPainel('/targets/new', { antes: comLimites })
+    await r.usuario.type(await screen.findByLabelText('Nome'), 'Site')
+    await r.usuario.type(screen.getByLabelText('URL'), 'https://exemplo.com')
+    expect(opcoes()).not.toContain('30 segundos')
+    expect(opcoes()).not.toContain('1 minuto')
+    expect(screen.getByLabelText('Intervalo')).toHaveDisplayValue('5 minutos')
+    await r.usuario.selectOptions(screen.getByLabelText('Intervalo'), 'Outro…')
+    expect(screen.getByLabelText('Intervalo em segundos')).toHaveAccessibleDescription('De 300 a 86400 (1 dia).')
+    await r.usuario.selectOptions(screen.getByLabelText('Intervalo'), '5 minutos')
+    await r.usuario.click(screen.getByRole('button', { name: 'Cadastrar' }))
+    await waitFor(() => expect(r.falsa.corpos('POST /projects/:projectId/targets')[0]).toMatchObject({ interval_sec: 300 }))
+  })
+
+  it('sem limits, mínimo de 30', async () => {
+    await renderizarPainel('/targets/new')
+    await screen.findByLabelText('Nome')
+    expect(opcoes()).toContain('30 segundos')
+  })
+
+  // Sabotagem: não manter a opção do intervalo guardado → o seletor cai em
+  // outra opção e o PATCH mudaria o intervalo sem o usuário pedir.
+  it('editar alvo legado abaixo do mínimo mantém o intervalo e só manda o que mudou', async () => {
+    const r = await renderizarPainel('/targets/alvo-1/edit', {
+      antes: (falsa) => {
+        comLimites(falsa)
+        falsa.estado.alvos = [alvo({ interval_sec: 60 })]
+      },
+    })
+    const nome = await screen.findByLabelText('Nome')
+    expect(screen.getByLabelText('Intervalo')).toHaveDisplayValue('1 minuto')
+    expect(opcoes()).not.toContain('30 segundos')
+    await r.usuario.type(nome, ' 2')
+    await r.usuario.click(screen.getByRole('button', { name: 'Salvar' }))
+    await waitFor(() => expect(r.falsa.corpos('PATCH /projects/:projectId/targets/:id')).toHaveLength(1))
+    expect(r.falsa.corpos('PATCH /projects/:projectId/targets/:id')[0]).toEqual({ name: 'API 2' })
   })
 })

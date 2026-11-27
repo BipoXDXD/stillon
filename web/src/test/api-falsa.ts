@@ -236,7 +236,7 @@ export function criarApiFalsa() {
     // Os projetos de que o usuário é membro, cada um com os recursos dele.
     // Os do padrão são o próprio st. O GET ordena como o servidor.
     projetos: [] as ProjetoFalso[],
-    // tenancy.ProjectLimit(false): quantos projetos o usuário pode ter como
+    // tenancy.LimitesDe(false).Projetos: quantos projetos o usuário pode ter como
     // titular (owner).
     limiteDeProjetos: 3,
   }

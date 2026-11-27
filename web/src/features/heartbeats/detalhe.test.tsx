@@ -637,7 +637,7 @@ describe('duplicar', () => {
     const r = await detalheCom()
     r.falsa.estado.forcar.set('POST /projects/:projectId/heartbeats/:id/clone', { status: 409, code: 'heartbeat_limit_reached' })
     await r.usuario.click(screen.getByRole('button', { name: 'Duplicar' }))
-    expect(await screen.findByRole('alert')).toHaveTextContent('Limite de 100 heartbeats atingido.')
+    expect(await screen.findByRole('alert')).toHaveTextContent('Limite de heartbeats da conta atingido.')
     expect(screen.getByRole('button', { name: 'Duplicar' })).not.toHaveAttribute('aria-disabled')
     expect(screen.queryByRole('dialog', { name: 'Guarde a URL de ping' })).not.toBeInTheDocument()
     expect(r.router.state.location.pathname).toBe(`/projects/${PROJETO_PADRAO}/heartbeats/h1`)

@@ -20,11 +20,12 @@ const porCodigo: Record<string, string> = {
   invalid_session: 'Sua sessão terminou. Entre de novo.',
   invalid_credentials: 'E-mail ou senha incorretos.',
   validation_failed: 'Confira os campos destacados.',
-  target_limit_reached: 'Limite de 100 alvos atingido.',
+  // Sem o número: os tetos variam com o plano do titular, e o código de erro
+  // não traz o valor.
+  target_limit_reached: 'Limite de alvos da conta atingido.',
   content_rule_host_limit_reached: 'Limite de regras de conteúdo para este host atingido.',
-  heartbeat_limit_reached: 'Limite de 100 heartbeats atingido.',
-  channel_limit_reached: 'Limite de 10 canais atingido.',
-  // Sem o número: o teto muda no PR 5 (planos).
+  heartbeat_limit_reached: 'Limite de heartbeats da conta atingido.',
+  channel_limit_reached: 'Limite de canais deste projeto atingido.',
   project_limit_reached: 'Limite de projetos atingido.',
   channel_not_pending: 'O canal não está mais aguardando verificação.',
   delivery_failed: 'Não conseguimos entregar a mensagem de teste. Confira o endereço.',

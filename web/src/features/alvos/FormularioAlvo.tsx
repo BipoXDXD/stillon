@@ -2,6 +2,7 @@ import { zodResolver } from '@hookform/resolvers/zod'
 import { type ChangeEvent, useState } from 'react'
 import { flushSync } from 'react-dom'
 import { useFieldArray, useForm, useWatch, type FieldErrors } from 'react-hook-form'
+import { useProjeto } from '@/app/projeto'
 import { Botao } from '@/components/ui/botao'
 import { estiloDeCartao } from '@/components/ui/cartao'
 import { CaixaDeMarcar, Campo, Entrada, ErroDoFormulario, Opcao, Selecao } from '@/components/ui/campo'
@@ -12,7 +13,7 @@ import {
   avancadoPersonalizado,
   campoDoServidor,
   esquemaDoAlvo,
-  INTERVALOS,
+  intervalosPara,
   OUTRO,
   REGRA_COM_HEAD,
   type ValoresDoAlvo,
@@ -74,8 +75,16 @@ export function FormularioAlvo({
   rotuloDoBotao: string
 }) {
   const editando = nomesDeHeaders !== undefined
-  // Na edição, o esquema conhece a base: a URL e os nomes dos headers guardados.
-  const [esquema] = useState(() => esquemaDoAlvo(editando ? { url: iniciais.url, nomesDeHeaders } : undefined))
+  const { intervaloMinimo } = useProjeto()
+  // Na edição, o esquema conhece a base: a URL, os nomes dos headers e o
+  // intervalo guardados.
+  const [esquema] = useState(() =>
+    esquemaDoAlvo(
+      intervaloMinimo,
+      editando ? { url: iniciais.url, nomesDeHeaders, intervalSec: iniciais.interval_sec } : undefined,
+    ),
+  )
+  const [intervalos] = useState(() => intervalosPara(intervaloMinimo, editando ? iniciais.interval_sec : undefined))
   const f = useForm<ValoresDoAlvo>({ resolver: zodResolver(esquema), defaultValues: iniciais })
   const headers = useFieldArray({ control: f.control, name: 'headers' })
   const [erroGeral, setErroGeral] = useState<string | null>(null)
@@ -174,7 +183,7 @@ export function FormularioAlvo({
                 },
               })}
             >
-              {INTERVALOS.map(([s, t]) => (
+              {intervalos.map(([s, t]) => (
                 <option key={s} value={s}>
                   {t}
                 </option>
@@ -184,8 +193,14 @@ export function FormularioAlvo({
           )}
         </Campo>
         {intervaloEscolhido === OUTRO && (
-          <Campo rotulo="Intervalo em segundos" erro={e.interval_sec?.message} ajuda="De 30 a 86400 (1 dia).">
-            {(a) => <Entrada {...a} type="number" min={30} max={86400} {...f.register('interval_sec', numero)} />}
+          <Campo
+            rotulo="Intervalo em segundos"
+            erro={e.interval_sec?.message}
+            ajuda={`De ${intervaloMinimo} a 86400 (1 dia).`}
+          >
+            {(a) => (
+              <Entrada {...a} type="number" min={intervaloMinimo} max={86400} {...f.register('interval_sec', numero)} />
+            )}
           </Campo>
         )}
       </div>
