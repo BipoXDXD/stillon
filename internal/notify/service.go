@@ -42,6 +42,10 @@ var (
 	ErrInvalidToken   = errors.New("token de verificação inválido ou vencido")
 )
 
+// ErrVerificationSuppressed indica que a cota impediu o envio do link.
+// O serviço aceita o pedido sem registrar um link que não foi entregue.
+var ErrVerificationSuppressed = errors.New("e-mail de verificação suprimido")
+
 // Motivos de ValidationError, no vocabulário fechado da API.
 const (
 	ReasonRequired    = "required"
@@ -63,6 +67,7 @@ type DiscordTester interface {
 }
 
 // VerificationMailer manda o link de verificação. *Resend satisfaz.
+// Um mailer sujeito a cotas sinaliza a supressão com ErrVerificationSuppressed.
 type VerificationMailer interface {
 	SendVerification(ctx context.Context, dest crypto.Secret, link string) error
 }
@@ -139,6 +144,7 @@ func NewChannelService(pool *pgxpool.Pool, box *crypto.Box, clk clock.Clock, dis
 // de teste do Discord ou o e-mail com o link. Se o envio falha, nada é
 // gravado, e o cliente recebe ErrDeliveryFailed. O canal nasce no projeto do
 // escopo, com user_id = quem criou.
+// Quando a cota suprime o e-mail, o canal nasce pendente, sem token.
 //
 // A permissão e o limite são conferidos antes do envio, para não mandar
 // mensagem a um canal que não será gravado, e de novo na gravação: a
@@ -183,12 +189,13 @@ func (s *ChannelService) Create(ctx context.Context, scope tenancy.ProjectScope,
 		if err != nil {
 			return Channel{}, err
 		}
-		expira := now.Add(VerifyTTL)
-		if err := s.email.SendVerification(envio, crypto.Secret(dest), s.link(token)); err != nil {
+		if err := s.email.SendVerification(envio, crypto.Secret(dest), s.link(token)); err == nil {
+			expira := now.Add(VerifyTTL)
+			p.VerifyTokenHash, p.VerifyExpiresAt = hash, &expira
+		} else if !errors.Is(err, ErrVerificationSuppressed) {
 			slog.Warn("e-mail de verificação falhou", "motivo", motivo(err))
 			return Channel{}, ErrDeliveryFailed
 		}
-		p.VerifyTokenHash, p.VerifyExpiresAt = hash, &expira
 		out.Status = StatusPending
 	}
 
@@ -393,8 +400,8 @@ func (s *ChannelService) SetEnabled(ctx context.Context, scope tenancy.ProjectSc
 
 // ResendVerification (PermManageChannels) manda um link novo a um e-mail
 // pendente (vencido ou não) e invalida o anterior. Envia antes de trocar o
-// token: se o envio falha, o link antigo continua valendo. A permissão é
-// conferida na leitura, antes do envio, e de novo na troca do token.
+// token: se o envio falha ou é suprimido, o token anterior é preservado.
+// A permissão é conferida na leitura, antes do envio, e de novo na troca do token.
 func (s *ChannelService) ResendVerification(ctx context.Context, scope tenancy.ProjectScope, id uuid.UUID) error {
 	var row db.NotifChannel
 	err := storage.InProjectTx(ctx, s.pool, scope.UserID, scope.ProjectID, func(q *db.Queries, atual tenancy.ProjectScope) error {
@@ -427,7 +434,11 @@ func (s *ChannelService) ResendVerification(ctx context.Context, scope tenancy.P
 	}
 	envio, cancel := context.WithTimeout(ctx, sendTimeout)
 	defer cancel()
-	if err := s.email.SendVerification(envio, dest, s.link(token)); err != nil {
+	err = s.email.SendVerification(envio, dest, s.link(token))
+	if errors.Is(err, ErrVerificationSuppressed) {
+		return nil
+	}
+	if err != nil {
 		slog.Warn("e-mail de verificação falhou", "motivo", motivo(err))
 		return ErrDeliveryFailed
 	}

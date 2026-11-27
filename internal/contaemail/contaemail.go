@@ -187,17 +187,19 @@ type verificacaoComTeto struct {
 }
 
 // NovaVerificacaoComTeto põe a verificação de canal por e-mail atrás do
-// balde e do teto, de forma síncrona. Suprimido volta nil (o canal fica
-// pendente, e "reenviar" resolve); erro do balde, do teto ou do transporte
-// volta como erro.
+// balde e do teto, de forma síncrona. Retorna ErrVerificationSuppressed
+// quando a cota impede o envio, ou a falha do balde, teto ou transporte.
 func NovaVerificacaoComTeto(e *Enviador, m notify.VerificationMailer) notify.VerificationMailer {
 	return &verificacaoComTeto{e: e, m: m}
 }
 
 func (v *verificacaoComTeto) SendVerification(ctx context.Context, dest crypto.Secret, link string) error {
 	liberado, err := v.e.liberar(ctx, string(dest.Reveal()))
-	if err != nil || !liberado {
+	if err != nil {
 		return err
+	}
+	if !liberado {
+		return notify.ErrVerificationSuppressed
 	}
 	return v.m.SendVerification(ctx, dest, link)
 }
