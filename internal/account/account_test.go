@@ -110,6 +110,72 @@ func TestCreateUserRecusaEmailRepetido(t *testing.T) {
 	}
 }
 
+func TestCreateUserSimultaneoRecusaEmailRepetido(t *testing.T) {
+	svc, _ := novo(t)
+	ctx := t.Context()
+	admin := testdb.Admin(t)
+	trava, err := admin.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var criacoes sync.WaitGroup
+	defer func() {
+		_ = trava.Rollback(context.Background())
+		criacoes.Wait()
+	}()
+	// A primeira criação tem o e-mail reservado enquanto espera para gravar
+	// o Projeto. A segunda precisa encontrar a conta ainda em transação.
+	if _, err := trava.Exec(ctx, `LOCK TABLE projects IN ACCESS EXCLUSIVE MODE`); err != nil {
+		t.Fatal(err)
+	}
+	type resultado struct {
+		id  uuid.UUID
+		err error
+	}
+	fim := make(chan resultado, 2)
+	for _, email := range []string{"Dono@exemplo.com", "dono@exemplo.com"} {
+		criacoes.Go(func() {
+			id, err := svc.CreateUser(ctx, email, senha)
+			fim <- resultado{id: id, err: err}
+		})
+	}
+	if !testdb.EsperarBloqueados(t, admin, 2, fim) {
+		t.Fatal("uma criação terminou antes de as duas alcançarem as travas")
+	}
+	if err := trava.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	var vencedor uuid.UUID
+	var sucessos, conflitos int
+	for range 2 {
+		r := <-fim
+		switch {
+		case r.err == nil && r.id != uuid.Nil:
+			sucessos++
+			vencedor = r.id
+		case errors.Is(r.err, account.ErrEmailTaken) && r.id == uuid.Nil:
+			conflitos++
+		default:
+			t.Errorf("CreateUser devolveu id %v e erro %v", r.id, r.err)
+		}
+	}
+	if sucessos != 1 || conflitos != 1 {
+		t.Fatalf("%d criações e %d conflitos de e-mail; queria 1 de cada", sucessos, conflitos)
+	}
+
+	if n := contar(t, `SELECT count(*) FROM users`); n != 1 {
+		t.Fatalf("%d usuários; queria 1", n)
+	}
+	if n := contar(t, `SELECT count(*) FROM users WHERE id = $1 AND is_operator AND email_verified_at IS NOT NULL`, vencedor); n != 1 {
+		t.Fatal("o ID devolvido não identifica uma conta de operador confirmada")
+	}
+	if n := contar(t, `SELECT count(*) FROM projects`); n != 1 {
+		t.Fatalf("%d projetos; queria 1", n)
+	}
+	conferirVinculoDoTitular(t, vencedor)
+}
+
 // inserirComoNoSignup grava o usuário como o cadastro público grava: sem
 // email_verified_at.
 func inserirComoNoSignup(t *testing.T, pool *pgxpool.Pool, email string) uuid.UUID {

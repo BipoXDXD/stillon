@@ -134,10 +134,10 @@ func InVerifyTx(ctx context.Context, b Beginner, tokenHash []byte, fn func(*db.Q
 }
 
 // InAccountTokenTx roda fn no escopo do link de conta (confirmação de e-mail
-// e redefinição de senha): a RLS enxerga e deixa consumir só a linha de
-// account_tokens cujo token_hash é tokenHash, e nada de outra tabela. Quem
-// clica no link não tem sessão. É o único lugar do código que liga esse
-// escopo.
+// e redefinição de senha). Em account_tokens, o escopo do hash permite ler e
+// atualizar a linha correspondente. Inserções e remoções exigem o escopo do
+// dono (app.user_id). Quem clica no link não tem sessão. É o único lugar do
+// código que liga app.account_token_hash.
 func InAccountTokenTx(ctx context.Context, b Beginner, tokenHash []byte, fn func(*db.Queries) error) error {
 	if len(tokenHash) != sha256.Size {
 		return ErrNoToken

@@ -105,6 +105,14 @@ func contar(t *testing.T, sql string, args ...any) int {
 	return n
 }
 
+func conferirVinculoDoTitular(t *testing.T, id uuid.UUID) {
+	t.Helper()
+	if n := contar(t, `SELECT count(*) FROM projects p JOIN project_members m ON m.project_id = p.id
+		WHERE p.titular_id = $1 AND p.is_default AND m.user_id = $1 AND m.role = 'owner'`, id); n != 1 {
+		t.Fatalf("%d Projetos padrão com owner; queria 1", n)
+	}
+}
+
 func idDoEmail(t *testing.T, email string) uuid.UUID {
 	t.Helper()
 	var id uuid.UUID
@@ -154,10 +162,7 @@ func TestCadastrarContaNovaCriaUsuarioProjetoEToken(t *testing.T) {
 	if n := contar(t, `SELECT count(*) FROM users WHERE id = $1 AND email_verified_at IS NULL AND NOT is_operator`, id); n != 1 {
 		t.Fatal("o usuário do cadastro nasceu confirmado ou operador")
 	}
-	if n := contar(t, `SELECT count(*) FROM projects p JOIN project_members m ON m.project_id = p.id
-		WHERE p.titular_id = $1 AND p.is_default AND m.user_id = $1 AND m.role = 'owner'`, id); n != 1 {
-		t.Fatalf("%d Projetos padrão com owner; queria 1", n)
-	}
+	conferirVinculoDoTitular(t, id)
 	vence := a.clk.Now().Add(24 * time.Hour)
 	if n := contar(t, `SELECT count(*) FROM account_tokens
 		WHERE user_id = $1 AND purpose = 'confirm_email' AND used_at IS NULL AND expires_at = $2`, id, vence); n != 1 {
@@ -295,10 +300,12 @@ func TestCadastrarSimultaneoUsaGrafiaDaContaCriada(t *testing.T) {
 	if n := contar(t, `SELECT count(*) FROM projects`); n != 1 {
 		t.Fatalf("%d projetos; queria 1", n)
 	}
+	var titular uuid.UUID
 	var cadastrado string
-	if err := admin.QueryRow(ctx, `SELECT email FROM users`).Scan(&cadastrado); err != nil {
+	if err := admin.QueryRow(ctx, `SELECT id, email FROM users`).Scan(&titular, &cadastrado); err != nil {
 		t.Fatal(err)
 	}
+	conferirVinculoDoTitular(t, titular)
 	enviados := a.mailer.todos()
 	if len(enviados) != 2 {
 		t.Fatalf("%d e-mails; queria 2", len(enviados))
