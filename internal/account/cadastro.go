@@ -109,10 +109,9 @@ func (c *Cadastro) Cadastrar(ctx context.Context, email, senha string) error {
 		if _, err := storage.CriarProjetoPadraoNaTx(ctx, q, id, now); err != nil {
 			return err
 		}
-		if err := q.LockUserSessions(ctx, id); err != nil {
-			return fmt.Errorf("travar o usuário: %w", err)
-		}
-		if err := gravarTokenDeConta(ctx, q, id, tokenHash, propositoConfirmacao, c.clk.Now(), ValidadeDaConfirmacao); err != nil {
+		// A conta acabou de ser inserida nesta transação. Antes do commit,
+		// o ID novo ainda não é visível e só esta transação emite para ele.
+		if err := inserirTokenDeConta(ctx, q, id, tokenHash, propositoConfirmacao, c.clk.Now(), ValidadeDaConfirmacao); err != nil {
 			return err
 		}
 		return audit(ctx, q, id, "user.signed_up", nil, nil, nil, now)
