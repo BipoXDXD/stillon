@@ -1,4 +1,5 @@
-import { act, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
+import { http, HttpResponse } from 'msw'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { EMAIL, SITE_KEY_DO_TURNSTILE, TOKEN_DO_TURNSTILE } from '@/test/api-falsa'
 import { renderizarPainel } from '@/test/renderizar'
@@ -135,6 +136,7 @@ describe('cadastro', () => {
     await usuario.click(screen.getByRole('button', { name: 'Criar conta' }))
     await waitFor(() => expect(senha).toHaveAttribute('aria-invalid', 'true'))
     expect(senha).toHaveAccessibleDescription(expect.stringContaining('Mínimo de 15 caracteres.'))
+    expect(senha).toHaveFocus()
     expect(falsa.chamadas('POST /auth/signup')).toBe(1)
   })
 
@@ -267,6 +269,102 @@ describe('redefinição de senha', () => {
     expect(await screen.findByRole('heading', { name: 'Link inválido ou vencido' })).toBeInTheDocument()
     expect(screen.getByRole('main')).toHaveTextContent('O link de redefinição vale 1 hora e só funciona uma vez. Peça outro.')
     expect(screen.getByRole('link', { name: 'Pedir outro link' })).toHaveAttribute('href', '/forgot-password')
+  })
+})
+
+describe('envio dos formulários públicos', () => {
+  it.each([
+    {
+      rota: '/signup',
+      endpoint: '/auth/signup',
+      acao: 'Criar conta',
+      enviando: 'Criando conta…',
+      campos: [{ rotulo: 'E-mail', valor: NOVO }, { rotulo: 'Senha', valor: SENHA_NOVA }],
+      desafio: true,
+      via: 'enter',
+    },
+    {
+      rota: '/forgot-password',
+      endpoint: '/auth/password/forgot',
+      acao: 'Enviar link',
+      enviando: 'Enviando…',
+      campos: [{ rotulo: 'E-mail', valor: NOVO }],
+      desafio: true,
+      via: 'botão',
+    },
+    {
+      rota: '/reset-password#token=token-de-reset',
+      endpoint: '/auth/password/reset',
+      acao: 'Salvar senha',
+      enviando: 'Salvando…',
+      campos: [{ rotulo: 'Senha nova', valor: SENHA_NOVA }],
+      desafio: false,
+      via: 'enter',
+      moverFocoPara: 'Escolha uma senha nova',
+    },
+  ])('$rota bloqueia os controles enquanto envia e recupera os valores e o foco na falha', async ({
+    rota, endpoint, acao, enviando, campos, desafio, via, moverFocoPara,
+  }) => {
+    let liberar!: () => void
+    const resposta = new Promise<void>((resolve) => { liberar = resolve })
+    const pedidos = () => urls.filter((url) => new URL(url).pathname === `/api/v1${endpoint}`)
+    const { usuario } = await renderizarPainel(rota, { logado: false })
+    servidor.use(http.post(`*/api/v1${endpoint}`, async () => {
+      await resposta
+      return HttpResponse.json(
+        { error: { code: 'unavailable', message: 'indisponível' }, trace_id: 't' },
+        { status: 503 },
+      )
+    }))
+    const preenchidos = []
+    for (const { rotulo, valor } of campos) {
+      const entrada = await screen.findByLabelText(rotulo)
+      await usuario.type(entrada, valor)
+      preenchidos.push({ entrada, valor })
+    }
+    if (desafio) await turnstile.resolver()
+
+    const botao = screen.getByRole('button', { name: acao })
+    const botoesDeSenha = screen.queryAllByRole('button', { name: 'Mostrar senha' })
+    expect(botoesDeSenha).toHaveLength(campos.some(({ rotulo }) => rotulo.startsWith('Senha')) ? 1 : 0)
+    const primeiroCampo = preenchidos[0]!.entrada
+    const origem = via === 'enter' ? primeiroCampo : botao
+    const focoExterno = moverFocoPara ? screen.getByRole('heading', { name: moverFocoPara }) : null
+
+    try {
+      await usuario.click(origem)
+      if (via === 'enter') await usuario.keyboard('{Enter}')
+      await waitFor(() => expect(pedidos()).toHaveLength(1))
+      expect(botao).toHaveAccessibleName(enviando)
+      expect(botao).toBeDisabled()
+      for (const { entrada, valor } of preenchidos) {
+        expect(entrada).toBeVisible()
+        expect(entrada).toHaveValue(valor)
+        expect(entrada).toBeDisabled()
+      }
+      for (const mostrar of botoesDeSenha) expect(mostrar).toBeDisabled()
+      expect(turnstile.render).toHaveBeenCalledTimes(desafio ? 1 : 0)
+
+      // O jsdom pode manter o foco num controle recém-desabilitado.
+      origem.blur()
+      focoExterno?.focus()
+      fireEvent.submit(botao.closest('form')!)
+    } finally {
+      liberar()
+    }
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Serviço indisponível no momento.')
+    for (const { entrada, valor } of preenchidos) {
+      expect(entrada).toHaveValue(valor)
+      expect(entrada).toBeEnabled()
+    }
+    for (const mostrar of botoesDeSenha) expect(mostrar).toBeEnabled()
+    expect(focoExterno ?? primeiroCampo).toHaveFocus()
+    expect(botao.matches(':disabled')).toBe(desafio)
+    if (desafio) await turnstile.resolver()
+    expect(botao).toHaveAccessibleName(acao)
+    expect(botao).toBeEnabled()
+    expect(pedidos()).toHaveLength(1)
   })
 })
 

@@ -23,6 +23,7 @@ import {
   MolduraPublica,
   TextoDeApoio,
   useDesafio,
+  useEnvioDoFormulario,
 } from './comum'
 import { Turnstile } from './Turnstile'
 
@@ -37,7 +38,7 @@ export function PaginaCadastro() {
   const [erro, setErro] = useState<string | null>(null)
   const [enviadoPara, setEnviadoPara] = useState<string | null>(null)
   const form = useForm({ resolver: zodResolver(esquema), defaultValues: { email: '', senha: '' } })
-  const enviando = form.formState.isSubmitting
+  const { enviando, enviar } = useEnvioDoFormulario(form, 'email')
 
   if (config.data && !config.data.enabled) {
     return (
@@ -77,9 +78,12 @@ export function PaginaCadastro() {
       setEnviadoPara(v.email)
     } catch (e) {
       // O formato é conferido antes do Turnstile: o token não foi gasto.
-      if (marcarCamposDoServidor(e, form, { email: 'email', password: 'senha' })) return
-      setErro(mensagemDe(e))
-      desafio.recomecar()
+      const campo = marcarCamposDoServidor(e, form, { email: 'email', password: 'senha' })
+      if (!campo) {
+        setErro(mensagemDe(e))
+        desafio.recomecar()
+      }
+      return { campo }
     }
   }
 
@@ -101,37 +105,39 @@ export function PaginaCadastro() {
       ) : (
         <>
           <ErroDoFormulario>{erro}</ErroDoFormulario>
-          <form noValidate className="space-y-4" onSubmit={form.handleSubmit(cadastrar)}>
-            <Campo rotulo="E-mail" erro={form.formState.errors.email?.message}>
-              {(a) => (
-                <Entrada
-                  {...a}
-                  type="text"
-                  inputMode="email"
-                  autoCapitalize="none"
-                  spellCheck={false}
-                  autoComplete="email"
-                  {...form.register('email')}
-                />
-              )}
-            </Campo>
-            <CampoDeSenhaNova rotulo="Senha" erro={form.formState.errors.senha?.message} registro={form.register('senha')} />
-            <Turnstile
-              siteKey={config.data.turnstile_site_key}
-              acao="signup"
-              tema={desafio.tema}
-              aoResolver={desafio.aoResolver}
-              reiniciar={desafio.reiniciar}
-            />
-            <Botao
-              type="submit"
-              className="w-full"
-              disabled={!desafio.token || enviando}
-              aria-describedby={!desafio.token && !enviando ? ID_DA_ESPERA : undefined}
-            >
-              {enviando ? 'Criando conta…' : 'Criar conta'}
-            </Botao>
-            <EsperaDaVerificacao visivel={!desafio.token && !enviando} />
+          <form noValidate onSubmit={enviar(cadastrar)}>
+            <fieldset disabled={enviando} className="min-w-0 space-y-4">
+              <Campo rotulo="E-mail" erro={form.formState.errors.email?.message}>
+                {(a) => (
+                  <Entrada
+                    {...a}
+                    type="text"
+                    inputMode="email"
+                    autoCapitalize="none"
+                    spellCheck={false}
+                    autoComplete="email"
+                    {...form.register('email')}
+                  />
+                )}
+              </Campo>
+              <CampoDeSenhaNova rotulo="Senha" erro={form.formState.errors.senha?.message} registro={form.register('senha')} />
+              <Turnstile
+                siteKey={config.data.turnstile_site_key}
+                acao="signup"
+                tema={desafio.tema}
+                aoResolver={desafio.aoResolver}
+                reiniciar={desafio.reiniciar}
+              />
+              <Botao
+                type="submit"
+                className="w-full"
+                disabled={!desafio.token}
+                aria-describedby={!desafio.token && !enviando ? ID_DA_ESPERA : undefined}
+              >
+                {enviando ? 'Criando conta…' : 'Criar conta'}
+              </Botao>
+              <EsperaDaVerificacao visivel={!desafio.token && !enviando} />
+            </fieldset>
           </form>
         </>
       )}

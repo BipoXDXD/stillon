@@ -1,4 +1,4 @@
-import { act, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { http, HttpResponse } from 'msw'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { chaves } from '@/lib/api/consultas'
@@ -8,13 +8,8 @@ import { servidor } from '@/test/setup'
 
 const TEXTO = 'Confirme seu e-mail para criar monitores, canais e páginas.'
 
-// O aviso é a região de status (<output>) com o texto aprovado (proposta da T11, §8).
 function aviso(): HTMLElement | null {
-  return (
-    screen
-      .queryAllByRole('status')
-      .find((el) => el.textContent?.includes(TEXTO)) ?? null
-  )
+  return screen.queryByRole('complementary', { name: 'Confirmação de e-mail' })
 }
 
 function avisoNaTela(): HTMLElement {
@@ -55,32 +50,49 @@ describe('aviso de e-mail não confirmado', () => {
     expect(el).not.toContainElement(document.activeElement as HTMLElement | null)
   })
 
-  // Quatro sabotagens previstas: não chamar a API (nenhum POST), trocar 60 s
-  // por 30 s (o botão volta cedo), não levar o foco ao texto (cai no <body>
-  // quando o botão some) e não devolvê-lo ao botão depois da espera.
-  it('reenviar chama a API, confirma o envio e desabilita o botão por 60 s', async () => {
-    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'], shouldAdvanceTime: true })
-    const { falsa, usuario } = await painelNaoConfirmado()
-    await usuario.click(within(avisoNaTela()).getByRole('button', { name: 'Reenviar e-mail' }))
+  it.each([false, true])('o botão de reenviar some e volta após 60 s (foco movido: %s)', async (moverFoco) => {
+    const { api, falsa } = await painelNaoConfirmado()
+    const faixa = within(avisoNaTela())
+    const acao = faixa.getByRole('button', { name: 'Reenviar e-mail' })
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    const reenviar = vi.spyOn(api, 'reenviarConfirmacao')
+    acao.focus()
+    fireEvent.click(acao)
+    await act(async () => {
+      await reenviar.mock.results[0]?.value
+    })
 
-    await waitFor(() => expect(avisoNaTela()).toHaveTextContent('Link reenviado. Confira sua caixa de entrada.'))
+    const confirmacao = faixa.getByText('Link reenviado. Confira sua caixa de entrada.')
     expect(falsa.chamadas('POST /auth/email/resend')).toBe(1)
     expect(falsa.estado.cadastro.tokens.size).toBe(1)
-    expect(within(avisoNaTela()).queryByRole('button', { name: 'Reenviar e-mail' })).not.toBeInTheDocument()
-    expect(document.body).not.toHaveFocus()
-    expect(avisoNaTela()).toContainElement(document.activeElement as HTMLElement | null)
+    expect(faixa.queryByRole('button')).not.toBeInTheDocument()
+    expect(confirmacao).toHaveFocus()
+    const titulo = screen.getByRole('heading', { name: 'Painel' })
+    if (moverFoco) titulo.focus()
 
     act(() => {
-      vi.advanceTimersByTime(59_000)
+      vi.advanceTimersByTime(59_999)
     })
-    expect(within(avisoNaTela()).queryByRole('button', { name: 'Reenviar e-mail' })).not.toBeInTheDocument()
+    expect(faixa.queryByRole('button')).not.toBeInTheDocument()
     act(() => {
-      vi.advanceTimersByTime(1_000)
+      vi.advanceTimersByTime(1)
     })
-    const botao = within(avisoNaTela()).getByRole('button', { name: 'Reenviar e-mail' })
+    const botao = faixa.getByRole('button', { name: 'Reenviar e-mail' })
     expect(avisoNaTela()).not.toHaveTextContent('Link reenviado.')
-    // O foco estava no texto: volta ao botão, e não ao <body>.
-    expect(botao).toHaveFocus()
+    expect(moverFoco ? titulo : botao).toHaveFocus()
+  })
+
+  it('a região de status fica montada e anuncia só o resultado do reenvio', async () => {
+    const { usuario } = await painelNaoConfirmado()
+    const faixa = within(avisoNaTela())
+    const status = faixa.getByRole('status')
+    const botao = faixa.getByRole('button', { name: 'Reenviar e-mail' })
+    expect(status).toBeEmptyDOMElement()
+    expect(status).not.toContainElement(botao)
+
+    await usuario.click(botao)
+    await waitFor(() => expect(status).toHaveTextContent(/^Link reenviado\. Confira sua caixa de entrada\.$/))
+    expect(faixa.getByRole('status')).toBe(status)
   })
 
   // O texto de rate_limited com o tempo do Retry-After (mensagemDe), e o
@@ -95,12 +107,17 @@ describe('aviso de e-mail não confirmado', () => {
         ),
       ),
     )
-    await usuario.click(within(avisoNaTela()).getByRole('button', { name: 'Reenviar e-mail' }))
+    const faixa = within(avisoNaTela())
+    const status = faixa.getByRole('status')
+    const botao = faixa.getByRole('button', { name: 'Reenviar e-mail' })
+    await usuario.click(botao)
     await waitFor(() =>
-      expect(avisoNaTela()).toHaveTextContent('Muitas tentativas. Aguarde 2 minutos e tente de novo.'),
+      expect(status).toHaveTextContent(/^Muitas tentativas\. Aguarde 2 minutos e tente de novo\.$/),
     )
-    expect(avisoNaTela()).not.toHaveTextContent('Link reenviado.')
-    expect(within(avisoNaTela()).getByRole('button', { name: 'Reenviar e-mail' })).toBeInTheDocument()
+    expect(faixa.getByRole('status')).toBe(status)
+    expect(botao).toHaveAccessibleName('Reenviar e-mail')
+    expect(botao).not.toHaveAttribute('aria-disabled')
+    expect(botao).toHaveFocus()
   })
 
   // Coordenação com a T11: a confirmação invalida o /me, e o painel deixa de

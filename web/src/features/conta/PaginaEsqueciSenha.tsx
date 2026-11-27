@@ -21,6 +21,7 @@ import {
   MolduraPublica,
   TextoDeApoio,
   useDesafio,
+  useEnvioDoFormulario,
 } from './comum'
 import { Turnstile } from './Turnstile'
 
@@ -37,7 +38,7 @@ export function PaginaEsqueciSenha() {
   const [erro, setErro] = useState<string | null>(null)
   const [enviadoPara, setEnviadoPara] = useState<string | null>(null)
   const form = useForm({ resolver: zodResolver(esquema), defaultValues: { email: '' } })
-  const enviando = form.formState.isSubmitting
+  const { enviando, enviar } = useEnvioDoFormulario(form, 'email')
 
   // A redefinição depende do mesmo e-mail e do mesmo Turnstile do cadastro.
   if (config.data && !config.data.enabled) {
@@ -80,9 +81,12 @@ export function PaginaEsqueciSenha() {
       setEnviadoPara(v.email)
     } catch (e) {
       // O formato é conferido antes do Turnstile: o token não foi gasto.
-      if (marcarCamposDoServidor(e, form, { email: 'email' })) return
-      setErro(mensagemDe(e))
-      desafio.recomecar()
+      const campo = marcarCamposDoServidor(e, form, { email: 'email' })
+      if (!campo) {
+        setErro(mensagemDe(e))
+        desafio.recomecar()
+      }
+      return { campo }
     }
   }
 
@@ -105,36 +109,38 @@ export function PaginaEsqueciSenha() {
         <>
           <TextoDeApoio>Informe o e-mail da sua conta. Mandamos um link para escolher uma senha nova.</TextoDeApoio>
           <ErroDoFormulario>{erro}</ErroDoFormulario>
-          <form noValidate className="space-y-4" onSubmit={form.handleSubmit(pedir)}>
-            <Campo rotulo="E-mail" erro={form.formState.errors.email?.message}>
-              {(a) => (
-                <Entrada
-                  {...a}
-                  type="text"
-                  inputMode="email"
-                  autoCapitalize="none"
-                  spellCheck={false}
-                  autoComplete="username"
-                  {...form.register('email')}
-                />
-              )}
-            </Campo>
-            <Turnstile
-              siteKey={config.data.turnstile_site_key}
-              acao="forgot"
-              tema={desafio.tema}
-              aoResolver={desafio.aoResolver}
-              reiniciar={desafio.reiniciar}
-            />
-            <Botao
-              type="submit"
-              className="w-full"
-              disabled={!desafio.token || enviando}
-              aria-describedby={!desafio.token && !enviando ? ID_DA_ESPERA : undefined}
-            >
-              {enviando ? 'Enviando…' : 'Enviar link'}
-            </Botao>
-            <EsperaDaVerificacao visivel={!desafio.token && !enviando} />
+          <form noValidate onSubmit={enviar(pedir)}>
+            <fieldset disabled={enviando} className="min-w-0 space-y-4">
+              <Campo rotulo="E-mail" erro={form.formState.errors.email?.message}>
+                {(a) => (
+                  <Entrada
+                    {...a}
+                    type="text"
+                    inputMode="email"
+                    autoCapitalize="none"
+                    spellCheck={false}
+                    autoComplete="username"
+                    {...form.register('email')}
+                  />
+                )}
+              </Campo>
+              <Turnstile
+                siteKey={config.data.turnstile_site_key}
+                acao="forgot"
+                tema={desafio.tema}
+                aoResolver={desafio.aoResolver}
+                reiniciar={desafio.reiniciar}
+              />
+              <Botao
+                type="submit"
+                className="w-full"
+                disabled={!desafio.token}
+                aria-describedby={!desafio.token && !enviando ? ID_DA_ESPERA : undefined}
+              >
+                {enviando ? 'Enviando…' : 'Enviar link'}
+              </Botao>
+              <EsperaDaVerificacao visivel={!desafio.token && !enviando} />
+            </fieldset>
           </form>
         </>
       )}
