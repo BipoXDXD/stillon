@@ -1,17 +1,18 @@
 import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { http, HttpResponse } from 'msw'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { chaves } from '@/lib/api/consultas'
 import { EMAIL, SITE_KEY_DO_TURNSTILE, TOKEN_DO_TURNSTILE } from '@/test/api-falsa'
 import { renderizarPainel } from '@/test/renderizar'
 import { servidor } from '@/test/setup'
-import type { OpcoesDoTurnstile } from './Turnstile'
+import { esquecerOScriptDoTurnstile, URL_DO_TURNSTILE, type OpcoesDoTurnstile } from './Turnstile'
 
 // As telas públicas do cadastro contra a API falsa, com um window.turnstile
 // de mentira: o teste faz o papel da Cloudflare chamando os callbacks.
 function instalarTurnstile() {
   const widgets: OpcoesDoTurnstile[] = []
   const falso = {
-    render: vi.fn<(alvo: HTMLElement, o: OpcoesDoTurnstile) => string>((_alvo, o) => {
+    render: vi.fn<(alvo: HTMLElement, o: OpcoesDoTurnstile) => string | undefined>((_alvo, o) => {
       widgets.push(o)
       return `w${widgets.length}`
     }),
@@ -51,6 +52,9 @@ beforeEach(() => {
 afterEach(() => {
   servidor.events.removeListener('request:start', anotar)
   delete window.turnstile
+  document.querySelector(`script[src="${URL_DO_TURNSTILE}"]`)?.remove()
+  esquecerOScriptDoTurnstile()
+  vi.unstubAllGlobals()
   vi.restoreAllMocks()
 })
 
@@ -167,6 +171,60 @@ describe('cadastro', () => {
   })
 })
 
+describe('verificação de segurança', () => {
+  it.each(['script sem API', 'render lança', 'render sem id', 'callback de erro'] as const)(
+    'anuncia a falha e troca a orientação ao usuário quando %s',
+    async (falha) => {
+      if (falha === 'script sem API') delete window.turnstile
+      if (falha === 'render lança') turnstile.render.mockImplementationOnce(() => { throw new Error('Falha do provedor') })
+      if (falha === 'render sem id') turnstile.render.mockReturnValueOnce(undefined)
+
+      await renderizarPainel('/forgot-password', { logado: false })
+      const botao = await screen.findByRole('button', { name: 'Enviar link' })
+      if (falha === 'script sem API') {
+        const script = document.querySelector(`script[src="${URL_DO_TURNSTILE}"]`)
+        await act(async () => { fireEvent.load(script!) })
+      }
+      if (falha === 'callback de erro') {
+        await turnstile.resolver()
+        act(() => turnstile.widgets.at(-1)!['error-callback']())
+      }
+
+      const orientacao = 'Não foi possível carregar a verificação. Desative bloqueadores para este site e recarregue a página.'
+      expect((await screen.findByText(orientacao)).closest('[aria-live="assertive"]')).not.toBeNull()
+      expect(botao).toBeDisabled()
+      expect(botao).toHaveAccessibleDescription(orientacao)
+      expect(screen.queryByText('Aguarde a verificação acima.')).not.toBeInTheDocument()
+    },
+  )
+
+  it('muda o tamanho do widget com a largura disponível e invalida o desafio anterior', async () => {
+    let largura = 238
+    let redimensionar: (() => void) | undefined
+    vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockImplementation(() => largura)
+    vi.stubGlobal('ResizeObserver', class {
+      constructor(aoRedimensionar: () => void) { redimensionar = aoRedimensionar }
+      observe() {}
+      disconnect() {}
+    })
+
+    await renderizarPainel('/signup', { logado: false })
+    const botao = await screen.findByRole('button', { name: 'Criar conta' })
+    await turnstile.resolver()
+    expect(turnstile.widgets[0]?.size).toBe('compact')
+    expect(botao).toBeEnabled()
+
+    largura = 310
+    await act(async () => redimensionar?.())
+    expect(turnstile.widgets[1]?.size).toBe('flexible')
+    expect(botao).toBeDisabled()
+    act(() => turnstile.widgets[0]!.callback('token-do-widget-removido'))
+    expect(botao).toBeDisabled()
+    await turnstile.resolver()
+    expect(botao).toBeEnabled()
+  })
+})
+
 describe('confirmação de e-mail', () => {
   // O token vai no fragmento do link: o navegador não o manda ao servidor,
   // e a tela o tira da barra antes de qualquer coisa. Três sabotagens
@@ -261,6 +319,50 @@ describe('redefinição de senha', () => {
     expect(falsa.corpos('POST /auth/password/reset')).toEqual([{ token: 'token-de-reset', new_password: SENHA_NOVA }])
     expect(urls.filter((u) => u.includes('token-de-reset'))).toEqual([])
   })
+
+  it('preserva a confirmação quando redefinir revoga a sessão aberta da própria conta', async () => {
+    const { falsa, sessao, api, cliente, usuario } = await renderizarPainel('/reset-password#token=token-de-reset')
+    cliente.setQueryData(chaves.me, await api.me())
+    servidor.use(http.post('*/api/v1/auth/password/reset', () => {
+      // Mesmo com /me em cache e o token de acesso no prazo, o servidor
+      // recusa a sessão revogada na primeira chamada autenticada.
+      falsa.estado.familiaRevogada = true
+      return new HttpResponse(null, { status: 204 })
+    }))
+    await usuario.type(await screen.findByLabelText('Senha nova'), SENHA_NOVA)
+    await usuario.click(screen.getByRole('button', { name: 'Salvar senha' }))
+
+    const titulo = await screen.findByRole('heading', { name: 'Entrar no StillOn' })
+    expect(titulo).toHaveAccessibleDescription('Senha redefinida. Entre com a senha nova.')
+    expect(sessao.estado()).toBe('anonimo')
+    expect(falsa.chamadas('GET /me')).toBe(2)
+    expect(falsa.chamadas('POST /auth/refresh')).toBe(2)
+  })
+
+  it.each(['outra conta', 'sessão ainda incerta'] as const)(
+    'preserva a confirmação sem encerrar a sessão aberta (%s)',
+    async (caso) => {
+      const { falsa, sessao, usuario } = await renderizarPainel('/reset-password#token=token-de-reset')
+      servidor.use(http.post('*/api/v1/auth/password/reset', () => {
+        if (caso === 'sessão ainda incerta') {
+          falsa.estado.forcar.set('GET /me', { status: 503, code: 'unavailable' })
+        }
+        return new HttpResponse(null, { status: 204 })
+      }))
+      await usuario.type(await screen.findByLabelText('Senha nova'), SENHA_NOVA)
+      await usuario.click(screen.getByRole('button', { name: 'Salvar senha' }))
+
+      const titulo = await screen.findByRole('heading', { name: 'Senha redefinida' })
+      expect(titulo).toHaveFocus()
+      expect(sessao.estado()).toBe('autenticado')
+      expect(screen.queryByRole('button', { name: 'Salvar senha' })).not.toBeInTheDocument()
+      expect(falsa.chamadas('GET /me')).toBe(1)
+      falsa.estado.forcar.delete('GET /me')
+      await usuario.click(screen.getByRole('link', { name: 'Ir para o painel' }))
+      expect(await screen.findByRole('heading', { name: 'Painel' })).toBeInTheDocument()
+      expect(falsa.chamadas('POST /auth/logout')).toBe(0)
+    },
+  )
 
   it('redefinir com token_invalid mostra link inválido com caminho para pedir outro', async () => {
     const { usuario } = await renderizarPainel('/reset-password#token=vencido', { logado: false })

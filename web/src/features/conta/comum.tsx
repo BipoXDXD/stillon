@@ -11,7 +11,7 @@ import { Campo, Entrada, ErroDoFormulario } from '@/components/ui/campo'
 import { errosDosCampos } from '@/lib/api/erros-de-campo'
 import { mensagemDe, mensagemDoCampo } from '@/lib/api/mensagens'
 import { useTema } from '@/lib/tema'
-import { temaDoTurnstile } from './Turnstile'
+import { ID_DA_FALHA_DO_TURNSTILE, temaDoTurnstile, type ResultadoDoTurnstile } from './Turnstile'
 
 // O que as quatro telas públicas do cadastro dividem: a moldura do login, os
 // campos, o "confira seu e-mail" e a leitura do token do fragmento.
@@ -199,17 +199,20 @@ export function marcarCamposDoServidor<T extends FieldValues>(
 // contador que reseta o widget depois de um envio recusado.
 export function useDesafio() {
   const { tema } = useTema()
-  const [token, setToken] = useState<string | null>(null)
+  const [resultado, aoMudar] = useState<ResultadoDoTurnstile>({ fase: 'aguardando' })
   const [reiniciar, setReiniciar] = useState(0)
-  const aoResolver = useCallback((t: string | null) => setToken(t), [])
   const recomecar = useCallback(() => {
-    setToken(null)
+    aoMudar({ fase: 'aguardando' })
     setReiniciar((n) => n + 1)
   }, [])
-  return { token, reiniciar, aoResolver, recomecar, tema: temaDoTurnstile(tema) }
+  const token = resultado.fase === 'resolvido' ? resultado.token : null
+  const aguardando = resultado.fase === 'aguardando'
+  const falhou = resultado.fase === 'falhou'
+  const descritoPor = aguardando ? ID_DA_ESPERA : falhou ? ID_DA_FALHA_DO_TURNSTILE : undefined
+  return { token, aguardando, falhou, descritoPor, reiniciar, aoMudar, recomecar, tema: temaDoTurnstile(tema) }
 }
 
-export const ID_DA_ESPERA = 'espera-da-verificacao'
+const ID_DA_ESPERA = 'espera-da-verificacao'
 
 // Abaixo do botão, só enquanto ele espera o widget.
 export function EsperaDaVerificacao({ visivel }: { visivel: boolean }) {

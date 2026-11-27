@@ -498,6 +498,19 @@ describe('links do cadastro', () => {
     expect(segue(entrar, criar)).toBe(true)
   })
 
+  it('esconde os links quando a revalidação falha com o cadastro ligado no cache', async () => {
+    const { falsa, cliente } = await renderizarPainel('/login', { logado: false })
+    expect(await screen.findByRole('link', { name: 'Esqueci a senha' })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Criar conta' })).toBeInTheDocument()
+
+    falsa.estado.forcar.set('GET /auth/signup-config', { status: 500, code: 'internal_error' })
+    await act(() => cliente.invalidateQueries({ queryKey: chaves.configDoCadastro }))
+    expect(cliente.getQueryState(chaves.configDoCadastro)?.status).toBe('error')
+    expect(cliente.getQueryData(chaves.configDoCadastro)).toMatchObject({ enabled: true })
+    await waitFor(() => expect(screen.queryByRole('link', { name: 'Esqueci a senha' })).not.toBeInTheDocument())
+    expect(screen.queryByRole('link', { name: 'Criar conta' })).not.toBeInTheDocument()
+  })
+
   // Duas sabotagens previstas: ignorar o enabled (o desligado mostra) e
   // trocar "=== true" por "!== false" (a config que falhou mostra).
   it('esconde os links com o cadastro desligado ou com a config falhando', async () => {

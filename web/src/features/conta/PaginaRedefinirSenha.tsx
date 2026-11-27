@@ -3,7 +3,7 @@ import { useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { Link, useNavigate } from 'react-router'
 import { z } from 'zod'
-import { useApi } from '@/app/contexto'
+import { useApi, useSessao } from '@/app/contexto'
 import { Titulo } from '@/components/Titulo'
 import { Botao } from '@/components/ui/botao'
 import { ErroDoFormulario } from '@/components/ui/campo'
@@ -26,8 +26,10 @@ const esquema = z.object({ senha: campoSenhaNova('Informe a senha nova.') })
 export function PaginaRedefinirSenha() {
   const token = useTokenDoFragmento()
   const api = useApi()
+  const { sessao } = useSessao()
   const navegar = useNavigate()
   const [invalido, setInvalido] = useState(token === null)
+  const [concluida, setConcluida] = useState(false)
   const [erro, setErro] = useState<string | null>(null)
   const form = useForm({ resolver: zodResolver(esquema), defaultValues: { senha: '' } })
   const { enviando, enviar } = useEnvioDoFormulario(form, 'senha')
@@ -46,11 +48,21 @@ export function PaginaRedefinirSenha() {
     )
   }
 
+  if (concluida) {
+    return (
+      <MolduraPublica>
+        <Titulo key="concluida" aba="Senha redefinida">Senha redefinida</Titulo>
+        <Botao asChild className="w-full">
+          <Link to="/">Ir para o painel</Link>
+        </Botao>
+      </MolduraPublica>
+    )
+  }
+
   async function salvar(v: z.infer<typeof esquema>, t: string) {
     setErro(null)
     try {
       await api.redefinirSenha({ token: t, new_password: v.senha })
-      navegar('/login', { replace: true, state: { motivo: 'senha-redefinida' } })
     } catch (e) {
       if (e instanceof ApiError && e.code === 'token_invalid') {
         setInvalido(true)
@@ -60,6 +72,18 @@ export function PaginaRedefinirSenha() {
       if (!campo) setErro(mensagemDe(e))
       return { campo }
     }
+
+    if (sessao.estado() === 'verificando') await sessao.iniciar()
+    if (sessao.estado() === 'autenticado') {
+      // /me confere a família no servidor, mesmo com o token ainda válido.
+      // O cliente trata o 401. Se faltar rede, a senha já foi redefinida.
+      await api.me().catch(() => undefined)
+    }
+    if (sessao.estado() === 'anonimo') {
+      navegar('/login', { replace: true, state: { motivo: 'senha-redefinida' } })
+      return
+    }
+    setConcluida(true)
   }
 
   return (
