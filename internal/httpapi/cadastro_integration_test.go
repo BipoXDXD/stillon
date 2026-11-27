@@ -1,6 +1,7 @@
 package httpapi_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -18,6 +19,7 @@ import (
 
 	"github.com/BipoXDXD/stillon/internal/account"
 	"github.com/BipoXDXD/stillon/internal/apierr"
+	"github.com/BipoXDXD/stillon/internal/auth"
 	"github.com/BipoXDXD/stillon/internal/contaemail"
 	"github.com/BipoXDXD/stillon/internal/crypto"
 	"github.com/BipoXDXD/stillon/internal/httpapi"
@@ -138,9 +140,10 @@ func forgot(t *testing.T, a *api, email string) respostaCrua {
 	return pedirPublico(t, a, http.MethodPost, "/api/v1/auth/password/forgot", corpoForgot(email))
 }
 
-func confirmar(t *testing.T, a *api, token string) respostaCrua {
+func confirmar(t *testing.T, a *api, token, senha string) respostaCrua {
 	t.Helper()
-	return pedirPublico(t, a, http.MethodPost, "/api/v1/auth/email/confirm", map[string]string{"token": token})
+	return pedirPublico(t, a, http.MethodPost, "/api/v1/auth/email/confirm",
+		map[string]string{"token": token, "password": senha})
 }
 
 func redefinir(t *testing.T, a *api, token, senha string) respostaCrua {
@@ -222,7 +225,7 @@ func TestSignupFluxoCompleto(t *testing.T) {
 		t.Fatalf("POST /targets antes da confirmação: %d %s, queria 403", status, corpo)
 	}
 
-	if r := confirmar(t, a, token); r.status != http.StatusNoContent {
+	if r := confirmar(t, a, token, testPass); r.status != http.StatusNoContent {
 		t.Fatalf("confirmar: %d %s, queria 204", r.status, r.corpo)
 	}
 	if !emailVerificadoNoMe(t, a, acesso) {
@@ -233,18 +236,115 @@ func TestSignupFluxoCompleto(t *testing.T) {
 	}
 }
 
-// O token usado e o token lixo dão o mesmo 400 token_invalid.
+// O token usado e o token lixo dão o mesmo 400 token_invalid, com a senha
+// certa ou sem senha: o token vem antes da senha.
 func TestConfirmarTokenReusadoOuLixo(t *testing.T) {
 	a := newAPI(t)
 	exigir202SemCorpo(t, "signup", signup(t, a, "fulano@exemplo.com"))
 	token := a.conta.tokenDoUltimo(t)
-	if r := confirmar(t, a, token); r.status != http.StatusNoContent {
+	if r := confirmar(t, a, token, testPass); r.status != http.StatusNoContent {
 		t.Fatalf("primeira confirmação: %d %s", r.status, r.corpo)
 	}
-	exigirErro(t, "token reusado", confirmar(t, a, token), http.StatusBadRequest, apierr.CodeTokenInvalid)
-	exigirErro(t, "token lixo", confirmar(t, a, "x"), http.StatusBadRequest, apierr.CodeTokenInvalid)
-	exigirErro(t, "token comprido demais", confirmar(t, a, strings.Repeat("A", 129)), http.StatusBadRequest, apierr.CodeTokenInvalid)
-	exigirErro(t, "token vazio", confirmar(t, a, ""), http.StatusBadRequest, apierr.CodeTokenInvalid)
+	for _, senha := range []string{testPass, ""} {
+		// Quatro pedidos por rodada; o minuto devolve a rajada (5) do balde por IP.
+		a.clk.Advance(time.Minute)
+		exigirErro(t, "token reusado", confirmar(t, a, token, senha), http.StatusBadRequest, apierr.CodeTokenInvalid)
+		exigirErro(t, "token lixo", confirmar(t, a, "x", senha), http.StatusBadRequest, apierr.CodeTokenInvalid)
+		exigirErro(t, "token comprido demais", confirmar(t, a, strings.Repeat("A", 129), senha), http.StatusBadRequest, apierr.CodeTokenInvalid)
+		exigirErro(t, "token vazio", confirmar(t, a, "", senha), http.StatusBadRequest, apierr.CodeTokenInvalid)
+	}
+}
+
+// O link sozinho não confirma: a senha errada, a vazia e a ausente são 401
+// invalid_credentials, e o link continua valendo para a senha certa.
+func TestConfirmarExigeASenhaDoCadastro(t *testing.T) {
+	a := newAPI(t)
+	const email = "fulano@exemplo.com"
+	exigir202SemCorpo(t, "signup", signup(t, a, email))
+	token := a.conta.tokenDoUltimo(t)
+
+	exigirErro(t, "senha errada", confirmar(t, a, token, "outra-senha-bem-comprida"),
+		http.StatusUnauthorized, apierr.CodeInvalidCredentials)
+	exigirErro(t, "senha vazia", confirmar(t, a, token, ""),
+		http.StatusUnauthorized, apierr.CodeInvalidCredentials)
+	exigirErro(t, "sem o campo da senha",
+		pedirPublico(t, a, http.MethodPost, "/api/v1/auth/email/confirm", map[string]string{"token": token}),
+		http.StatusUnauthorized, apierr.CodeInvalidCredentials)
+	if n := contarConfirmados(t, a, email); n != 0 {
+		t.Fatal("a confirmação sem a senha certa confirmou o e-mail")
+	}
+
+	if r := confirmar(t, a, token, testPass); r.status != http.StatusNoContent {
+		t.Fatalf("senha certa depois das erradas: %d %s, queria 204", r.status, r.corpo)
+	}
+	if n := contarConfirmados(t, a, email); n != 1 {
+		t.Fatal("a senha certa não confirmou o e-mail")
+	}
+}
+
+// confirmarDe é o confirmar() vindo de origem (X-Forwarded-For), numa api
+// atrás de proxy: cada origem tem o seu balde por IP.
+func confirmarDe(t *testing.T, a *api, token, senha, origem string) respostaCrua {
+	t.Helper()
+	resp := enviarDe(t, a, "/api/v1/auth/email/confirm", map[string]string{"token": token, "password": senha}, origem)
+	defer resp.Body.Close()
+	lido, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return respostaCrua{status: resp.StatusCode, cabecalhos: resp.Header.Clone(), corpo: string(lido)}
+}
+
+// Cinco senhas erradas travam a conta no bloqueio do login, e a auditoria da
+// trava leva o HMAC do IP de quem deu a quinta. Travada, até a senha certa é
+// 429 rate_limited, com Retry-After do que falta da trava; vencida a trava, o
+// mesmo link confirma.
+func TestConfirmarContaTravadaDa429(t *testing.T) {
+	a := apiAtrasDeProxy(t)
+	const email = "fulano@exemplo.com"
+	exigir202SemCorpo(t, "signup", signup(t, a, email))
+	token := a.conta.tokenDoUltimo(t)
+
+	var ultima string
+	for i := range auth.LockThreshold {
+		ultima = novaOrigem()
+		exigirErro(t, fmt.Sprintf("senha errada %d", i+1), confirmarDe(t, a, token, "outra-senha-bem-comprida", ultima),
+			http.StatusUnauthorized, apierr.CodeInvalidCredentials)
+	}
+	var ipDaTrava []byte
+	if err := a.pool.QueryRow(context.Background(), `SELECT a.ip_hash FROM audit_log a JOIN users u ON u.id = a.user_id
+		WHERE u.email = $1 AND a.action = 'user.locked'`, email).Scan(&ipDaTrava); err != nil {
+		t.Fatalf("auditoria user.locked: %v", err)
+	}
+	if !bytes.Equal(ipDaTrava, crypto.HashIP(testIPHashKey, ultima)) {
+		t.Errorf("ip_hash da trava = %x, queria o HMAC de %s, a origem da quinta tentativa", ipDaTrava, ultima)
+	}
+
+	a.clk.Advance(6 * time.Second)
+	travada := confirmarDe(t, a, token, testPass, novaOrigem())
+	exigirErro(t, "senha certa com a conta travada", travada, http.StatusTooManyRequests, apierr.CodeRateLimited)
+	if ra := travada.cabecalhos.Get("Retry-After"); ra != "894" {
+		t.Errorf("Retry-After = %q, queria 894 (os 15 min da trava menos os 6 s)", ra)
+	}
+	if n := contarConfirmados(t, a, email); n != 0 {
+		t.Fatal("a conta travada confirmou o e-mail")
+	}
+
+	a.clk.Advance(auth.LockDuration)
+	if r := confirmarDe(t, a, token, testPass, novaOrigem()); r.status != http.StatusNoContent {
+		t.Fatalf("depois da trava: %d %s, queria 204", r.status, r.corpo)
+	}
+}
+
+// contarConfirmados conta as contas com o e-mail dado já confirmado (0 ou 1).
+func contarConfirmados(t *testing.T, a *api, email string) int {
+	t.Helper()
+	var n int
+	if err := a.pool.QueryRow(context.Background(),
+		`SELECT count(*) FROM users WHERE email = $1 AND email_verified_at IS NOT NULL`, email).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	return n
 }
 
 // Turnstile recusado: 400 turnstile_failed, e nada acontece.

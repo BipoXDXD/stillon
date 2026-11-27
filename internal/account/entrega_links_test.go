@@ -57,13 +57,13 @@ func iniciarFluxoDeLink(t *testing.T, a ambienteCadastro, finalidade string, mai
 	ctx := t.Context()
 	if finalidade == "confirmacao" {
 		cad := account.NewCadastro(a.pool, a.clk, mailer, linksDeTeste)
-		cad.SetHash(hashBarato)
+		cad.SetHash(hashArgon2Barato)
 		if err := cad.Cadastrar(ctx, destinoDeLink, senha); err != nil {
 			t.Fatal(err)
 		}
 		id := idDoEmail(t, destinoDeLink)
 		return func() error { return cad.ReenviarConfirmacao(ctx, id) },
-			func(token string) error { return cad.ConfirmarEmail(ctx, token) }
+			func(token string) error { return cad.ConfirmarEmail(ctx, token, senha, nil) }
 	}
 	inserirComoNoSignup(t, a.pool, destinoDeLink)
 	r := account.NewRecuperacao(a.pool, a.clk, mailer, linksDeTeste)
@@ -171,7 +171,7 @@ func TestConsumoConferePrazoDepoisDaTrava(t *testing.T) {
 			switch finalidade {
 			case "confirmacao":
 				token = cadastrarEPegarToken(t, a, destino)
-				consumir = func(token string) error { return a.cad.ConfirmarEmail(ctx, token) }
+				consumir = func(token string) error { return a.cad.ConfirmarEmail(ctx, token, senha, nil) }
 				validade = 24 * time.Hour
 			case "redefinicao":
 				inserirComoNoSignup(t, a.pool, destino)
