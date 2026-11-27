@@ -50,12 +50,18 @@ func novoTokenDeConta() (token string, hash []byte, err error) {
 	return token, crypto.HashToken(token), nil
 }
 
-// gravarTokenDeConta roda sob o escopo e a trava do usuário. A sequência
-// do banco ordena as emissões do mesmo dono mesmo com relógios diferentes.
+// gravarTokenDeConta roda sob o escopo e a trava de um usuário existente.
+// Aproveita a emissão para retirar os links vencidos do mesmo dono.
 func gravarTokenDeConta(ctx context.Context, q *db.Queries, userID uuid.UUID, hash []byte, proposito string, now time.Time, validade time.Duration) error {
 	if err := q.DeleteExpiredAccountTokens(ctx, db.DeleteExpiredAccountTokensParams{UserID: userID, Now: now}); err != nil {
 		return fmt.Errorf("apagar links de conta vencidos: %w", err)
 	}
+	return inserirTokenDeConta(ctx, q, userID, hash, proposito, now, validade)
+}
+
+// inserirTokenDeConta deixa o banco ordenar as emissões com a sequência.
+// O chamador tem a trava do usuário ou está criando a conta na transação.
+func inserirTokenDeConta(ctx context.Context, q *db.Queries, userID uuid.UUID, hash []byte, proposito string, now time.Time, validade time.Duration) error {
 	if err := q.InsertAccountToken(ctx, db.InsertAccountTokenParams{
 		TokenHash: hash, UserID: userID, Purpose: proposito, CreatedAt: now, ExpiresAt: now.Add(validade),
 	}); err != nil {
