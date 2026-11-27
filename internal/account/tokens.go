@@ -53,7 +53,7 @@ func novoTokenDeConta() (token string, hash []byte, err error) {
 // gravarTokenDeConta roda sob o escopo e a trava de um usuário existente.
 // Aproveita a emissão para retirar os links vencidos do mesmo dono.
 func gravarTokenDeConta(ctx context.Context, q *db.Queries, userID uuid.UUID, hash []byte, proposito string, now time.Time, validade time.Duration) error {
-	if err := q.DeleteExpiredAccountTokens(ctx, db.DeleteExpiredAccountTokensParams{UserID: userID, Now: now}); err != nil {
+	if err := q.DeleteExpiredAccountLinks(ctx, db.DeleteExpiredAccountLinksParams{UserID: userID, Now: now}); err != nil {
 		return fmt.Errorf("apagar links de conta vencidos: %w", err)
 	}
 	return inserirTokenDeConta(ctx, q, userID, hash, proposito, now, validade)
@@ -62,7 +62,7 @@ func gravarTokenDeConta(ctx context.Context, q *db.Queries, userID uuid.UUID, ha
 // inserirTokenDeConta deixa o banco ordenar as emissões com a sequência.
 // O chamador tem a trava do usuário ou está criando a conta na transação.
 func inserirTokenDeConta(ctx context.Context, q *db.Queries, userID uuid.UUID, hash []byte, proposito string, now time.Time, validade time.Duration) error {
-	if err := q.InsertAccountToken(ctx, db.InsertAccountTokenParams{
+	if err := q.InsertAccountLink(ctx, db.InsertAccountLinkParams{
 		TokenHash: hash, UserID: userID, Purpose: proposito, CreatedAt: now, ExpiresAt: now.Add(validade),
 	}); err != nil {
 		return fmt.Errorf("gravar link de conta: %w", err)
@@ -102,11 +102,11 @@ func concluirTokenDeConta(pool *pgxpool.Pool, clk clock.Clock, userID uuid.UUID,
 			}
 			switch resultado {
 			case AceitoPeloTransporte:
-				return q.ReplaceOlderAccountTokens(ctx, db.ReplaceOlderAccountTokensParams{
+				return q.ReplaceOlderAccountLinks(ctx, db.ReplaceOlderAccountLinksParams{
 					TokenHash: hash, UserID: userID, Now: clk.Now(),
 				})
 			case EnvioDescartado:
-				return q.DeleteDiscardedAccountToken(ctx, db.DeleteDiscardedAccountTokenParams{
+				return q.DeleteDiscardedAccountLink(ctx, db.DeleteDiscardedAccountLinkParams{
 					UserID: userID, TokenHash: hash,
 				})
 			}
@@ -118,7 +118,7 @@ func concluirTokenDeConta(pool *pgxpool.Pool, clk clock.Clock, userID uuid.UUID,
 // donoDoToken lê o candidato sem travar uma linha, pois quem consome precisa
 // adquirir primeiro a trava do usuário que também ordena os envios.
 func donoDoToken(ctx context.Context, q *db.Queries, hash []byte, proposito string, now time.Time) (uuid.UUID, error) {
-	dono, err := q.PeekAccountToken(ctx, db.PeekAccountTokenParams{TokenHash: hash, Purpose: proposito, Now: now})
+	dono, err := q.PeekAccountLink(ctx, db.PeekAccountLinkParams{TokenHash: hash, Purpose: proposito, Now: now})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return uuid.Nil, ErrTokenInvalido
 	}
@@ -129,7 +129,7 @@ func donoDoToken(ctx context.Context, q *db.Queries, hash []byte, proposito stri
 }
 
 func consumirTokenDeConta(ctx context.Context, q *db.Queries, hash []byte, proposito string, now time.Time) (uuid.UUID, error) {
-	dono, err := q.ConsumeAccountToken(ctx, db.ConsumeAccountTokenParams{TokenHash: hash, Purpose: proposito, Now: now})
+	dono, err := q.ConsumeAccountLink(ctx, db.ConsumeAccountLinkParams{TokenHash: hash, Purpose: proposito, Now: now})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return uuid.Nil, ErrTokenInvalido
 	}

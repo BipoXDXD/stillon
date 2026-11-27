@@ -1,9 +1,10 @@
+//go:build rede
+
 package turnstile_test
 
 import (
 	"context"
 	"errors"
-	"os"
 	"testing"
 
 	"github.com/BipoXDXD/stillon/internal/crypto"
@@ -12,13 +13,12 @@ import (
 )
 
 // TestSiteverifyDeVerdade fala com o siteverify da Cloudflare usando as
-// chaves de teste públicas. Pede rede, então só roda com TURNSTILE_REDE=1:
-// confere que o servidor falso do turnstiletest imita o de verdade.
+// chaves de teste públicas e confere que o servidor falso do turnstiletest
+// imita o de verdade. Pede rede, então fica fora do `make test` e do CI pela
+// build tag:
+//
+//	go test -tags rede -run TestSiteverifyDeVerdade -v ./internal/turnstile
 func TestSiteverifyDeVerdade(t *testing.T) {
-	if os.Getenv("TURNSTILE_REDE") != "1" {
-		t.Skip("defina TURNSTILE_REDE=1 para falar com o siteverify de verdade")
-	}
-
 	passa := turnstile.New(crypto.Secret(turnstiletest.SecretPassa), "")
 	if err := passa.Verificar(context.Background(), turnstiletest.TokenFalso, "", "signup"); err != nil {
 		t.Fatalf("secret que passa: Verificar = %v, queria nil", err)

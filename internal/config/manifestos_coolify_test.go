@@ -48,6 +48,7 @@ const (
 	motivoNome       = "no ar o recurso do Coolify preserva o nome original do contêiner, que o runbook e a operação citam"
 	motivoRotulo     = "só o Coolify tem Traefik: o rótulo o desliga, e quem recebe o tráfego é a borda própria"
 	rotulosNoAr      = `["traefik.enable=false"]`
+	motivoCadastro   = "o cadastro público fica desligado no ar até o PR 6: o app.json só repassa estas variáveis depois de cadastradas no recurso do Coolify (Passo 7)"
 )
 
 var diferencasAceitas = map[string][]diferencaAceita{
@@ -66,6 +67,9 @@ var diferencasAceitas = map[string][]diferencaAceita{
 		},
 		{campo: "container_name", provado: campoAusente, noAr: "stillon-app-1", motivo: motivoNome},
 		{campo: "labels", provado: campoAusente, noAr: rotulosNoAr, motivo: motivoRotulo},
+		{campo: "environment.ACCOUNT_EMAIL_FROM", provado: "${ACCOUNT_EMAIL_FROM:-}", noAr: campoAusente, motivo: motivoCadastro},
+		{campo: "environment.TURNSTILE_SITE_KEY", provado: "${TURNSTILE_SITE_KEY:-}", noAr: campoAusente, motivo: motivoCadastro},
+		{campo: "environment.TURNSTILE_SECRET_KEY", provado: "${TURNSTILE_SECRET_KEY:-}", noAr: campoAusente, motivo: motivoCadastro},
 	},
 	"caddy": {
 		{campo: "pull_policy", provado: campoAusente, noAr: "never", motivo: motivoPullPolicy},

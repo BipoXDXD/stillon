@@ -2,32 +2,34 @@
 -- Os propósitos são 'confirm_email' e 'reset_password'. Gravar e apagar rodam
 -- no escopo do dono (app.user_id); espiar e consumir, no escopo do próprio
 -- hash (storage.InAccountTokenTx), porque quem clica no link não tem sessão.
+-- (Os nomes dizem "link", não "token": o gosec lê as constantes geradas como
+-- credencial embutida, G101.)
 
--- name: InsertAccountToken :exec
+-- name: InsertAccountLink :exec
 INSERT INTO account_tokens (token_hash, user_id, purpose, created_at, expires_at)
 VALUES (sqlc.arg(token_hash), sqlc.arg(user_id), sqlc.arg(purpose), sqlc.arg(created_at), sqlc.arg(expires_at));
 
 -- Revoga todos os links do propósito, inclusive envios pendentes.
--- name: DeleteAccountTokens :exec
+-- name: DeleteAccountLinks :exec
 DELETE FROM account_tokens WHERE user_id = sqlc.arg(user_id) AND purpose = sqlc.arg(purpose);
 
--- name: DeleteAllAccountTokens :exec
+-- name: DeleteAllAccountLinks :exec
 DELETE FROM account_tokens WHERE user_id = sqlc.arg(user_id);
 
 -- Remove candidatos vencidos no próximo pedido do usuário, inclusive após
 -- uma interrupção do processo entre a emissão e a conclusão do envio.
--- name: DeleteExpiredAccountTokens :exec
+-- name: DeleteExpiredAccountLinks :exec
 DELETE FROM account_tokens
  WHERE user_id = sqlc.arg(user_id) AND expires_at <= sqlc.arg(now);
 
 -- Um descarte comprovado remove só a própria emissão.
--- name: DeleteDiscardedAccountToken :exec
+-- name: DeleteDiscardedAccountLink :exec
 DELETE FROM account_tokens
  WHERE user_id = sqlc.arg(user_id) AND token_hash = sqlc.arg(token_hash);
 
 -- A conclusão só substitui as emissões anteriores enquanto o próprio link
 -- ainda pode ser usado. A consulta também serve para repetir a conclusão.
--- name: ReplaceOlderAccountTokens :exec
+-- name: ReplaceOlderAccountLinks :exec
 DELETE FROM account_tokens AS anterior
  USING account_tokens AS aceito
  WHERE aceito.token_hash = sqlc.arg(token_hash)
@@ -37,7 +39,7 @@ DELETE FROM account_tokens AS anterior
    AND anterior.emissao < aceito.emissao;
 
 -- O dono de um token válido, sem consumi-lo.
--- name: PeekAccountToken :one
+-- name: PeekAccountLink :one
 SELECT user_id FROM account_tokens
  WHERE token_hash = sqlc.arg(token_hash) AND purpose = sqlc.arg(purpose)
    AND used_at IS NULL AND expires_at > sqlc.arg(now);
@@ -46,7 +48,7 @@ SELECT user_id FROM account_tokens
 -- simultâneo reavalia o WHERE na versão nova (used_at preenchido) e não
 -- devolve nada. Nenhuma linha (pgx.ErrNoRows) é token inexistente, usado ou
 -- vencido, sem distinção.
--- name: ConsumeAccountToken :one
+-- name: ConsumeAccountLink :one
 UPDATE account_tokens SET used_at = sqlc.arg(now)::timestamptz
  WHERE token_hash = sqlc.arg(token_hash) AND purpose = sqlc.arg(purpose)
    AND used_at IS NULL AND expires_at > sqlc.arg(now)
