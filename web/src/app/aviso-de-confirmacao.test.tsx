@@ -2,7 +2,7 @@ import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { http, HttpResponse } from 'msw'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { chaves } from '@/lib/api/consultas'
-import { EMAIL } from '@/test/api-falsa'
+import { EMAIL, SENHA } from '@/test/api-falsa'
 import { renderizarPainel } from '@/test/renderizar'
 import { servidor } from '@/test/setup'
 
@@ -129,9 +129,11 @@ describe('aviso de e-mail não confirmado', () => {
   // mostrar o aviso (o /me tem staleTime Infinity). Sabotagem prevista: tirar
   // o invalidateQueries de PaginaConfirmarEmail.
   it('depois de confirmar o e-mail, o painel não mostra mais o aviso', async () => {
-    const { falsa, router } = await painelNaoConfirmado()
+    const { falsa, router, usuario } = await painelNaoConfirmado()
     falsa.estado.cadastro.tokens.set('token-da-caixa', 'confirm_email')
     await act(() => router.navigate('/confirm-email#token=token-da-caixa'))
+    await usuario.type(await screen.findByLabelText('Senha'), SENHA)
+    await usuario.click(screen.getByRole('button', { name: 'Confirmar e-mail' }))
     await screen.findByRole('heading', { name: 'E-mail confirmado' })
     await act(() => router.navigate('/'))
     await screen.findByRole('heading', { name: 'Painel' })

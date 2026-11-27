@@ -233,7 +233,7 @@ test('a barreira da CSP falha com o coletor quebrado', async ({ context }) => {
 // sob a CSP de produção (script-src).
 const ROTAS_PUBLICAS: [string, string][] = [
   ['/signup', 'Criar conta no StillOn'],
-  ['/confirm-email#token=token-da-caixa', 'E-mail confirmado'],
+  ['/confirm-email#token=token-da-caixa', 'Confirme seu e-mail'],
   ['/forgot-password', 'Redefinir a senha'],
   ['/reset-password#token=token-de-reset', 'Escolha uma senha nova'],
 ]
