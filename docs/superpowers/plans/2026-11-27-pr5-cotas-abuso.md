@@ -42,6 +42,8 @@
 
 ## Decisões que dependem do dono
 
+**Decidido pelo dono em 2026-11-27:** D1 = (a), sem retroatividade; D2 = (a), migration sobe para 300 s (a Task 8 entra).
+
 **D1. Contas que já passam das cotas novas** (o operador é isento; o risco são as contas criadas pelo cadastro público desde o PR 3).
 - (a) **Sem retroatividade:** nada é apagado nem pausado; a conta acima do teto só não cria recurso novo até ficar abaixo. `user usage` marca "acima da cota". Prós: zero risco de perder monitor (anti-meta da spec), código nenhum a mais. Contras: quem criou 100 alvos antes do PR fica com 100.
 - (b) **Pausar o excedente** numa migration (os mais novos primeiro). Prós: teto real para todos já no release. Contras: muda o estado sem aviso; mistura pausa do sistema com pausa do usuário, e a spec quer as pausas do usuário preservadas; precisa de coluna nova para distinguir.
