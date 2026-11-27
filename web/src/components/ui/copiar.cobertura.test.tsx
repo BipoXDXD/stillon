@@ -2,13 +2,14 @@ import { screen, within } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 import { pagina } from '@/test/fixtures'
 import { renderizarPainel } from '@/test/renderizar'
+import { PROJETO_PADRAO } from '@/test/api-falsa'
 
 const FALHA = 'Não foi possível copiar. Selecione o link e copie à mão.'
 
 async function montarLinkPublico() {
   const r = await renderizarPainel('/status-pages')
   r.falsa.estado.paginas = [pagina()]
-  await r.cliente.refetchQueries({ queryKey: ['status-pages'] })
+  await r.cliente.refetchQueries({ queryKey: ['projeto', PROJETO_PADRAO, 'status-pages'] })
   const botao = await screen.findByRole('button', { name: 'Copiar' })
   return { ...r, botao }
 }

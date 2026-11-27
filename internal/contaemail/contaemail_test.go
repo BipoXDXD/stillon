@@ -8,10 +8,12 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/BipoXDXD/stillon/internal/contaemail"
 	"github.com/BipoXDXD/stillon/internal/crypto"
+	"github.com/BipoXDXD/stillon/internal/notify"
 )
 
 var chaveDeTeste = bytes.Repeat([]byte{7}, crypto.KeySize)
@@ -264,28 +266,34 @@ func TestFilaCheiaNaoBloqueia(t *testing.T) {
 }
 
 func TestRodarDrenaAoEncerrar(t *testing.T) {
-	c := novoCenario(true, true)
-	for range 3 {
-		enfileirar(t, c.enviador, "pessoa@exemplo.com")
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel() // encerrado antes de o consumidor ver qualquer item
+	synctest.Test(t, func(t *testing.T) {
+		c := novoCenario(true, true)
+		for range 3 {
+			enfileirar(t, c.enviador, "pessoa@exemplo.com")
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel() // encerrado antes de o consumidor ver qualquer item
 
-	c.enviador.Rodar(ctx)
+		inicio := time.Now()
+		c.enviador.Rodar(ctx)
 
-	if n := c.transporte.total(); n != 3 {
-		t.Errorf("o transporte recebeu %d e-mails antes de Rodar voltar, queria 3", n)
-	}
+		if n := c.transporte.total(); n != 3 {
+			t.Errorf("o transporte recebeu %d e-mails antes de Rodar voltar, queria 3", n)
+		}
+		if d := time.Since(inicio); d != 0 {
+			t.Errorf("o dreno imediato avançou %v no relógio virtual", d)
+		}
+	})
 }
 
 func TestVerificacaoComTetoPassaPeloTeto(t *testing.T) {
-	t.Run("teto esgotado suprime sem erro", func(t *testing.T) {
+	t.Run("teto esgotado sinaliza supressão", func(t *testing.T) {
 		c := novoCenario(true, false)
 		m := novoTransporte()
 		v := contaemail.NovaVerificacaoComTeto(c.enviador, m)
 
-		if err := v.SendVerification(context.Background(), crypto.Secret("p@x.com"), "https://v.dev/l"); err != nil {
-			t.Errorf("SendVerification = %v, queria nil", err)
+		if err := v.SendVerification(context.Background(), crypto.Secret("p@x.com"), "https://v.dev/l"); !errors.Is(err, notify.ErrVerificationSuppressed) {
+			t.Errorf("SendVerification com teto esgotado = %v, queria ErrVerificationSuppressed", err)
 		}
 		if n := m.total(); n != 0 {
 			t.Errorf("o mailer recebeu %d envios com o teto esgotado, queria 0", n)
@@ -296,8 +304,8 @@ func TestVerificacaoComTetoPassaPeloTeto(t *testing.T) {
 		m := novoTransporte()
 		v := contaemail.NovaVerificacaoComTeto(c.enviador, m)
 
-		if err := v.SendVerification(context.Background(), crypto.Secret("p@x.com"), "https://v.dev/l"); err != nil {
-			t.Errorf("SendVerification = %v, queria nil", err)
+		if err := v.SendVerification(context.Background(), crypto.Secret("p@x.com"), "https://v.dev/l"); !errors.Is(err, notify.ErrVerificationSuppressed) {
+			t.Errorf("SendVerification sem ficha no balde = %v, queria ErrVerificationSuppressed", err)
 		}
 		if m.total() != 0 || c.teto.total() != 0 {
 			t.Errorf("mailer = %d, Reservar = %d; queria 0 e 0", m.total(), c.teto.total())
@@ -356,33 +364,32 @@ func (t *transporteParado) SendAccount(ctx context.Context, _ crypto.Secret, _, 
 // O encerramento inteiro (envio em curso mais dreno) cabe no orçamento do
 // dreno, contado do cancelamento: um envio parado não ganha os 15 s dele.
 func TestEncerramentoCabeNoPrazoDoDreno(t *testing.T) {
-	transporte := &transporteParado{comecou: make(chan struct{}, 4)}
-	e := contaemail.New(transporte, &tetoFalso{libera: true}, &orcamentosFalsos{libera: true},
-		chaveDeTeste, slog.New(slog.NewTextHandler(&logTravado{}, nil)))
-	const orcamento = 200 * time.Millisecond
-	contaemail.EncurtarPrazoDreno(e, orcamento)
-	ctx, cancel := context.WithCancel(context.Background())
-	feito := make(chan struct{})
-	go func() { e.Rodar(ctx); close(feito) }()
+	synctest.Test(t, func(t *testing.T) {
+		transporte := &transporteParado{comecou: make(chan struct{}, 4)}
+		log := &logTravado{}
+		e := contaemail.New(transporte, &tetoFalso{libera: true}, &orcamentosFalsos{libera: true},
+			chaveDeTeste, slog.New(slog.NewTextHandler(log, nil)))
+		const orcamento = 10 * time.Second
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		feito := make(chan struct{})
+		go func() { e.Rodar(ctx); close(feito) }()
 
-	enfileirar(t, e, "pessoa@exemplo.com")
-	enfileirar(t, e, "outra@exemplo.com") // fica para o dreno
-	select {
-	case <-transporte.comecou:
-	case <-time.After(5 * time.Second):
-		t.Fatal("o envio não começou")
-	}
-	inicio := time.Now()
-	cancel()
+		enfileirar(t, e, "pessoa@exemplo.com")
+		enfileirar(t, e, "outra@exemplo.com") // fica para o dreno
+		<-transporte.comecou
+		inicio := time.Now()
+		cancel()
+		<-feito
 
-	select {
-	case <-feito:
-		if d := time.Since(inicio); d > orcamento+time.Second {
-			t.Errorf("Rodar levou %v depois do cancel, queria até %v", d, orcamento)
+		if d := time.Since(inicio); d != orcamento {
+			t.Errorf("Rodar levou %v no relógio virtual depois do cancel, queria %v", d, orcamento)
 		}
-	case <-time.After(3 * time.Second):
-		t.Fatalf("Rodar não voltou em 3 s com orçamento de %v: o envio em curso estourou o dreno", orcamento)
-	}
+		if registro := log.String(); !strings.Contains(registro, "e-mails de conta descartados no encerramento") ||
+			!strings.Contains(registro, "quantidade=1") {
+			t.Errorf("faltou registrar o descarte de um e-mail: %s", registro)
+		}
+	})
 }
 
 func TestVerificacaoComBaldeOuTetoComErroDevolveOErro(t *testing.T) {

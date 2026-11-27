@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { mensagemDe } from './mensagens'
 import { ApiError } from './http'
-import { Agendamento, EstadoDoHeartbeat, EventoDeHeartbeat, ListaDeHeartbeats } from './schemas'
-import { heartbeat } from '@/test/fixtures'
+import { Agendamento, EstadoDoHeartbeat, EventoDeHeartbeat, ListaDeHeartbeats, Projeto } from './schemas'
+import { heartbeat, projeto } from '@/test/fixtures'
 
 // O painel tolera o que uma versão posterior do servidor devolve (SP1, piso de
 // rollback), sem afrouxar a forma do que já conhece.
@@ -98,6 +98,27 @@ describe('EstadoDoHeartbeat', () => {
 
   it('estado que não é texto continua falhando', () => {
     expect(EstadoDoHeartbeat.safeParse(null).success).toBe(false)
+  })
+})
+
+describe('Projeto.role', () => {
+  it.each(['owner', 'manager', 'member', 'viewer'])('%s fica como veio', (role) => {
+    expect(Projeto.parse(projeto({ role })).role).toBe(role)
+  })
+
+  // Sabotagem: Papel só com o z.enum → o parse falha.
+  it('papel de uma versão posterior vira desconhecido', () => {
+    expect(Projeto.parse(projeto({ role: 'auditor' })).role).toBe('desconhecido')
+  })
+
+  it('papel que não é texto continua falhando', () => {
+    expect(Projeto.safeParse(projeto({ role: 3 as unknown as string })).success).toBe(false)
+  })
+
+  it('projeto sem id continua falhando', () => {
+    const semId: Record<string, unknown> = { ...projeto() }
+    delete semId.id
+    expect(Projeto.safeParse(semId).success).toBe(false)
   })
 })
 

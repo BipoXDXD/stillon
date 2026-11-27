@@ -2520,13 +2520,21 @@ volta se o celular sumir; sem eles e sem o app, só o `reset-2fa` pelo CLI (bloc
 **Por quê:** confere ponta a ponta o Resend (domínio verificado, chave, remetente) e os links, que
 usam a `PUBLIC_BASE_URL` de produção.
 
-**Deve aparecer:** `Enviamos o link de verificação.` e, em até alguns minutos, um e-mail do
-remetente `StillOn <alertas@avisos.seu-domínio>` com um link para `https://seu-domínio/…`.
-Clique nele.
+**Deve aparecer:** `Canal cadastrado. Se receber o e-mail, abra o link para verificar.`
+Confira se chegou um e-mail do remetente configurado com um link para
+`https://seu-domínio/…`. Se chegar, abra o link e clique em **Confirmar**.
 
-**Confira:** o canal aparece como verificado. Se o e-mail não chegar: a caixa de spam; depois
-`vc logs app | grep -i resend | tail` (um `403` é domínio não verificado ou `EMAIL_FROM` com
-outro domínio).
+**Confira:** o canal aparece como verificado. Se o e-mail não chegar, confira a caixa de spam e
+procure por `resend` ou `e-mail de conta suprimido` nos logs do app. O comando abaixo roda na VPS
+desta instalação.
+
+```bash
+vc logs app | grep -Ei 'resend|e-mail de conta suprimido' | tail
+```
+
+No registro `e-mail de conta suprimido`, o motivo `destino` indica o limite por destinatário e
+`teto` indica o limite diário. Se o Resend retornar `403`, confira se o domínio do remetente
+configurado está verificado e autorizado para envio.
 
 (Opcional: um canal do Discord pelo mesmo caminho; ele manda uma mensagem de teste na hora.)
 

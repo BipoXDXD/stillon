@@ -4,7 +4,7 @@ import type { Page } from '@playwright/test'
 import type { z } from 'zod'
 import type { Check, Hora, HoraDoSpark, Serie } from '../src/lib/api/schemas'
 import { alvo, eventoDeHeartbeat, heartbeat, incidente, incidenteDeHeartbeat, itemDoResumo, pagina } from '../src/test/fixtures'
-import { imitarApi } from './api-imitada'
+import { imitarApi, NO_PROJETO as P } from './api-imitada'
 import { expect, test } from './fixtures'
 
 // As capturas "depois" do redesign (PR 8), no formato das de
@@ -240,14 +240,14 @@ function incidenteDaQueda() {
   })
 }
 
-const emIncidentes = (u: URL) => u.pathname === '/api/v1/incidents'
+const emIncidentes = (u: URL) => u.pathname === `/api/v1${P}/incidents`
 
 async function prepararPainel(page: Page) {
-  await page.route('**/api/v1/targets/summary', (r) => r.fulfill({ status: 200, json: resumoDoPainel() }))
+  await page.route('**/api/v1/projects/*/targets/summary', (r) => r.fulfill({ status: 200, json: resumoDoPainel() }))
   await page.route(emIncidentes, (r) => r.fulfill({ status: 200, json: { items: [incidenteDoBanco()] } }))
 }
 
-const emSumario = (u: URL) => u.pathname === '/api/v1/targets/summary' && u.search !== ''
+const emSumario = (u: URL) => u.pathname === `/api/v1${P}/targets/summary` && u.search !== ''
 
 async function prepararPainelFiltrado(page: Page) {
   await prepararPainel(page)
@@ -257,9 +257,9 @@ async function prepararPainelFiltrado(page: Page) {
 
 async function prepararDetalheDoHeartbeat(page: Page) {
   const backup = heartbeatsDoPainel()[0]
-  await page.route('**/api/v1/heartbeats/h1', (r) => r.fulfill({ status: 200, json: backup }))
-  await page.route('**/api/v1/heartbeats/h1/events*', (r) => r.fulfill({ status: 200, json: { items: eventosDoBackup() } }))
-  await page.route('**/api/v1/heartbeats/h1/incidents*', (r) =>
+  await page.route('**/api/v1/projects/*/heartbeats/h1', (r) => r.fulfill({ status: 200, json: backup }))
+  await page.route('**/api/v1/projects/*/heartbeats/h1/events*', (r) => r.fulfill({ status: 200, json: { items: eventosDoBackup() } }))
+  await page.route('**/api/v1/projects/*/heartbeats/h1/incidents*', (r) =>
     r.fulfill({
       status: 200,
       json: {
@@ -271,10 +271,10 @@ async function prepararDetalheDoHeartbeat(page: Page) {
 
 async function prepararDetalhe(page: Page) {
   await prepararPainel(page)
-  await page.route('**/api/v1/targets/a1', (r) =>
+  await page.route('**/api/v1/projects/*/targets/a1', (r) =>
     r.fulfill({ status: 200, json: alvo({ id: 'a1', interval_sec: INTERVALO_DA_API_S, header_names: ['Authorization'] }) }),
   )
-  await page.route('**/api/v1/targets/a1/checks**', (r) =>
+  await page.route('**/api/v1/projects/*/targets/a1/checks**', (r) =>
     r.fulfill({ status: 200, json: serieDaApi(new URL(r.request().url()).searchParams.get('window')) }),
   )
   // Registrada depois da do painel, esta vence no filtro por alvo.
@@ -296,7 +296,7 @@ const paginaDeExemplo = pagina({
 const TELAS: Tela[] = [
   {
     nome: 'painel',
-    rota: '/',
+    rota: `${P}/`,
     preparar: prepararPainel,
     conferir: async (page) => {
       await expect(page.getByRole('img', { name: /Últimas 24 h: .*hora degradada.*hora fora do ar/ }).first()).toBeVisible()
@@ -306,7 +306,7 @@ const TELAS: Tela[] = [
   },
   {
     nome: 'painel-filtrado',
-    rota: '/?tag=dados',
+    rota: `${P}/?tag=dados`,
     preparar: prepararPainelFiltrado,
     conferir: async (page) => {
       await expect(page.getByRole('link', { name: 'Backup noturno', exact: true })).toBeVisible()
@@ -316,7 +316,7 @@ const TELAS: Tela[] = [
   },
   {
     nome: 'detalhe-heartbeat',
-    rota: '/heartbeats/h1',
+    rota: `${P}/heartbeats/h1`,
     preparar: prepararDetalheDoHeartbeat,
     conferir: async (page) => {
       await expect(page.getByText('código de saída 3')).toBeVisible()
@@ -325,10 +325,10 @@ const TELAS: Tela[] = [
   },
   {
     nome: 'painel-vazio',
-    rota: '/',
+    rota: `${P}/`,
     preparar: async (page) => {
-      await page.route('**/api/v1/targets/summary', (r) => r.fulfill({ status: 200, json: { items: [] } }))
-      await page.route('**/api/v1/heartbeats?*', (r) => r.fulfill({ status: 200, json: { items: [] } }))
+      await page.route('**/api/v1/projects/*/targets/summary', (r) => r.fulfill({ status: 200, json: { items: [] } }))
+      await page.route('**/api/v1/projects/*/heartbeats?*', (r) => r.fulfill({ status: 200, json: { items: [] } }))
       await page.route(emIncidentes, (r) => r.fulfill({ status: 200, json: { items: [] } }))
     },
     conferir: async (page) => {
@@ -337,14 +337,14 @@ const TELAS: Tela[] = [
   },
   {
     nome: 'painel-erro',
-    rota: '/',
-    preparar: (page) => page.route('**/api/v1/targets/summary', (r) => r.fulfill({ status: 500, json: erroDaApi })),
+    rota: `${P}/`,
+    preparar: (page) => page.route('**/api/v1/projects/*/targets/summary', (r) => r.fulfill({ status: 500, json: erroDaApi })),
   },
   {
     // Janela de 7 dias: até 48 h o servidor responde em checks, e só a série
     // por hora tem a mediana e a faixa p50–p95.
     nome: 'detalhe-alvo',
-    rota: '/targets/a1?janela=7d',
+    rota: `${P}/targets/a1?janela=7d`,
     preparar: prepararDetalhe,
     conferir: async (page) => {
       await expect(page.getByText(/^pico de 9\.800 ms em .*, fora da escala$/)).toBeVisible()
@@ -353,20 +353,20 @@ const TELAS: Tela[] = [
       await expect(page.getByTestId('grafico-latencia').locator('.recharts-area-area')).toBeVisible()
     },
   },
-  { nome: 'incidentes', rota: '/incidents' },
-  { nome: 'canais', rota: '/channels' },
+  { nome: 'incidentes', rota: `${P}/incidents` },
+  { nome: 'canais', rota: `${P}/channels` },
   {
     nome: 'status-page',
-    rota: '/status-pages',
+    rota: `${P}/status-pages`,
     preparar: (page) =>
-      page.route('**/api/v1/status-pages', (r) => r.fulfill({ status: 200, json: { items: [paginaDeExemplo] } })),
+      page.route('**/api/v1/projects/*/status-pages', (r) => r.fulfill({ status: 200, json: { items: [paginaDeExemplo] } })),
     conferir: async (page) => {
       await expect(page.getByText(URL_DA_PAGINA_DE_EXEMPLO)).toBeVisible()
       await expect(page.getByText('localhost')).toHaveCount(0)
     },
   },
   { nome: 'configuracoes', rota: '/settings' },
-  { nome: 'novo-alvo', rota: '/targets/new' },
+  { nome: 'novo-alvo', rota: `${P}/targets/new` },
   {
     nome: 'login',
     rota: '/login',
@@ -406,7 +406,7 @@ test('capturas das telas do painel', async ({ page }) => {
       for (const [tema, esquema] of TEMAS) {
         await page.unrouteAll({ behavior: 'ignoreErrors' })
         await imitarApi(page)
-        await page.route('**/api/v1/heartbeats?*', (r) => r.fulfill({ status: 200, json: { items: heartbeatsDoPainel() } }))
+        await page.route('**/api/v1/projects/*/heartbeats?*', (r) => r.fulfill({ status: 200, json: { items: heartbeatsDoPainel() } }))
         // Registrada depois, a rota da tela vence a do imitarApi.
         await tela.preparar?.(page)
         await page.setViewportSize({ width: largura, height: ALTURA })

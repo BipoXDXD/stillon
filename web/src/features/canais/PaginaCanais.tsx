@@ -4,7 +4,7 @@ import { useRef, useState } from 'react'
 import { useForm, useWatch } from 'react-hook-form'
 import { Bell, CircleCheck, CircleX, Clock, Pause, TimerOff, type LucideIcon } from 'lucide-react'
 import { z } from 'zod'
-import { useApi } from '@/app/contexto'
+import { useApiDoProjeto } from '@/app/projeto'
 import { EstadoDaConsulta } from '@/components/EstadoDaConsulta'
 import { Selo, type TomDoSelo } from '@/components/SeloDeEstado'
 import { Titulo } from '@/components/Titulo'
@@ -13,7 +13,7 @@ import { Botao, BotaoQueSome, TITULO_DA_TELA } from '@/components/ui/botao'
 import { Campo, Entrada, ErroDoFormulario, Opcao } from '@/components/ui/campo'
 import { estiloDeCartao } from '@/components/ui/cartao'
 import { Confirmar, Dialogo } from '@/components/ui/dialogo'
-import { chaves, useCanais } from '@/lib/api/consultas'
+import { useCanais, useChavesDoProjeto } from '@/lib/api/consultas'
 import { ApiError } from '@/lib/api/http'
 import { mensagemDe, mensagemDoCampo, textoDoErroDeCanal } from '@/lib/api/mensagens'
 import type { Canal } from '@/lib/api/schemas'
@@ -111,7 +111,7 @@ function textoDoErro(e: unknown, acao: 'criar' | 'reenviar'): string {
 }
 
 function NovoCanal({ aoCriar }: { aoCriar: (c: Canal) => void }) {
-  const api = useApi()
+  const api = useApiDoProjeto()
   const f = useForm<Valores>({
     resolver: zodResolver(esquema),
     defaultValues: { kind: 'discord', url: '' },
@@ -160,7 +160,7 @@ function NovoCanal({ aoCriar }: { aoCriar: (c: Canal) => void }) {
           {(a) => <Entrada {...a} type="url" {...f.register('url')} />}
         </Campo>
       ) : (
-        <Campo key="email" rotulo="E-mail" erro={erroDe('email')} ajuda="Mandamos um link de verificação, válido por 24 horas.">
+        <Campo key="email" rotulo="E-mail" erro={erroDe('email')} ajuda="O link de verificação vale por 24 horas.">
           {(a) => <Entrada {...a} type="email" {...f.register('email')} />}
         </Campo>
       )}
@@ -173,7 +173,8 @@ function NovoCanal({ aoCriar }: { aoCriar: (c: Canal) => void }) {
 
 export function PaginaCanais() {
   const consulta = useCanais()
-  const api = useApi()
+  const api = useApiDoProjeto()
+  const chave = useChavesDoProjeto()
   const qc = useQueryClient()
   const avisar = useAvisar()
   const [criando, setCriando] = useState(false)
@@ -194,7 +195,7 @@ export function PaginaCanais() {
   const emVoo = useRef(new Set<string>())
   const [alternando, setAlternando] = useState<ReadonlySet<string>>(new Set())
 
-  const recarregar = () => qc.invalidateQueries({ queryKey: chaves.canais })
+  const recarregar = () => qc.invalidateQueries({ queryKey: chave.canais })
 
   // O canal mudou em outra aba: a lista na tela está velha.
   async function listaVelha(e: unknown): Promise<boolean> {
@@ -219,7 +220,7 @@ export function PaginaCanais() {
     setErro(null)
     try {
       await api.reenviarVerificacao(c.id)
-      avisar('Link de verificação reenviado.')
+      avisar('Pedido de reenvio recebido. Confira sua caixa de entrada.')
     } catch (e) {
       if (!(await listaVelha(e))) setErro(textoDoErro(e, 'reenviar'))
     } finally {
@@ -364,7 +365,9 @@ export function PaginaCanais() {
           aoCriar={(c) => {
             setCriando(false)
             void recarregar()
-            avisar(c.kind === 'email' ? 'Enviamos o link de verificação.' : 'Canal verificado com a mensagem de teste.')
+            avisar(c.kind === 'email'
+              ? 'Canal cadastrado. Se receber o e-mail, abra o link para verificar.'
+              : 'Canal verificado com a mensagem de teste.')
           }}
         />
       </Dialogo>

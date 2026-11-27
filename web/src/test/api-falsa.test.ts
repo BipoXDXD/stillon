@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { usarApiFalsa } from './ambiente'
-import { EMAIL, ERROS_DO_SERVIDOR, SENHA, TOKEN_DO_TURNSTILE, TOTP_OK } from './api-falsa'
+import { EMAIL, ERROS_DO_SERVIDOR, PROJETO_PADRAO, SENHA, TOKEN_DO_TURNSTILE, TOTP_OK } from './api-falsa'
 import { alvo, canal, heartbeat, incidente, itemDoResumo, pagina } from './fixtures'
 
 // A API falsa é o contrato dos testes de tela: quando ela diverge do servidor,
@@ -17,7 +17,11 @@ function apiLogada() {
   return falsa
 }
 
-function pedir(metodo: string, caminho: string, corpo?: unknown) {
+// Os recursos moram no projeto: os caminhos dos testes são os do padrão.
+const DO_PROJETO = /^\/(targets|heartbeats|incidents|channels|status-pages)\b/
+
+function pedir(metodo: string, caminhoDoRecurso: string, corpo?: unknown) {
+  const caminho = DO_PROJETO.test(caminhoDoRecurso) ? `/projects/${PROJETO_PADRAO}${caminhoDoRecurso}` : caminhoDoRecurso
   const headers = new Headers({ 'X-Requested-With': 'stillon', Authorization: `Bearer ${TOKEN}` })
   if (corpo === undefined) return fetch(new URL(`/api/v1${caminho}`, location.origin), { method: metodo, headers })
   headers.set('Content-Type', 'application/json')
@@ -369,6 +373,44 @@ describe('erros que só o servidor sabe dar', () => {
   })
 })
 
+// tenancy.Service.List, ParseProjectName e ProjectLimit no servidor.
+describe('projetos (projecthandlers do servidor)', () => {
+  // Sabotagem: a lista na ordem de inserção → proj-9 vem primeiro.
+  it('a lista traz o padrão primeiro, depois por id', async () => {
+    const falsa = apiLogada()
+    const nove = falsa.criarProjeto('Nove')
+    nove.projeto.id = 'proj-9'
+    falsa.estado.projetos = [nove, ...falsa.estado.projetos.filter((p) => p !== nove)]
+    falsa.criarProjeto('Três')
+    const resposta = await pedir('GET', '/projects')
+    const { items } = (await resposta.json()) as { items: { id: string }[] }
+    expect(items.map((p) => p.id)).toEqual([PROJETO_PADRAO, 'proj-3', 'proj-9'])
+  })
+
+  it.each([
+    ['vazio', '  ', 'required'],
+    ['101 runas', 'ç'.repeat(101), 'too_long'],
+    ['espaço de largura zero', 'a​b', 'invalid'],
+  ])('nome %s é 400 no campo name', async (_, name, reason) => {
+    apiLogada()
+    const resposta = await pedir('POST', '/projects', { name })
+    expect(resposta.status).toBe(400)
+    expect(await resposta.json()).toMatchObject({ error: { code: 'validation_failed', fields: [{ field: 'name', reason }] } })
+  })
+
+  // Sabotagem: contar todos os projetos da lista, não só os do titular → o
+  // projeto em que ele é só membro esgota a cota.
+  it('o teto conta os projetos de que o usuário é titular', async () => {
+    const falsa = apiLogada()
+    falsa.estado.limiteDeProjetos = 2
+    falsa.criarProjeto('Alheio').projeto.role = 'member'
+    expect((await pedir('POST', '/projects', { name: 'Segundo' })).status).toBe(201)
+    const resposta = await pedir('POST', '/projects', { name: 'Terceiro' })
+    expect(resposta.status).toBe(409)
+    expect(await resposta.json()).toMatchObject({ error: { code: 'project_limit_reached' } })
+  })
+})
+
 // Como optional.go e recusouNulo no servidor: em campo obrigatório, null é 400,
 // antes de procurar o recurso e sem gravar nada.
 describe('PATCH com null em campo obrigatório', () => {
@@ -537,11 +579,11 @@ describe('tabela de erros (errorTable do servidor)', () => {
 
   it('forcar só aceita o par que o servidor emite', () => {
     const falsa = apiLogada()
-    falsa.estado.forcar.set('GET /targets', { status: 503, code: 'unavailable' })
+    falsa.estado.forcar.set('GET /projects/:projectId/targets', { status: 503, code: 'unavailable' })
     // @ts-expect-error o servidor dá unavailable com 503, nunca com 502
-    falsa.estado.forcar.set('GET /targets', { status: 502, code: 'unavailable' })
+    falsa.estado.forcar.set('GET /projects/:projectId/targets', { status: 502, code: 'unavailable' })
     // @ts-expect-error o código é internal_error
-    falsa.estado.forcar.set('GET /targets', { status: 500, code: 'internal' })
+    falsa.estado.forcar.set('GET /projects/:projectId/targets', { status: 500, code: 'internal' })
     expect(falsa.estado.forcar.size).toBe(1)
   })
 })

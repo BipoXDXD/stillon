@@ -8,16 +8,18 @@ const alvo = (p: Parameters<typeof itemDoResumo>[0] = {}) => ItemDoResumo.parse(
 const inc = (p: Parameters<typeof incidente>[0] = {}) => Incidente.parse(incidente(p))
 const hb = (p: Parameters<typeof heartbeat>[0] = {}) => Heartbeat.parse(heartbeat(p))
 const agora = new Date('2026-09-24T12:00:00Z')
+// Os caminhos das linhas são do projeto atual.
+const P = '/projects/p'
 
 describe('linhaDoAlvo', () => {
-  // Sabotagem: devolver href /targets sem o id, ou a chave sem o tipo → falha.
+  // Sabotagem: devolver href sem o prefixo do projeto ou sem o id, ou a chave sem o tipo → falha.
   it('monta o modelo que a tabela desenha, sem expor o item da API', () => {
-    const linha = linhaDoAlvo(alvo({ id: 'a1', name: 'API', last_latency_ms: 123, uptime_24h: 0.5 }), undefined, agora)
+    const linha = linhaDoAlvo(alvo({ id: 'a1', name: 'API', last_latency_ms: 123, uptime_24h: 0.5 }), undefined, agora, P)
     expect(linha).toMatchObject({
       tipo: 'http',
       chave: 'http:a1',
       nome: 'API',
-      href: '/targets/a1',
+      href: `${P}/targets/a1`,
       estado: 'up',
       latenciaMs: 123,
       uptime24h: 0.5,
@@ -26,23 +28,23 @@ describe('linhaDoAlvo', () => {
   })
 
   it('alvo pausado é exibido como pausado, mesmo com o último estado fora do ar', () => {
-    expect(linhaDoAlvo(alvo({ state: 'down', enabled: false }), undefined, agora).estado).toBe('pausado')
+    expect(linhaDoAlvo(alvo({ state: 'down', enabled: false }), undefined, agora, P).estado).toBe('pausado')
   })
 
   // Sabotagem: ignorar o incidente aberto → a situação vira "Último check…".
   it('fora do ar com incidente aberto: a causa, a duração e o caminho do incidente', () => {
     const fora = alvo({ state: 'down', open_incident_id: 'inc-1' })
-    const linha = linhaDoAlvo(fora, inc({ started_at: '2026-09-24T09:29:00Z', cause: 'conn_refused' }), agora)
+    const linha = linhaDoAlvo(fora, inc({ started_at: '2026-09-24T09:29:00Z', cause: 'conn_refused' }), agora, P)
     expect(linha.situacao).toBe('Conexão recusada · há 2 h 31 min')
-    expect(linha.incidenteHref).toBe('/incidents?status=open')
+    expect(linha.incidenteHref).toBe(`${P}/incidents?status=open`)
   })
 
   // O incidente pode ainda não ter chegado (a consulta é outra): o link vale
   // pelo open_incident_id do resumo, e a frase cai no último check.
   it('incidente aberto que ainda não chegou: o link existe e a frase não inventa causa', () => {
-    const linha = linhaDoAlvo(alvo({ state: 'down', open_incident_id: 'inc-1', last_checked_at: '2026-09-24T11:57:00Z' }), undefined, agora)
+    const linha = linhaDoAlvo(alvo({ state: 'down', open_incident_id: 'inc-1', last_checked_at: '2026-09-24T11:57:00Z' }), undefined, agora, P)
     expect(linha.situacao).toBe('Último check há 3 minutos')
-    expect(linha.incidenteHref).toBe('/incidents?status=open')
+    expect(linha.incidenteHref).toBe(`${P}/incidents?status=open`)
   })
 
   // D1 da revisão: um instante à frente do relógio de referência não vira
@@ -52,7 +54,7 @@ describe('linhaDoAlvo', () => {
     ['fora do ar sem incidente', { state: 'down', last_checked_at: '2026-09-24T12:00:03Z' }, 'Último check agora'],
     ['sem dados', { state: 'unknown', last_checked_at: '2026-09-24T12:00:03Z' }, 'Sem dados · último check agora'],
   ] as const)('instante no futuro, %s', (_, p, texto) => {
-    expect(linhaDoAlvo(alvo(p), undefined, agora).situacao).toBe(texto)
+    expect(linhaDoAlvo(alvo(p), undefined, agora, P).situacao).toBe(texto)
   })
 
   it.each([
@@ -62,18 +64,18 @@ describe('linhaDoAlvo', () => {
     ['sem dados', { state: 'unknown', last_checked_at: null }, 'Sem dados · nunca verificado'],
     ['pausado', { enabled: false }, 'Pausado'],
   ] as const)('situação de %s', (_, p, texto) => {
-    expect(linhaDoAlvo(alvo(p), undefined, agora).situacao).toBe(texto)
+    expect(linhaDoAlvo(alvo(p), undefined, agora, P).situacao).toBe(texto)
   })
 })
 
 describe('linhaDoHeartbeat', () => {
   // Sabotagem: apontar o href para /targets, ou chavear só pelo id → falha.
   it('monta a linha na mesma forma, sem medida nem histórico', () => {
-    expect(linhaDoHeartbeat(hb({ id: 'h1', name: 'Backup', last_ping_at: '2026-09-24T11:58:00Z' }), agora)).toEqual({
+    expect(linhaDoHeartbeat(hb({ id: 'h1', name: 'Backup', last_ping_at: '2026-09-24T11:58:00Z' }), agora, P)).toEqual({
       tipo: 'heartbeat',
       chave: 'heartbeat:h1',
       nome: 'Backup',
-      href: '/heartbeats/h1',
+      href: `${P}/heartbeats/h1`,
       estado: 'up',
       textoDoEstado: 'Em dia',
       situacao: 'Sinal há 2 minutos',
@@ -108,28 +110,28 @@ describe('linhaDoHeartbeat', () => {
     ['pausado', { state: 'paused', enabled: false }, 'Pausado'],
     ['em dia sem sinal', { state: 'up', last_ping_at: null }, 'Nenhum sinal ainda'],
   ] as const)('situação de %s', (_, p, texto) => {
-    expect(linhaDoHeartbeat(hb(p), agora).situacao).toBe(texto)
+    expect(linhaDoHeartbeat(hb(p), agora, P).situacao).toBe(texto)
   })
 
   it('com incidente aberto, o link vai ao detalhe: a tela de incidentes não o traz (D3)', () => {
-    expect(linhaDoHeartbeat(hb({ id: 'h1', state: 'late', open_incident_id: 'i1' }), agora).incidenteHref).toBe('/heartbeats/h1')
+    expect(linhaDoHeartbeat(hb({ id: 'h1', state: 'late', open_incident_id: 'i1' }), agora, P).incidenteHref).toBe(`${P}/heartbeats/h1`)
   })
 
   // Spec da tela, T3: uma escala de gravidade só. Sabotagem: mapear late para
   // unknown em estado.ts → o atrasado desce para depois do alvo no ar.
   it('entra na ordem de gravidade junto dos alvos', () => {
     const linhas = ordenarPorGravidade([
-      linhaDoAlvo(alvo({ id: 'a', name: 'API' }), undefined, agora),
-      linhaDoHeartbeat(hb({ id: 'h1', name: 'Backup', state: 'late' }), agora),
-      linhaDoAlvo(alvo({ id: 'b', name: 'Caiu', state: 'down' }), undefined, agora),
-      linhaDoHeartbeat(hb({ id: 'h2', name: 'Relatório', state: 'waiting' }), agora),
+      linhaDoAlvo(alvo({ id: 'a', name: 'API' }), undefined, agora, P),
+      linhaDoHeartbeat(hb({ id: 'h1', name: 'Backup', state: 'late' }), agora, P),
+      linhaDoAlvo(alvo({ id: 'b', name: 'Caiu', state: 'down' }), undefined, agora, P),
+      linhaDoHeartbeat(hb({ id: 'h2', name: 'Relatório', state: 'waiting' }), agora, P),
     ])
     expect(linhas.map((l) => l.nome)).toEqual(['Backup', 'Caiu', 'API', 'Relatório'])
   })
 })
 
 describe('medidaDaLinha', () => {
-  const http = (p: Parameters<typeof itemDoResumo>[0]): LinhaDeMonitor => linhaDoAlvo(alvo(p), undefined, agora)
+  const http = (p: Parameters<typeof itemDoResumo>[0]): LinhaDeMonitor => linhaDoAlvo(alvo(p), undefined, agora, P)
 
   // Sabotagem: devolver "0 ms" sem medida → o caso null falha.
   it('a medida do monitor HTTP é a latência; sem ela, o traço', () => {
@@ -138,11 +140,11 @@ describe('medidaDaLinha', () => {
   })
 
   it('a linha do heartbeat traz as tags dele', () => {
-    expect(linhaDoHeartbeat(hb({ tags: ['prod', 'dados'] }), agora).tags).toEqual(['prod', 'dados'])
+    expect(linhaDoHeartbeat(hb({ tags: ['prod', 'dados'] }), agora, P).tags).toEqual(['prod', 'dados'])
   })
 
   it('o heartbeat não tem latência: o traço, sem inventar medida', () => {
-    expect(medidaDaLinha(linhaDoHeartbeat(hb(), agora))).toBe('—')
+    expect(medidaDaLinha(linhaDoHeartbeat(hb(), agora, P))).toBe('—')
   })
 })
 
@@ -152,7 +154,7 @@ describe('switch exaustivo sobre tipo', () => {
   // medidaDaLinha não compila.
   // Sabotagem: acrescentar um membro à união sem caso → o tsc -b recusa.
   it('um tipo fora da união falha alto em vez de virar célula vazia', () => {
-    const linha = linhaDoAlvo(alvo(), undefined, agora)
+    const linha = linhaDoAlvo(alvo(), undefined, agora, P)
     const intrusa = { ...linha, tipo: 'ping' } as unknown as LinhaDeMonitor
     expect(() => medidaDaLinha(intrusa)).toThrow('Tipo de monitor sem caso: ping')
     // @ts-expect-error: o tipo só cabe em never depois de esgotar os casos.
@@ -171,7 +173,7 @@ describe('situacaoNaLinhaDoNome', () => {
     [{ state: 'unknown' }, true],
     [{ enabled: false }, true],
   ] as const)('%j → %s', (p, mostra) => {
-    const linha = linhaDoAlvo(alvo(p), undefined, agora)
+    const linha = linhaDoAlvo(alvo(p), undefined, agora, P)
     expect(situacaoNaLinhaDoNome(linha)).toBe(mostra ? linha.situacao : null)
   })
 })

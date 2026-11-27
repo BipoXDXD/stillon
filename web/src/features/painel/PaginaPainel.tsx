@@ -1,6 +1,7 @@
 import { Bell, Check, Plus } from 'lucide-react'
 import { useEffect, useRef, type RefObject } from 'react'
 import { Link, useSearchParams } from 'react-router'
+import { usePrefixoDoProjeto, useRotaDoProjeto } from '@/app/projeto'
 import { useAnunciar } from '@/components/Anunciador'
 import { EstadoDaConsulta } from '@/components/EstadoDaConsulta'
 import { Titulo } from '@/components/Titulo'
@@ -31,6 +32,7 @@ import { TabelaDeMonitores } from './TabelaDeMonitores'
 import { anunciaveis, mapaDeEstados, transicoes } from './transicoes'
 
 export function PaginaPainel() {
+  const noProjeto = useRotaDoProjeto()
   const consulta = useResumo()
   const heartbeats = useHeartbeats()
   const semRede = useSemRede()
@@ -55,10 +57,10 @@ export function PaginaPainel() {
         <Titulo aba="Painel">Painel</Titulo>
         <div className="flex flex-wrap gap-2">
           <Botao tipo="secundario" asChild>
-            <Link to="/heartbeats/new">Cadastrar heartbeat</Link>
+            <Link to={noProjeto('/heartbeats/new')}>Cadastrar heartbeat</Link>
           </Botao>
           <Botao asChild>
-            <Link to="/targets/new">
+            <Link to={noProjeto('/targets/new')}>
               <Plus aria-hidden="true" className="size-4" />
               Cadastrar alvo
             </Link>
@@ -127,6 +129,7 @@ function MonitoresFiltrados({ itens, tarefas, atualizadoEm }: PropsDosMonitores)
 
   // A mesma consulta do contador da navegação: nenhuma requisição a mais.
   const abertos = useIncidentesAbertos()
+  const prefixo = usePrefixoDoProjeto()
 
   const esperando = filtraNaApi && filtrada.isPlaceholderData
   const base = filtraNaApi ? filtrada.data?.items : itens
@@ -139,7 +142,7 @@ function MonitoresFiltrados({ itens, tarefas, atualizadoEm }: PropsDosMonitores)
   // contagem e a tabela leem as mesmas linhas.
   const linhas =
     base &&
-    linhasDaLista({ itens: base, heartbeats: tarefas.itens }, filtros, ordem, agora, (it) =>
+    linhasDaLista({ itens: base, heartbeats: tarefas.itens }, filtros, ordem, agora, prefixo, (it) =>
       it.open_incident_id ? porId.get(it.open_incident_id) : undefined,
     )
   const resultado = (() => {
@@ -215,6 +218,7 @@ function ResultadoDosFiltros({
 
 // A frase de estado no topo (spec do redesign, Telas > 1), em Fraunces.
 function Manchete({ itens, tarefas, atualizadoEm }: PropsDosMonitores) {
+  const noProjeto = useRotaDoProjeto()
   const conhecida = manchete(itens, tarefas)
   const m = useSemRede() ? mancheteSemRede(conhecida) : conhecida
   const resolvidos = useResolvidosRecentes(m.tipo === 'tudo-no-ar')
@@ -224,7 +228,7 @@ function Manchete({ itens, tarefas, atualizadoEm }: PropsDosMonitores) {
         <h2 className="text-2xl sm:text-3xl">{textoDaManchete(m)}</h2>
         <p className="text-suave">
           Cadastre um endereço para o StillOn vigiar.{' '}
-          <Link to="/targets/new" className="alvo-de-toque font-semibold text-primaria underline underline-offset-4">
+          <Link to={noProjeto('/targets/new')} className="alvo-de-toque font-semibold text-primaria underline underline-offset-4">
             Cadastrar o primeiro alvo
           </Link>
         </p>
@@ -252,6 +256,7 @@ function Manchete({ itens, tarefas, atualizadoEm }: PropsDosMonitores) {
 // A consulta de canais é independente: falhar nunca esconde os alvos nem
 // transforma "não se sabe" em "nenhum canal" (avisos-dos-canais.ts).
 function AvisoDeCanais() {
+  const noProjeto = useRotaDoProjeto()
   const frases = avisosDosCanais(useCanais())
   if (!frases.length) return null
   return (
@@ -261,7 +266,7 @@ function AvisoDeCanais() {
         {frases.map((frase) => (
           <p key={frase}>{frase}</p>
         ))}
-        <Link to="/channels" className="alvo-de-toque inline-block font-semibold whitespace-nowrap text-primaria underline underline-offset-4">
+        <Link to={noProjeto('/channels')} className="alvo-de-toque inline-block font-semibold whitespace-nowrap text-primaria underline underline-offset-4">
           Configurar canais
         </Link>
       </div>

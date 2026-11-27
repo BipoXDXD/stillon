@@ -58,6 +58,21 @@ export type Me = z.infer<typeof Me>
 export const ConfigDoCadastro = z.object({ enabled: z.boolean(), turnstile_site_key: z.string() })
 export type ConfigDoCadastro = z.infer<typeof ConfigDoCadastro>
 
+// O papel de quem pede no projeto (projectResponse.role). Um papel de uma
+// versão posterior do servidor vira 'desconhecido', no molde do
+// EstadoDoHeartbeat: a lista de projetos não pode falhar inteira por ele.
+export const Papel = z.union([
+  z.enum(['owner', 'manager', 'member', 'viewer']),
+  z.string().transform((): 'desconhecido' => 'desconhecido'),
+])
+export type Papel = z.infer<typeof Papel>
+
+export const Projeto = z.object({ id, name: z.string(), is_default: z.boolean(), role: Papel, created_at: instante })
+export type Projeto = z.infer<typeof Projeto>
+
+export const ListaDeProjetos = z.object({ items: z.array(Projeto) })
+export type ListaDeProjetos = z.infer<typeof ListaDeProjetos>
+
 export const RegraDeConteudo = z.object({
   mode: z.enum(['contains', 'not_contains', 'json_equals']),
   value: z.string(),

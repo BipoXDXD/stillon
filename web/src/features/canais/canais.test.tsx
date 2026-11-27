@@ -3,13 +3,13 @@ import { http } from 'msw'
 import { describe, expect, it } from 'vitest'
 import { Canal } from '@/lib/api/schemas'
 import { dataHora } from '@/lib/format'
-import type { ErroForcado } from '@/test/api-falsa'
+import { PROJETO_PADRAO, type ErroForcado } from '@/test/api-falsa'
 import { canal } from '@/test/fixtures'
 import { renderizarPainel } from '@/test/renderizar'
 import { servidor } from '@/test/setup'
 
-const RESEND = 'POST /channels/:id/verify/resend'
-const PATCH = 'PATCH /channels/:id'
+const RESEND = 'POST /projects/:projectId/channels/:id/verify/resend'
+const PATCH = 'PATCH /projects/:projectId/channels/:id'
 const escapar = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
 // O onClick que o React registrou no elemento, para simular um evento que
@@ -60,8 +60,8 @@ describe('canais: lista vazia', () => {
   // sabe. Sabotagem: esconder o botão do topo sem olhar os dados.
   it('com erro na consulta, o botão do topo continua', async () => {
     const r = await renderizarPainel('/channels')
-    r.falsa.estado.forcar.set('GET /channels', { status: 500, code: 'internal_error' })
-    await r.cliente.resetQueries({ queryKey: ['channels'] })
+    r.falsa.estado.forcar.set('GET /projects/:projectId/channels', { status: 500, code: 'internal_error' })
+    await r.cliente.resetQueries({ queryKey: ['projeto', PROJETO_PADRAO, 'channels'] })
     await screen.findByRole('alert')
     expect(screen.getByRole('button', { name: 'Novo canal' })).toBeInTheDocument()
   })
@@ -84,7 +84,7 @@ describe('canais: lista vazia', () => {
     await screen.findByText('Verificado')
     screen.getByRole('button', { name: 'Novo canal' }).focus()
     r.falsa.estado.canais = []
-    await r.cliente.refetchQueries({ queryKey: ['channels'] })
+    await r.cliente.refetchQueries({ queryKey: ['projeto', PROJETO_PADRAO, 'channels'] })
     await screen.findByText(/Nenhum canal/)
     await waitFor(() => expect(titulo()).toHaveFocus())
   })
@@ -96,7 +96,7 @@ describe('canais: lista vazia', () => {
     await screen.findByText(/Nenhum canal/)
     screen.getByRole('button', { name: 'Novo canal' }).focus()
     r.falsa.estado.canais = [canal()]
-    await r.cliente.refetchQueries({ queryKey: ['channels'] })
+    await r.cliente.refetchQueries({ queryKey: ['projeto', PROJETO_PADRAO, 'channels'] })
     await screen.findByText('Verificado')
     await waitFor(() => expect(titulo()).toHaveFocus())
   })
@@ -136,20 +136,20 @@ describe('canais', () => {
     await r.usuario.type(within(dialogo).getByLabelText('URL do webhook'), 'https://discord.com/api/webhooks/1/abc')
     await r.usuario.click(within(dialogo).getByRole('button', { name: 'Cadastrar canal' }))
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
-    expect(r.falsa.corpos('POST /channels')[0]).toEqual({ kind: 'discord', url: 'https://discord.com/api/webhooks/1/abc' })
+    expect(r.falsa.corpos('POST /projects/:projectId/channels')[0]).toEqual({ kind: 'discord', url: 'https://discord.com/api/webhooks/1/abc' })
     expect(await screen.findByText('Canal verificado com a mensagem de teste.')).toBeInTheDocument()
   })
 
   it('entrega que falha e e-mail não configurado viram texto claro', async () => {
     const r = await renderizarPainel('/channels')
-    r.falsa.estado.forcar.set('POST /channels', { status: 502, code: 'delivery_failed' })
+    r.falsa.estado.forcar.set('POST /projects/:projectId/channels', { status: 502, code: 'delivery_failed' })
     await clicarNovoCanal(r)
     const dialogo = await screen.findByRole('dialog')
     await r.usuario.type(within(dialogo).getByLabelText('URL do webhook'), 'https://discord.com/api/webhooks/1/abc')
     await r.usuario.click(within(dialogo).getByRole('button', { name: 'Cadastrar canal' }))
     expect(await within(dialogo).findByRole('alert')).toHaveTextContent('Não conseguimos entregar a mensagem de teste')
 
-    r.falsa.estado.forcar.set('POST /channels', {
+    r.falsa.estado.forcar.set('POST /projects/:projectId/channels', {
       status: 400,
       code: 'validation_failed',
       fields: [{ field: 'kind', reason: 'unavailable' }],
@@ -160,7 +160,7 @@ describe('canais', () => {
     await waitFor(() =>
       expect(within(dialogo).getByRole('alert')).toHaveTextContent('O envio de e-mail não está configurado'),
     )
-    expect(r.falsa.corpos('POST /channels')[1]).toEqual({ kind: 'email', email: 'dono@exemplo.com' })
+    expect(r.falsa.corpos('POST /projects/:projectId/channels')[1]).toEqual({ kind: 'email', email: 'dono@exemplo.com' })
   })
 
   it('verificação expirada tem símbolo e texto, e pode ser reenviada', async () => {
@@ -177,19 +177,19 @@ describe('canais', () => {
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
     await cadastrarEmail(r, 'dono@münchen.de')
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
-    expect(r.falsa.corpos('POST /channels')).toEqual([
+    expect(r.falsa.corpos('POST /projects/:projectId/channels')).toEqual([
       { kind: 'email', email: 'josé@exemplo.com' },
       { kind: 'email', email: 'dono@münchen.de' },
     ])
 
-    r.falsa.estado.forcar.set('POST /channels', {
+    r.falsa.estado.forcar.set('POST /projects/:projectId/channels', {
       status: 400,
       code: 'validation_failed',
       fields: [{ field: 'email', reason: 'invalid' }],
     })
     const dialogo = await cadastrarEmail(r, 'dono@x')
     expect(await within(dialogo).findByRole('alert')).toHaveTextContent('E-mail inválido.')
-    expect(r.falsa.corpos('POST /channels')[2]).toEqual({ kind: 'email', email: 'dono@x' })
+    expect(r.falsa.corpos('POST /projects/:projectId/channels')[2]).toEqual({ kind: 'email', email: 'dono@x' })
   })
 
   // A mensagem do campo sai de formState.errors de uma união discriminada (a
@@ -203,10 +203,11 @@ describe('canais', () => {
     expect(await within(dialogo).findByText('Cole a URL do webhook.')).toBeInTheDocument()
     await r.usuario.click(within(dialogo).getByLabelText('E-mail', { selector: 'input[type=radio]' }))
     expect(within(dialogo).queryByText('Cole a URL do webhook.')).not.toBeInTheDocument()
+    expect(within(dialogo).getByRole('textbox', { name: 'E-mail' })).toHaveAccessibleDescription('O link de verificação vale por 24 horas.')
     await r.usuario.type(within(dialogo).getByLabelText('E-mail', { selector: 'input[type=email]' }), 'sem-arroba')
     await r.usuario.click(within(dialogo).getByRole('button', { name: 'Cadastrar canal' }))
     expect(await within(dialogo).findByText('Informe um e-mail válido.')).toBeInTheDocument()
-    expect(r.falsa.corpos('POST /channels')).toEqual([])
+    expect(r.falsa.corpos('POST /projects/:projectId/channels')).toEqual([])
   })
 
   it('criar: limite de canais, limite de envios e URL de webhook inválida viram texto', async () => {
@@ -223,7 +224,7 @@ describe('canais', () => {
       ],
     ]
     for (const [forcado, texto] of casos) {
-      r.falsa.estado.forcar.set('POST /channels', forcado)
+      r.falsa.estado.forcar.set('POST /projects/:projectId/channels', forcado)
       await r.usuario.click(within(dialogo).getByRole('button', { name: 'Cadastrar canal' }))
       await waitFor(() => expect(within(dialogo).getByRole('alert')).toHaveTextContent(texto))
     }
@@ -237,7 +238,7 @@ describe('canais', () => {
     fireEvent.click(botao)
     fireEvent.click(botao)
     // Os dois cliques já saíram; um aviso por envio.
-    expect((await screen.findAllByText('Link de verificação reenviado.'))[0]).toBeInTheDocument()
+    expect((await screen.findAllByText('Pedido de reenvio recebido. Confira sua caixa de entrada.'))[0]).toBeInTheDocument()
     expect(r.falsa.chamadas(RESEND)).toBe(1)
     await waitFor(() => expect(botao).toBeEnabled())
   })
@@ -259,7 +260,7 @@ describe('canais', () => {
     const aberto = new Promise<void>((res) => (soltar = res))
     let chegou = 0
     servidor.use(
-      http.post('*/api/v1/channels/:id/verify/resend', async () => {
+      http.post('*/api/v1/projects/:projectId/channels/:id/verify/resend', async () => {
         chegou++
         await aberto
         return new Response(null, { status: 204 })
@@ -351,7 +352,7 @@ describe('canais', () => {
       fireEvent.click(acao)
     })
     expect((await screen.findAllByText('Canal apagado.'))[0]).toBeInTheDocument()
-    expect(r.falsa.chamadas('DELETE /channels/:id')).toBe(1)
+    expect(r.falsa.chamadas('DELETE /projects/:projectId/channels/:id')).toBe(1)
     expect(await screen.findByText(/Nenhum canal/)).toBeInTheDocument()
     expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
@@ -363,7 +364,7 @@ describe('canais', () => {
     await r.cliente.refetchQueries()
     await r.usuario.click(await screen.findByRole('button', { name: 'Apagar o canal discord.com/…/abcd' }))
     r.falsa.estado.canais = []
-    r.falsa.estado.forcar.set('DELETE /channels/:id', { status: 404, code: 'not_found' })
+    r.falsa.estado.forcar.set('DELETE /projects/:projectId/channels/:id', { status: 404, code: 'not_found' })
     await r.usuario.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Apagar canal' }))
     expect(await screen.findByText('O canal já tinha sido apagado, talvez em outra aba.')).toBeInTheDocument()
     expect(await screen.findByText(/Nenhum canal/)).toBeInTheDocument()
@@ -469,7 +470,7 @@ describe('canais', () => {
     const aberto = new Promise<void>((res) => (soltar = res))
     let chegou = 0
     servidor.use(
-      http.patch('*/api/v1/channels/:id', async () => {
+      http.patch('*/api/v1/projects/:projectId/channels/:id', async () => {
         chegou++
         await aberto
       }),
@@ -505,7 +506,7 @@ describe('canais', () => {
     const aberto = new Promise<void>((res) => (soltar = res))
     let chegou = 0
     servidor.use(
-      http.patch('*/api/v1/channels/:id', async () => {
+      http.patch('*/api/v1/projects/:projectId/channels/:id', async () => {
         chegou++
         await aberto
       }),
@@ -614,7 +615,7 @@ it('Pausar não abre confirmação enquanto o Retomar do mesmo canal está em vo
   let soltar!: () => void
   const pendente = new Promise<void>((resolve) => (soltar = resolve))
   let chegou = false
-  servidor.use(http.patch('*/api/v1/channels/:id', async () => {
+  servidor.use(http.patch('*/api/v1/projects/:projectId/channels/:id', async () => {
     chegou = true
     await pendente
   }))
@@ -622,7 +623,7 @@ it('Pausar não abre confirmação enquanto o Retomar do mesmo canal está em vo
     await r.usuario.click(await screen.findByRole('button', { name: 'Retomar o canal discord.com/…/abcd' }))
     await waitFor(() => expect(chegou).toBe(true))
     r.falsa.estado.canais = [canal({ enabled: true })]
-    await r.cliente.refetchQueries({ queryKey: ['channels'] })
+    await r.cliente.refetchQueries({ queryKey: ['projeto', PROJETO_PADRAO, 'channels'] })
     const pausar = await screen.findByRole('button', { name: 'Pausar o canal discord.com/…/abcd' })
     expect(pausar).toHaveAttribute('aria-disabled', 'true')
     await r.usuario.click(pausar)

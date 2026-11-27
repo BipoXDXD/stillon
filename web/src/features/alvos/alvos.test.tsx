@@ -1,6 +1,7 @@
 import { act, screen, waitFor, within } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 import { alvo } from '@/test/fixtures'
+import { PROJETO_PADRAO } from '@/test/api-falsa'
 import { renderizarPainel } from '@/test/renderizar'
 import { esperarNavegacao } from '@/test/esperar-navegacao'
 import { Alvo } from '@/lib/api/schemas'
@@ -114,10 +115,10 @@ describe('cadastrar', () => {
     const r = await renderizarPainel('/targets/new')
     await preencher(r.usuario)
     await r.usuario.click(screen.getByRole('button', { name: 'Cadastrar' }))
-    await act(() => esperarNavegacao(r.router, '/targets/alvo-1', signal))
-    expect(r.router.state.location.pathname).toBe('/targets/alvo-1')
+    await act(() => esperarNavegacao(r.router, `/projects/${PROJETO_PADRAO}/targets/alvo-1`, signal))
+    expect(r.router.state.location.pathname).toBe(`/projects/${PROJETO_PADRAO}/targets/alvo-1`)
     expect(await screen.findByRole('heading', { name: 'Site' })).toBeInTheDocument()
-    expect(r.falsa.corpos('POST /targets')[0]).toMatchObject({
+    expect(r.falsa.corpos('POST /projects/:projectId/targets')[0]).toMatchObject({
       name: 'Site',
       url: 'https://exemplo.com',
       method: 'GET',
@@ -130,7 +131,7 @@ describe('cadastrar', () => {
 
   it('o 400 com fields vai para o campo certo', async () => {
     const r = await renderizarPainel('/targets/new')
-    r.falsa.estado.forcar.set('POST /targets', {
+    r.falsa.estado.forcar.set('POST /projects/:projectId/targets', {
       status: 400,
       code: 'validation_failed',
       fields: [{ field: 'url', reason: 'forbidden' }],
@@ -146,7 +147,7 @@ describe('cadastrar', () => {
   // primeiro da tela. Sabotagem: focar o último erro em vez do primeiro.
   it('o 400 com dois campos marca os dois e foca o primeiro, na ordem do servidor', async () => {
     const r = await renderizarPainel('/targets/new')
-    r.falsa.estado.forcar.set('POST /targets', {
+    r.falsa.estado.forcar.set('POST /projects/:projectId/targets', {
       status: 400,
       code: 'validation_failed',
       fields: [
@@ -186,14 +187,14 @@ describe('cadastrar', () => {
     await waitFor(() => expect(avancado()).toHaveAttribute('open'))
     expect(timeout).toHaveAttribute('aria-invalid', 'true')
     expect(timeout).toHaveFocus()
-    expect(r.falsa.corpos('POST /targets')).toHaveLength(0)
+    expect(r.falsa.corpos('POST /projects/:projectId/targets')).toHaveLength(0)
   })
 
   // O mesmo para o erro que o servidor aponta. Sabotagem: tirar o
   // setAvancadoAberto(true) do caminho do 400.
   it('o 400 do servidor num campo avançado abre a seção', async () => {
     const r = await renderizarPainel('/targets/new')
-    r.falsa.estado.forcar.set('POST /targets', {
+    r.falsa.estado.forcar.set('POST /projects/:projectId/targets', {
       status: 400,
       code: 'validation_failed',
       fields: [{ field: 'expected_status', reason: 'out_of_range' }],
@@ -231,12 +232,12 @@ describe('cadastrar', () => {
     expect(timeout).toHaveFocus()
     expect(mensagemDoErro(timeout)).toHaveTextContent('Mínimo de 1000 ms.')
     expect(mensagemDoErro(timeout)).toBeVisible()
-    expect(r.falsa.corpos('POST /targets')).toHaveLength(0)
+    expect(r.falsa.corpos('POST /projects/:projectId/targets')).toHaveLength(0)
   })
 
   it('fechar o "Avançado" com o erro do 400 e reenviar reabre a seção e foca o campo', async () => {
     const r = await renderizarPainel('/targets/new')
-    r.falsa.estado.forcar.set('POST /targets', {
+    r.falsa.estado.forcar.set('POST /projects/:projectId/targets', {
       status: 400,
       code: 'validation_failed',
       fields: [{ field: 'expected_status', reason: 'out_of_range' }],
@@ -248,7 +249,7 @@ describe('cadastrar', () => {
     await waitFor(() => expect(status).toHaveAttribute('aria-invalid', 'true'))
     await fecharOAvancado(r.usuario)
     await r.usuario.click(cadastrar)
-    await waitFor(() => expect(r.falsa.corpos('POST /targets')).toHaveLength(2))
+    await waitFor(() => expect(r.falsa.corpos('POST /projects/:projectId/targets')).toHaveLength(2))
     await waitFor(() => expect(avancado()).toHaveAttribute('open'))
     expect(status).toHaveFocus()
     expect(status).toHaveAttribute('aria-invalid', 'true')
@@ -257,7 +258,7 @@ describe('cadastrar', () => {
 
   it('o teto de 100 alvos (Plano 5, D24) aparece como erro do formulário', async () => {
     const r = await renderizarPainel('/targets/new')
-    r.falsa.estado.forcar.set('POST /targets', { status: 409, code: 'target_limit_reached' })
+    r.falsa.estado.forcar.set('POST /projects/:projectId/targets', { status: 409, code: 'target_limit_reached' })
     await preencher(r.usuario)
     await r.usuario.click(screen.getByRole('button', { name: 'Cadastrar' }))
     expect(await screen.findByRole('alert')).toHaveTextContent('Limite de 100 alvos atingido.')
@@ -313,8 +314,8 @@ describe('editar', () => {
     await r.usuario.clear(nome)
     await r.usuario.type(nome, 'API nova')
     await r.usuario.click(screen.getByRole('button', { name: 'Salvar' }))
-    await waitFor(() => expect(r.falsa.corpos('PATCH /targets/:id')).toHaveLength(1))
-    expect(r.falsa.corpos('PATCH /targets/:id')[0]).toEqual({ name: 'API nova' })
+    await waitFor(() => expect(r.falsa.corpos('PATCH /projects/:projectId/targets/:id')).toHaveLength(1))
+    expect(r.falsa.corpos('PATCH /projects/:projectId/targets/:id')[0]).toEqual({ name: 'API nova' })
   })
 
   // B1 do Plano 10: trocar o host de um alvo com headers pede confirmação,
@@ -333,16 +334,16 @@ describe('editar', () => {
     await r.usuario.click(screen.getByRole('button', { name: 'Salvar' }))
     const aviso = await screen.findByRole('alertdialog', { name: 'Trocar o destino do alvo?' })
     expect(aviso).toHaveTextContent('Os headers deste alvo serão apagados, porque o destino mudou (o esquema, o host ou a porta da URL).')
-    expect(r.falsa.chamadas('PATCH /targets/:id')).toBe(0)
+    expect(r.falsa.chamadas('PATCH /projects/:projectId/targets/:id')).toBe(0)
     await r.usuario.click(within(aviso).getByRole('button', { name: 'Cancelar' }))
     await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument())
-    expect(r.falsa.chamadas('PATCH /targets/:id')).toBe(0)
+    expect(r.falsa.chamadas('PATCH /projects/:projectId/targets/:id')).toBe(0)
     expect(document.activeElement).not.toBe(document.body)
     await r.usuario.click(screen.getByRole('button', { name: 'Salvar' }))
     const deNovo = await screen.findByRole('alertdialog', { name: 'Trocar o destino do alvo?' })
     await r.usuario.click(within(deNovo).getByRole('button', { name: 'Salvar e apagar os headers' }))
-    await waitFor(() => expect(r.falsa.corpos('PATCH /targets/:id')).toHaveLength(1))
-    expect(r.falsa.corpos('PATCH /targets/:id')[0]).toEqual({ url: 'https://outro.exemplo.com/health' })
+    await waitFor(() => expect(r.falsa.corpos('PATCH /projects/:projectId/targets/:id')).toHaveLength(1))
+    expect(r.falsa.corpos('PATCH /projects/:projectId/targets/:id')[0]).toEqual({ url: 'https://outro.exemplo.com/health' })
     expect(r.falsa.estado.alvos[0]!.header_names).toEqual([])
   })
 
@@ -356,7 +357,7 @@ describe('editar', () => {
     await r.usuario.clear(url)
     await r.usuario.type(url, 'https://api.exemplo.com/status')
     await r.usuario.click(screen.getByRole('button', { name: 'Salvar' }))
-    await waitFor(() => expect(r.falsa.corpos('PATCH /targets/:id')).toHaveLength(1))
+    await waitFor(() => expect(r.falsa.corpos('PATCH /projects/:projectId/targets/:id')).toHaveLength(1))
     expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
     expect(r.falsa.estado.alvos[0]!.header_names).toEqual(['Authorization'])
   })
@@ -375,8 +376,8 @@ describe('editar', () => {
     await r.usuario.clear(segundos)
     await r.usuario.type(segundos, '45')
     await r.usuario.click(screen.getByRole('button', { name: 'Salvar' }))
-    await waitFor(() => expect(r.falsa.corpos('PATCH /targets/:id')).toHaveLength(1))
-    expect(r.falsa.corpos('PATCH /targets/:id')[0]).toEqual({ interval_sec: 45 })
+    await waitFor(() => expect(r.falsa.corpos('PATCH /projects/:projectId/targets/:id')).toHaveLength(1))
+    expect(r.falsa.corpos('PATCH /projects/:projectId/targets/:id')[0]).toEqual({ interval_sec: 45 })
   })
 })
 
@@ -396,12 +397,12 @@ describe('editar dois alvos seguidos', () => {
     await r.router.navigate('/targets/alvo-2/edit')
     await waitFor(() => expect(screen.getByLabelText('Nome')).toHaveValue('Site B'))
     await r.router.navigate(-1)
-    await waitFor(() => expect(r.router.state.location.pathname).toBe('/targets/alvo-1/edit'))
+    await waitFor(() => expect(r.router.state.location.pathname).toBe(`/projects/${PROJETO_PADRAO}/targets/alvo-1/edit`))
     await waitFor(() => expect(screen.getByLabelText('Nome')).toHaveValue('Site A'))
     expect(screen.getByLabelText('URL')).toHaveValue('https://a.exemplo.com/')
     await r.usuario.selectOptions(screen.getByLabelText('Intervalo'), '5 minutos')
     await r.usuario.click(screen.getByRole('button', { name: 'Salvar' }))
-    await waitFor(() => expect(r.falsa.corpos('PATCH /targets/:id')).toEqual([{ interval_sec: 300 }]))
+    await waitFor(() => expect(r.falsa.corpos('PATCH /projects/:projectId/targets/:id')).toEqual([{ interval_sec: 300 }]))
     expect(r.falsa.estado.alvos.map((a) => [a.id, a.name, a.interval_sec])).toEqual([
       ['alvo-1', 'Site A', 300],
       ['alvo-2', 'Site B', 300],
@@ -420,11 +421,11 @@ describe('intervalo "Outro…"', () => {
     await r.usuario.type(segundos, '29')
     await r.usuario.click(screen.getByRole('button', { name: 'Cadastrar' }))
     await waitFor(() => expect(segundos).toHaveAccessibleDescription(/Mínimo de 30 s/))
-    expect(r.falsa.chamadas('POST /targets')).toBe(0)
+    expect(r.falsa.chamadas('POST /projects/:projectId/targets')).toBe(0)
     await r.usuario.selectOptions(screen.getByLabelText('Intervalo'), '5 minutos')
     expect(screen.queryByLabelText('Intervalo em segundos')).not.toBeInTheDocument()
     await r.usuario.click(screen.getByRole('button', { name: 'Cadastrar' }))
-    await waitFor(() => expect(r.falsa.corpos('POST /targets')[0]).toMatchObject({ interval_sec: 300 }))
+    await waitFor(() => expect(r.falsa.corpos('POST /projects/:projectId/targets')[0]).toMatchObject({ interval_sec: 300 }))
   })
 })
 
@@ -453,8 +454,8 @@ describe('ajustes da revisão (rodada 1)', () => {
     await r.usuario.type(limiar, '0')
     await r.usuario.click(screen.getByLabelText('Padrão (2000 ms)'))
     await r.usuario.click(screen.getByRole('button', { name: 'Cadastrar' }))
-    await waitFor(() => expect(r.falsa.chamadas('POST /targets')).toBe(1))
-    expect(r.falsa.corpos('POST /targets')[0]).not.toHaveProperty('degraded_threshold_ms')
+    await waitFor(() => expect(r.falsa.chamadas('POST /projects/:projectId/targets')).toBe(1))
+    expect(r.falsa.corpos('POST /projects/:projectId/targets')[0]).not.toHaveProperty('degraded_threshold_ms')
   })
 
   // Sabotagem: voltar a "const iniciais = valoresDe(alvo)" a cada render.
@@ -470,8 +471,8 @@ describe('ajustes da revisão (rodada 1)', () => {
     await r.usuario.clear(nome)
     await r.usuario.type(nome, 'API nova')
     await r.usuario.click(screen.getByRole('button', { name: 'Salvar' }))
-    await waitFor(() => expect(r.falsa.corpos('PATCH /targets/:id')).toHaveLength(1))
-    expect(r.falsa.corpos('PATCH /targets/:id')[0]).toEqual({ name: 'API nova' })
+    await waitFor(() => expect(r.falsa.corpos('PATCH /projects/:projectId/targets/:id')).toHaveLength(1))
+    expect(r.falsa.corpos('PATCH /projects/:projectId/targets/:id')[0]).toEqual({ name: 'API nova' })
   })
 
   it('IPv6 só pelos hextetos inteiros: [fc::1] e [fe8::1] são públicos para o safedial', () => {
@@ -496,7 +497,7 @@ describe('ajustes da revisão (rodada 1)', () => {
 
   it('erro de interval_sec do servidor com um intervalo da lista: o seletor recebe o erro e o foco', async () => {
     const r = await renderizarPainel('/targets/new')
-    r.falsa.estado.forcar.set('POST /targets', {
+    r.falsa.estado.forcar.set('POST /projects/:projectId/targets', {
       status: 400,
       code: 'validation_failed',
       fields: [{ field: 'interval_sec', reason: 'out_of_range' }],
@@ -516,10 +517,10 @@ describe('ajustes da revisão (rodada 1)', () => {
     await r.usuario.click(await screen.findByLabelText('Substituir todos'))
     await r.usuario.click(screen.getByRole('button', { name: 'Salvar' }))
     expect(await screen.findByText('Adicione ao menos um header, ou escolha “Remover todos”.')).toBeInTheDocument()
-    expect(r.falsa.chamadas('PATCH /targets/:id')).toBe(0)
+    expect(r.falsa.chamadas('PATCH /projects/:projectId/targets/:id')).toBe(0)
     await r.usuario.click(screen.getByLabelText('Remover todos'))
     await r.usuario.click(screen.getByRole('button', { name: 'Salvar' }))
-    await waitFor(() => expect(r.falsa.corpos('PATCH /targets/:id')).toEqual([{ headers: null }]))
+    await waitFor(() => expect(r.falsa.corpos('PATCH /projects/:projectId/targets/:id')).toEqual([{ headers: null }]))
   })
 })
 

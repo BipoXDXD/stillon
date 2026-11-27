@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   EMAIL,
   LIMITE_DE_PROVAS,
+  PROJETO_PADRAO,
   RECUPERACAO_OK,
   rotacao,
   SEGREDO_NOVO,
@@ -12,7 +13,7 @@ import {
   TOTP_NOVO,
   TOTP_OK,
 } from '@/test/api-falsa'
-import { canal } from '@/test/fixtures'
+import { alvo, canal } from '@/test/fixtures'
 import { buscarDoTeste, novaSessao, usarApiFalsa } from '@/test/ambiente'
 import { servidor } from '@/test/setup'
 import { ApiError, type Buscar } from './http'
@@ -39,7 +40,7 @@ describe('prazo das consultas', () => {
     const buscar = vi.fn<Buscar>(() => resposta)
     const { api } = novaSessao({ buscar })
     const terminou = vi.fn<(resultado: unknown) => void>()
-    const consulta = api.alvos()
+    const consulta = api.doProjeto(PROJETO_PADRAO).alvos()
     const observar = consulta.then(terminou, terminou)
     try {
       expect(buscar).toHaveBeenCalledTimes(1)
@@ -104,7 +105,7 @@ describe('prazo das consultas', () => {
     const { api } = novaSessao({ buscar })
     const motivo = new DOMException('Consulta cancelada.', 'AbortError')
 
-    await expect(api.alvos(AbortSignal.abort(motivo))).rejects.toBe(motivo)
+    await expect(api.doProjeto(PROJETO_PADRAO).alvos(AbortSignal.abort(motivo))).rejects.toBe(motivo)
     expect(buscar).not.toHaveBeenCalled()
   })
 
@@ -128,7 +129,7 @@ describe('prazo das consultas', () => {
       const ouvirConcluida = vi.spyOn(concluida.signal, 'addEventListener')
       const limparConcluida = vi.spyOn(concluida.signal, 'removeEventListener')
 
-      await expect(api.alvos(concluida.signal)).resolves.toEqual({ items: [] })
+      await expect(api.doProjeto(PROJETO_PADRAO).alvos(concluida.signal)).resolves.toEqual({ items: [] })
       expect(ouvirConcluida).toHaveBeenCalledTimes(1)
       expect(limparConcluida).toHaveBeenCalledExactlyOnceWith('abort', ouvirConcluida.mock.calls[0]?.[1])
       expect(ouvirPrazo).toHaveBeenCalledTimes(1)
@@ -139,7 +140,7 @@ describe('prazo das consultas', () => {
       const ouvirPendente = vi.spyOn(pendente.signal, 'addEventListener')
       const limparPendente = vi.spyOn(pendente.signal, 'removeEventListener')
       const motivo = new DOMException('Consulta cancelada.', 'AbortError')
-      const resultado = api.alvos(pendente.signal).catch((erro: unknown) => erro)
+      const resultado = api.doProjeto(PROJETO_PADRAO).alvos(pendente.signal).catch((erro: unknown) => erro)
       expect(ouvirPendente).toHaveBeenCalledTimes(1)
       pendente.abort(motivo)
 
@@ -174,8 +175,8 @@ describe('prazo das consultas', () => {
     const controlador = new AbortController()
     const motivo = new DOMException('Consulta cancelada.', 'AbortError')
     const terminou = vi.fn<(resultado: unknown) => void>()
-    const cancelada = api.alvos(controlador.signal)
-    const ativa = api.heartbeats()
+    const cancelada = api.doProjeto(PROJETO_PADRAO).alvos(controlador.signal)
+    const ativa = api.doProjeto(PROJETO_PADRAO).heartbeats()
     void cancelada.then(terminou, terminou)
     const ambas = Promise.allSettled([cancelada, ativa])
     try {
@@ -222,7 +223,7 @@ describe('a regra do 401', () => {
     }))
     falsa.estado.atrasoRefresh = 20
     falsa.expirarAcessos()
-    const r = await Promise.all([1, 2, 3, 4, 5].map((i) => api.alvo(`a${i}`)))
+    const r = await Promise.all([1, 2, 3, 4, 5].map((i) => api.doProjeto(PROJETO_PADRAO).alvo(`a${i}`)))
     expect(r.map((a) => a.id)).toEqual(['a1', 'a2', 'a3', 'a4', 'a5'])
     expect(falsa.chamadas('POST /auth/refresh')).toBe(1)
     expect(falsa.estado.familiaRevogada).toBe(false)
@@ -487,20 +488,20 @@ describe('a regra do 401', () => {
   it('mutações levam X-Requested-With', async () => {
     const { api } = await logado()
     // not_found, e não forbidden: a guarda do cabeçalho deixou passar.
-    await expect(api.reconhecer('nao-existe')).rejects.toMatchObject({ code: 'not_found' })
+    await expect(api.doProjeto(PROJETO_PADRAO).reconhecer('nao-existe')).rejects.toMatchObject({ code: 'not_found' })
   })
 })
 
 describe('o envelope de erro', () => {
   it('traz code, fields e trace_id', async () => {
     const { falsa, api } = await logado()
-    falsa.estado.forcar.set('POST /targets', {
+    falsa.estado.forcar.set('POST /projects/:projectId/targets', {
       status: 400,
       code: 'validation_failed',
       fields: [{ field: 'url', reason: 'forbidden' }],
     })
     const e = await api
-      .criarAlvo({
+      .doProjeto(PROJETO_PADRAO).criarAlvo({
         name: 'x',
         url: 'http://10.0.0.1',
         method: 'GET',
@@ -587,7 +588,7 @@ describe('o envelope de erro', () => {
   it('sucesso sem JSON válido ou fora do schema vira ApiError "unexpected", não exceção crua', async () => {
     const { falsa, api } = await logado()
     falsa.estado.resumo = [{ bug: true } as never]
-    await expect(api.resumo()).rejects.toMatchObject({ name: 'ApiError', status: 200, code: 'unexpected' })
+    await expect(api.doProjeto(PROJETO_PADRAO).resumo()).rejects.toMatchObject({ name: 'ApiError', status: 200, code: 'unexpected' })
     servidor.use(http.get('*/api/v1/me', () => new HttpResponse('{quebrado', { status: 200, headers: { 'Content-Type': 'application/json' } })))
     await expect(api.me()).rejects.toMatchObject({ name: 'ApiError', status: 200, code: 'unexpected' })
   })
@@ -607,7 +608,7 @@ describe('o envelope de erro', () => {
   it('resposta fora do schema falha com o nome do campo', async () => {
     const { falsa, api } = await logado()
     falsa.estado.resumo = [{ id: 'x', name: 'API' } as never]
-    await expect(api.resumo()).rejects.toThrow(/enabled|state/)
+    await expect(api.doProjeto(PROJETO_PADRAO).resumo()).rejects.toThrow(/enabled|state/)
   })
 })
 
@@ -706,15 +707,15 @@ describe('a API falsa segue o servidor', () => {
   it('PATCH de canal: corpo antes do canal, e campo desconhecido sem fields', async () => {
     const { falsa, sessao } = await logado()
     falsa.estado.canais = [canal()]
-    const desconhecido = await patchCru(sessao.token(), '/channels/canal-1', '{"enabled":true,"cor":"azul"}')
+    const desconhecido = await patchCru(sessao.token(), `/projects/${PROJETO_PADRAO}/channels/canal-1`, '{"enabled":true,"cor":"azul"}')
     expect(desconhecido.status).toBe(400)
     const envelope = (await desconhecido.json()) as { error: { code: string; fields?: unknown } }
     expect(envelope.error.code).toBe('validation_failed')
     expect(envelope.error.fields).toBeUndefined()
-    const semCanal = await patchCru(sessao.token(), '/channels/nao-existe', '{"enabled":"sim"}')
+    const semCanal = await patchCru(sessao.token(), `/projects/${PROJETO_PADRAO}/channels/nao-existe`, '{"enabled":"sim"}')
     expect(semCanal.status).toBe(400)
     expect((await semCanal.json()).error.fields).toEqual([{ field: 'enabled', reason: 'invalid' }])
-    expect((await patchCru(sessao.token(), '/channels/nao-existe', '{"enabled":true}')).status).toBe(404)
+    expect((await patchCru(sessao.token(), `/projects/${PROJETO_PADRAO}/channels/nao-existe`, '{"enabled":true}')).status).toBe(404)
   })
 
   // Sem esquema (DELETE, 204) o pedido resolve sem valor: é o `undefined` que as
@@ -724,15 +725,15 @@ describe('a API falsa segue o servidor', () => {
     const { falsa, api } = await logado()
     const c = canal({ id: 'c1' })
     falsa.estado.canais = [c]
-    await expect(api.apagarCanal('c1')).resolves.toBeUndefined()
+    await expect(api.doProjeto(PROJETO_PADRAO).apagarCanal('c1')).resolves.toBeUndefined()
     expect(falsa.estado.canais).toEqual([])
   })
 
   // ChannelHandlers.Delete e Resend: canal que não existe é 404.
   it('apagar ou reenviar a verificação de canal que não existe é 404', async () => {
     const { api } = await logado()
-    await expect(api.apagarCanal('nao-existe')).rejects.toMatchObject({ status: 404, code: 'not_found' })
-    await expect(api.reenviarVerificacao('nao-existe')).rejects.toMatchObject({ status: 404, code: 'not_found' })
+    await expect(api.doProjeto(PROJETO_PADRAO).apagarCanal('nao-existe')).rejects.toMatchObject({ status: 404, code: 'not_found' })
+    await expect(api.doProjeto(PROJETO_PADRAO).reenviarVerificacao('nao-existe')).rejects.toMatchObject({ status: 404, code: 'not_found' })
   })
 })
 
@@ -846,39 +847,39 @@ describe('o id hostil vai codificado em toda rota com id', () => {
   const CURSOR_SEG = 'cur%2Fsor%3F'
 
   const rotas: [string, (api: ReturnType<typeof novaSessao>['api']) => Promise<unknown>, string][] = [
-    ['alvo', (a) => a.alvo(ID), `GET /api/v1/targets/${SEG}`],
-    ['alterarAlvo', (a) => a.alterarAlvo(ID, {}), `PATCH /api/v1/targets/${SEG}`],
-    ['apagarAlvo', (a) => a.apagarAlvo(ID), `DELETE /api/v1/targets/${SEG}`],
-    ['serie', (a) => a.serie(ID, '24h'), `GET /api/v1/targets/${SEG}/checks?window=24h`],
-    ['reconhecer', (a) => a.reconhecer(ID), `POST /api/v1/incidents/${SEG}/ack`],
-    ['heartbeat', (a) => a.heartbeat(ID), `GET /api/v1/heartbeats/${SEG}`],
-    ['alterarHeartbeat', (a) => a.alterarHeartbeat(ID, {}), `PATCH /api/v1/heartbeats/${SEG}`],
-    ['apagarHeartbeat', (a) => a.apagarHeartbeat(ID), `DELETE /api/v1/heartbeats/${SEG}`],
-    ['rotacionarHeartbeat', (a) => a.rotacionarHeartbeat(ID), `POST /api/v1/heartbeats/${SEG}/token/rotate`],
-    ['duplicarHeartbeat', (a) => a.duplicarHeartbeat(ID), `POST /api/v1/heartbeats/${SEG}/clone`],
-    ['limparEventosDoHeartbeat', (a) => a.limparEventosDoHeartbeat(ID), `POST /api/v1/heartbeats/${SEG}/events/clear`],
-    ['sinalizarAgora', (a) => a.sinalizarAgora(ID), `POST /api/v1/heartbeats/${SEG}/ping-now`],
-    ['eventosDoHeartbeat', (a) => a.eventosDoHeartbeat(ID), `GET /api/v1/heartbeats/${SEG}/events?limit=20`],
+    ['alvo', (a) => a.doProjeto('p').alvo(ID), `GET /api/v1/projects/p/targets/${SEG}`],
+    ['alterarAlvo', (a) => a.doProjeto('p').alterarAlvo(ID, {}), `PATCH /api/v1/projects/p/targets/${SEG}`],
+    ['apagarAlvo', (a) => a.doProjeto('p').apagarAlvo(ID), `DELETE /api/v1/projects/p/targets/${SEG}`],
+    ['serie', (a) => a.doProjeto('p').serie(ID, '24h'), `GET /api/v1/projects/p/targets/${SEG}/checks?window=24h`],
+    ['reconhecer', (a) => a.doProjeto('p').reconhecer(ID), `POST /api/v1/projects/p/incidents/${SEG}/ack`],
+    ['heartbeat', (a) => a.doProjeto('p').heartbeat(ID), `GET /api/v1/projects/p/heartbeats/${SEG}`],
+    ['alterarHeartbeat', (a) => a.doProjeto('p').alterarHeartbeat(ID, {}), `PATCH /api/v1/projects/p/heartbeats/${SEG}`],
+    ['apagarHeartbeat', (a) => a.doProjeto('p').apagarHeartbeat(ID), `DELETE /api/v1/projects/p/heartbeats/${SEG}`],
+    ['rotacionarHeartbeat', (a) => a.doProjeto('p').rotacionarHeartbeat(ID), `POST /api/v1/projects/p/heartbeats/${SEG}/token/rotate`],
+    ['duplicarHeartbeat', (a) => a.doProjeto('p').duplicarHeartbeat(ID), `POST /api/v1/projects/p/heartbeats/${SEG}/clone`],
+    ['limparEventosDoHeartbeat', (a) => a.doProjeto('p').limparEventosDoHeartbeat(ID), `POST /api/v1/projects/p/heartbeats/${SEG}/events/clear`],
+    ['sinalizarAgora', (a) => a.doProjeto('p').sinalizarAgora(ID), `POST /api/v1/projects/p/heartbeats/${SEG}/ping-now`],
+    ['eventosDoHeartbeat', (a) => a.doProjeto('p').eventosDoHeartbeat(ID), `GET /api/v1/projects/p/heartbeats/${SEG}/events?limit=20`],
     [
       'eventosDoHeartbeat com cursor',
-      (a) => a.eventosDoHeartbeat(ID, CURSOR),
-      `GET /api/v1/heartbeats/${SEG}/events?cursor=${CURSOR_SEG}&limit=20`,
+      (a) => a.doProjeto('p').eventosDoHeartbeat(ID, CURSOR),
+      `GET /api/v1/projects/p/heartbeats/${SEG}/events?cursor=${CURSOR_SEG}&limit=20`,
     ],
-    ['incidentesDoHeartbeat', (a) => a.incidentesDoHeartbeat(ID), `GET /api/v1/heartbeats/${SEG}/incidents?limit=20`],
+    ['incidentesDoHeartbeat', (a) => a.doProjeto('p').incidentesDoHeartbeat(ID), `GET /api/v1/projects/p/heartbeats/${SEG}/incidents?limit=20`],
     [
       'incidentesDoHeartbeat com cursor',
-      (a) => a.incidentesDoHeartbeat(ID, CURSOR),
-      `GET /api/v1/heartbeats/${SEG}/incidents?cursor=${CURSOR_SEG}&limit=20`,
+      (a) => a.doProjeto('p').incidentesDoHeartbeat(ID, CURSOR),
+      `GET /api/v1/projects/p/heartbeats/${SEG}/incidents?cursor=${CURSOR_SEG}&limit=20`,
     ],
     [
       'reconhecerDoHeartbeat',
-      (a) => a.reconhecerDoHeartbeat(ID, ID),
-      `POST /api/v1/heartbeats/${SEG}/incidents/${SEG}/ack`,
+      (a) => a.doProjeto('p').reconhecerDoHeartbeat(ID, ID),
+      `POST /api/v1/projects/p/heartbeats/${SEG}/incidents/${SEG}/ack`,
     ],
-    ['apagarCanal', (a) => a.apagarCanal(ID), `DELETE /api/v1/channels/${SEG}`],
-    ['reenviarVerificacao', (a) => a.reenviarVerificacao(ID), `POST /api/v1/channels/${SEG}/verify/resend`],
-    ['pausarCanal', (a) => a.pausarCanal(ID, true), `PATCH /api/v1/channels/${SEG}`],
-    ['alterarPagina', (a) => a.alterarPagina(ID, {}), `PATCH /api/v1/status-pages/${SEG}`],
+    ['apagarCanal', (a) => a.doProjeto('p').apagarCanal(ID), `DELETE /api/v1/projects/p/channels/${SEG}`],
+    ['reenviarVerificacao', (a) => a.doProjeto('p').reenviarVerificacao(ID), `POST /api/v1/projects/p/channels/${SEG}/verify/resend`],
+    ['pausarCanal', (a) => a.doProjeto('p').pausarCanal(ID, true), `PATCH /api/v1/projects/p/channels/${SEG}`],
+    ['alterarPagina', (a) => a.doProjeto('p').alterarPagina(ID, {}), `PATCH /api/v1/projects/p/status-pages/${SEG}`],
     ['encerrarSessao', (a) => a.encerrarSessao(ID), `DELETE /api/v1/sessions/${SEG}`],
   ]
 
@@ -948,5 +949,64 @@ describe('o cadastro público', () => {
     await expect(api.configDoCadastro()).resolves.toEqual({ enabled: true, turnstile_site_key: SITE_KEY_DO_TURNSTILE })
     falsa.estado.cadastro.habilitado = false
     await expect(api.configDoCadastro()).resolves.toEqual({ enabled: false, turnstile_site_key: '' })
+  })
+})
+
+// Os recursos moram no projeto (spec do PR 2b): o id do projeto entra no
+// caminho codificado como segmento, como o id do recurso.
+describe('recursos vão para o projeto', () => {
+  function capturar() {
+    const pedidos: { rota: string; init: RequestInit }[] = []
+    const buscar = (entrada: string, init: RequestInit) => {
+      pedidos.push({ rota: `${init.method ?? 'GET'} ${entrada}`, init })
+      return Promise.resolve(Response.json({}))
+    }
+    return { pedidos, ...novaSessao({ buscar }) }
+  }
+
+  // Sabotagem: doProjeto sem o prefixo /projects/{id} → a rota sai na raiz.
+  it('o recurso do projeto vai para /projects/{id}, com o id codificado', async () => {
+    const { pedidos, api } = capturar()
+    await api.doProjeto('p/1').alvo('a').catch(() => undefined)
+    expect(pedidos.map((p) => p.rota)).toEqual(['GET /api/v1/projects/p%2F1/targets/a'])
+  })
+
+  it('a lista de projetos vem de /projects', async () => {
+    const { pedidos, api } = capturar()
+    await api.projetos().catch(() => undefined)
+    expect(pedidos.map((p) => p.rota)).toEqual(['GET /api/v1/projects'])
+  })
+
+  it('criarProjeto manda X-Requested-With e o corpo {name}', async () => {
+    const { pedidos, api } = capturar()
+    await api.criarProjeto({ name: 'Loja' }).catch(() => undefined)
+    expect(pedidos.map((p) => p.rota)).toEqual(['POST /api/v1/projects'])
+    const init = pedidos[0]!.init
+    expect(new Headers(init.headers).get('X-Requested-With')).toBe('stillon')
+    expect(JSON.parse(String(init.body))).toEqual({ name: 'Loja' })
+  })
+
+  it('o projeto da API falsa responde com os recursos dele, não com os do padrão', async () => {
+    const { falsa, api } = await logado()
+    const outro = falsa.criarProjeto('Loja')
+    outro.recursos.alvos.push(alvo({ id: 'alvo-da-loja' }))
+    falsa.estado.alvos.push(alvo({ id: 'alvo-do-padrao' }))
+    expect((await api.doProjeto(outro.projeto.id).alvos()).items.map((a) => a.id)).toEqual(['alvo-da-loja'])
+    expect((await api.doProjeto(PROJETO_PADRAO).alvos()).items.map((a) => a.id)).toEqual(['alvo-do-padrao'])
+  })
+
+  it('a API falsa lista e cria projetos, o padrão primeiro', async () => {
+    const { api } = await logado()
+    const criado = await api.criarProjeto({ name: 'Loja' })
+    expect(criado).toMatchObject({ name: 'Loja', is_default: false, role: 'owner' })
+    expect((await api.projetos()).items.map((p) => [p.id, p.is_default])).toEqual([
+      [PROJETO_PADRAO, true],
+      [criado.id, false],
+    ])
+  })
+
+  it('projeto que não existe é 404 na API falsa', async () => {
+    const { api } = await logado()
+    await expect(api.doProjeto('nao-existe').alvos()).rejects.toMatchObject({ code: 'not_found' })
   })
 })

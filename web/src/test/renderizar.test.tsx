@@ -3,7 +3,7 @@ import { act, screen, waitFor } from '@testing-library/react'
 import { beforeEach, expect, it, vi } from 'vitest'
 import { rotas } from '@/app/rotas'
 import type { Sessao } from '@/lib/api/sessao'
-import type { ApiFalsa } from './api-falsa'
+import { PROJETO_PADRAO, type ApiFalsa } from './api-falsa'
 import { alvo } from './fixtures'
 import { renderizarPainel } from './renderizar'
 
@@ -83,7 +83,12 @@ function portao() {
 }
 
 function rotaDoDetalhe() {
-  const rota = rotas[1]?.children?.[0]?.children?.flatMap((r) => r.children ?? []).find((r) => r.path === 'targets/:id')
+  const rota = rotas
+    .flatMap((r) => r.children ?? [])
+    .flatMap((r) => r.children ?? [])
+    .find((r) => r.path === 'projects/:projectId')
+    ?.children?.flatMap((r) => r.children ?? [])
+    .find((r) => r.path === 'targets/:id')
   if (!rota || typeof rota.lazy !== 'function') throw new Error('rota lazy real do detalhe ausente')
   return rota
 }
@@ -163,7 +168,7 @@ it('a fixture não conclui antes da rota lazy real, mesmo com a sessão pronta',
     // Uma única interação externa mantém os acts internos aninhados e
     // deixa as assertivas de DOM para depois do flush, sem sobreposição.
     await act(async () => {
-      montagem = renderizarPainel('/targets/alvo-1').then((r) => { concluida = true; return r })
+      montagem = renderizarPainel(`/projects/${PROJETO_PADRAO}/targets/alvo-1`).then((r) => { concluida = true; return r })
       await entrou.aberto
       const sessao = captura.sessao
       if (!sessao) throw new Error('sessão real não criada')
@@ -231,7 +236,7 @@ it('import rejeitado chega ao boundary real sem pendurar a fixture', async () =>
   rota.lazy = async () => { throw new TypeError('Failed to fetch dynamically imported module: /assets/detalhe-antigo.js') }
   let r: Awaited<ReturnType<typeof renderizarPainel>> | undefined
   try {
-    r = await renderizarPainel('/targets/alvo-1')
+    r = await renderizarPainel(`/projects/${PROJETO_PADRAO}/targets/alvo-1`)
     expect(r.router.state.initialized).toBe(true)
     expect(await screen.findByRole('heading', { name: 'Há uma versão nova do painel' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Recarregar' })).toBeInTheDocument()

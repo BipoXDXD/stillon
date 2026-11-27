@@ -5,9 +5,10 @@ import { alvo, itemDoResumo, pagina } from '@/test/fixtures'
 import { renderizarPainel } from '@/test/renderizar'
 import { servidor } from '@/test/setup'
 import { sugerirSlug } from './PaginaStatusPage'
+import { PROJETO_PADRAO } from '@/test/api-falsa'
 
-const PATCH = 'PATCH /status-pages/:id'
-const POST = 'POST /status-pages'
+const PATCH = 'PATCH /projects/:projectId/status-pages/:id'
+const POST = 'POST /projects/:projectId/status-pages'
 
 function respostaControlada() {
   let soltar!: () => void
@@ -41,7 +42,7 @@ describe('status page sem alvos', () => {
     const grupo = screen.getByRole('group', { name: 'Alvos na página' })
     expect(within(grupo).getByText('Você ainda não tem alvos para mostrar nesta página.')).toBeInTheDocument()
     const link = within(grupo).getByRole('link', { name: 'Cadastrar primeiro alvo (abre em nova aba)' })
-    expect(link).toHaveAttribute('href', '/targets/new')
+    expect(link).toHaveAttribute('href', '/projects/proj-padrao/targets/new')
     expect(link).toHaveAttribute('target', '_blank')
     expect(link).toHaveAttribute('rel', 'noopener')
     expect(within(grupo).queryByText(/de 20/)).not.toBeInTheDocument()
@@ -53,7 +54,7 @@ describe('status page sem alvos', () => {
     const r = await montar({ alvos: [] })
     screen.getByRole('link', { name: 'Cadastrar primeiro alvo (abre em nova aba)' }).focus()
     r.falsa.estado.alvos = [alvo()]
-    await r.cliente.refetchQueries({ queryKey: ['targets', 'list'] })
+    await r.cliente.refetchQueries({ queryKey: ['projeto', PROJETO_PADRAO, 'targets', 'list'] })
     expect(await screen.findByLabelText('Acrescentar alvo')).toBeInTheDocument()
     expect(screen.queryByRole('link', { name: /Cadastrar primeiro alvo/ })).not.toBeInTheDocument()
     await waitFor(() => expect(screen.getByLabelText('Acrescentar alvo')).toHaveFocus())
@@ -232,7 +233,7 @@ describe('status page: contratos públicos complementares', () => {
     // Nova página remonta o formulário. O decoder HTTP admite arrays sem
     // max; 21 itens não são uma saída normal do serviço Go atual.
     r.falsa.estado.paginas = [pagina({ id: 'snapshot-fora-da-faixa', items: itens })]
-    await r.cliente.refetchQueries({ queryKey: ['status-pages'] })
+    await r.cliente.refetchQueries({ queryKey: ['projeto', PROJETO_PADRAO, 'status-pages'] })
     await screen.findByRole('group', { name: 'Alvos na página (21 de 20)' })
     await r.usuario.click(screen.getByRole('button', { name: 'Salvar' }))
     expect(await screen.findByText('Até 20 alvos.')).toBeInTheDocument()
@@ -254,7 +255,7 @@ describe('status page: contratos públicos complementares', () => {
     const r = await montar({ alvos: [alvo(), alvo({ id: 'alvo-2', name: 'Site' })] })
     await r.usuario.selectOptions(screen.getByLabelText('Acrescentar alvo'), 'alvo-1')
     r.falsa.estado.alvos = [alvo({ id: 'alvo-2', name: 'Site' })]
-    await r.cliente.refetchQueries({ queryKey: ['targets', 'list'] })
+    await r.cliente.refetchQueries({ queryKey: ['projeto', PROJETO_PADRAO, 'targets', 'list'] })
     await r.usuario.click(screen.getByRole('button', { name: 'Acrescentar' }))
     expect(await screen.findByLabelText('Nome de exibição de alvo apagado')).toHaveValue('')
     const previa = screen.getByRole('region', { name: 'Prévia aproximada' })
@@ -275,11 +276,11 @@ describe('status page: contratos públicos complementares', () => {
   it('alvos carregando não impedem link público; erro HTTP permite tentar de novo e recuperar o formulário', async () => {
     const r = await montar({ pagina: pagina({ published: true }) })
     const p = respostaControlada()
-    servidor.use(http.get('*/api/v1/targets', async () => {
+    servidor.use(http.get('*/api/v1/projects/:projectId/targets', async () => {
       await p.liberada
       return HttpResponse.json({ error: { code: 'unavailable', message: 'genérica' }, trace_id: 'teste-status-page' }, { status: 503 })
     }, { once: true }))
-    const leitura = r.cliente.resetQueries({ queryKey: ['targets', 'list'] })
+    const leitura = r.cliente.resetQueries({ queryKey: ['projeto', PROJETO_PADRAO, 'targets', 'list'] })
     try {
       expect(await screen.findByText('Carregando…')).toBeInTheDocument()
       expect(screen.getByRole('link', { name: 'Abrir' })).toHaveAttribute('target', '_blank')
@@ -296,7 +297,7 @@ describe('status page: contratos públicos complementares', () => {
   it('tirar item e navegar com PATCH em voo desmonta a página; resposta não reabre o formulário', async () => {
     const r = await montar({ pagina: comItem(), alvos: [] })
     const p = respostaControlada()
-    servidor.use(http.patch('*/api/v1/status-pages/:id', async () => {
+    servidor.use(http.patch('*/api/v1/projects/:projectId/status-pages/:id', async () => {
       await p.liberada
       return HttpResponse.json(comItem())
     }))

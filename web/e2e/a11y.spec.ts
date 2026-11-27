@@ -3,7 +3,7 @@ import type { Locator, Page } from '@playwright/test'
 import type { z } from 'zod'
 import type { Serie } from '../src/lib/api/schemas'
 import { alvo, incidente, me, pagina } from '../src/test/fixtures'
-import { agora, codigosNovos, hora, imitarApi, item, SEGREDO_NOVO, TOKEN_DE_PING } from './api-imitada'
+import { agora, codigosNovos, hora, imitarApi, item, NO_PROJETO as P, SEGREDO_NOVO, TOKEN_DE_PING } from './api-imitada'
 import { controlePositivo, expect, test } from './fixtures'
 
 // Todas as rotas do painel, com a API respondida pelo próprio teste
@@ -14,18 +14,20 @@ import { controlePositivo, expect, test } from './fixtures'
 // TODAS as telas, não só às do fluxo crítico. O axe roda sob a CSP de
 // produção, sem bypassCSP (spike do Plano 6, §8.4).
 
+// As telas de recurso moram no projeto da URL (/projects/{id}/…); a conta
+// fica fora dele.
 const ROTAS: [string, string][] = [
-  ['/', 'Painel'],
-  ['/targets/new', 'Novo alvo'],
-  ['/targets/a1', 'API'],
-  ['/targets/a1?janela=7d', 'API'],
-  ['/targets/a1/edit', 'Editar alvo'],
-  ['/heartbeats/new', 'Novo heartbeat'],
-  ['/heartbeats/h1', 'Backup noturno'],
-  ['/heartbeats/h1/edit', 'Editar heartbeat'],
-  ['/incidents', 'Incidentes'],
-  ['/channels', 'Canais de notificação'],
-  ['/status-pages', 'Status page'],
+  [`${P}/`, 'Painel'],
+  [`${P}/targets/new`, 'Novo alvo'],
+  [`${P}/targets/a1`, 'API'],
+  [`${P}/targets/a1?janela=7d`, 'API'],
+  [`${P}/targets/a1/edit`, 'Editar alvo'],
+  [`${P}/heartbeats/new`, 'Novo heartbeat'],
+  [`${P}/heartbeats/h1`, 'Backup noturno'],
+  [`${P}/heartbeats/h1/edit`, 'Editar heartbeat'],
+  [`${P}/incidents`, 'Incidentes'],
+  [`${P}/channels`, 'Canais de notificação'],
+  [`${P}/status-pages`, 'Status page'],
   ['/settings', 'Configurações'],
 ]
 
@@ -53,7 +55,7 @@ for (const tema of ['claro', 'escuro'] as const) {
       await controlePositivo(page, rota)
     }
     // Um diálogo aberto também passa pelo axe e pela CSP.
-    await page.goto('/channels')
+    await page.goto(P + '/channels')
     await page.getByRole('button', { name: 'Novo canal' }).click()
     await expect(page.getByRole('dialog')).toBeVisible()
     const r = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze()
@@ -68,7 +70,7 @@ for (const tema of ['claro', 'escuro'] as const) {
     expect(pausar.violations.map((v) => v.id)).toEqual([])
     await controlePositivo(page, 'confirmação de pausar')
     // O aviso de trocar o destino de um alvo com headers (B1 do Plano 10).
-    await page.goto('/targets/a1/edit')
+    await page.goto(P + '/targets/a1/edit')
     await page.getByLabel('URL').fill('https://outro.exemplo.com/health')
     await page.getByRole('button', { name: 'Salvar' }).click()
     await expect(page.getByRole('alertdialog', { name: 'Trocar o destino do alvo?' })).toBeVisible()
@@ -185,9 +187,11 @@ test('passada de teclado em todas as rotas', async ({ page }, info) => {
     }
     // Sem isto, um laço que parasse no primeiro Tab (foco no <body>) passaria
     // sem conferir parada nenhuma: a primeira é o salto, e há o cabeçalho
-    // inteiro (salto, cinco links, tema, Sair) antes do conteúdo.
+    // inteiro (salto, seletor de projeto, cinco links, tema, Sair) antes do
+    // conteúdo.
     expect(paradas[0], `${rota}: a primeira parada`).toBe('a "Pular para o conteúdo"')
-    expect(paradas.length, `${rota}: paradas`).toBeGreaterThanOrEqual(8)
+    expect(paradas[1], `${rota}: a segunda parada`).toMatch(/^button "Projeto: /)
+    expect(paradas.length, `${rota}: paradas`).toBeGreaterThanOrEqual(9)
     relatorio.push(`${rota}: ${paradas.length} paradas — ${paradas.join(' | ')}`)
   }
   await info.attach('passada-de-teclado.txt', { body: relatorio.join('\n'), contentType: 'text/plain' })
@@ -290,7 +294,7 @@ for (const tema of ['claro', 'escuro'] as const) {
       await expect(page.getByRole('navigation', { name: 'Principal' })).toBeVisible()
       await conferir(rota)
     }
-    await page.goto('/targets/new')
+    await page.goto(P + '/targets/new')
     // Os headers ficam no "Avançado", recolhido no cadastro.
     await page.locator('summary', { hasText: 'Avançado' }).click()
     await page.getByRole('button', { name: 'Adicionar header' }).click()
@@ -323,7 +327,7 @@ test('aviso de HTTPS fica acima do cabeçalho em toda largura e mantém o login'
   const titulo = 'Este painel precisa de HTTPS (ou de localhost).'
   for (const largura of [360, 1024, 1280, 1600]) {
     await page.setViewportSize({ width: largura, height: 900 })
-    await page.goto('/')
+    await page.goto(P + '/')
     await expect(page.getByRole('heading', { name: 'Painel', level: 1 })).toBeVisible()
     const aviso = page.getByRole('alert').filter({ hasText: titulo })
     await expect(aviso).toBeVisible()
@@ -423,7 +427,7 @@ for (const largura of [400, 1280]) {
         expect(await pontosForaDoAlvo(controle), `${largura} px: ${nome}`).toEqual([])
       }
     }
-    await page.goto('/')
+    await page.goto(P + '/')
     await expect(page.getByRole('heading', { name: 'Painel', level: 1 })).toBeVisible()
     await esperarOConteudo(page, '/')
     await conferir([
@@ -433,6 +437,7 @@ for (const largura of [400, 1280]) {
       ['filtro de tag', page.getByRole('group', { name: 'Tags' }).getByRole('button', { name: /^prod/ })],
       ['busca', page.getByRole('searchbox', { name: 'Buscar por nome ou tag' })],
       ['ordenar por', page.getByRole('combobox', { name: 'Ordenar por' })],
+      ['seletor de projeto', page.getByRole('button', { name: /^Projeto:/ })],
       // No celular a coluna Situação some, e o incidente fica a um toque no detalhe do alvo.
       ...(largura === 1280 ? ([['Ver incidente', page.getByRole('link', { name: 'Ver incidente de Banco' })]] satisfies [string, Locator][]) : []),
       ...['Painel', 'Incidentes', 'Canais', 'Status', 'Conta'].map((aba): [string, Locator] => [
@@ -441,14 +446,14 @@ for (const largura of [400, 1280]) {
       ]),
     ])
     expect(await controlesEncobertos(page), `${largura} px: painel`).toEqual([])
-    await page.goto('/?estado=down&ordem=nome')
+    await page.goto(P + '/?estado=down&ordem=nome')
     await esperarOConteudo(page, '/')
     await expect(page.getByRole('combobox', { name: 'Ordenar por' })).toHaveValue('nome')
     await expect(page.getByRole('group', { name: 'Estado' }).getByRole('button', { name: /^Fora do ar/ })).toHaveAttribute('aria-pressed', 'true')
     await conferir([['ordenar por, com filtro', page.getByRole('combobox', { name: 'Ordenar por' })]])
     expect(await page.evaluate(() => document.documentElement.scrollWidth), `${largura} px: rolagem lateral`).toBe(largura)
     expect(await controlesEncobertos(page), `${largura} px: painel filtrado e ordenado`).toEqual([])
-    await page.goto('/targets/a1')
+    await page.goto(P + '/targets/a1')
     await expect(page.getByRole('heading', { name: 'API', level: 1 })).toBeVisible()
     await esperarOConteudo(page, '/targets/a1')
     await conferir([
@@ -461,7 +466,7 @@ for (const largura of [400, 1280]) {
     ])
     await page.locator('summary', { hasText: 'Ver dados em tabela' }).click()
     expect(await controlesEncobertos(page), `${largura} px: detalhe do alvo`).toEqual([])
-    await page.goto('/incidents')
+    await page.goto(P + '/incidents')
     await expect(page.getByRole('heading', { name: 'Incidentes', level: 1 })).toBeVisible()
     await esperarOConteudo(page, '/incidents')
     await conferir([
@@ -475,7 +480,7 @@ for (const largura of [400, 1280]) {
     // Os botões do tamanho "pequeno": o cabeçalho em toda tela, o formulário
     // de alvo, os canais e a status page. Sabotagem: tirar o min-h-11 da base
     // do Botao (components/ui/botao.tsx), ou o size-11 do botão de tema.
-    await page.goto('/targets/new')
+    await page.goto(P + '/targets/new')
     await expect(page.getByRole('heading', { name: 'Novo alvo', level: 1 })).toBeVisible()
     // Os headers e a regra de conteúdo ficam no mesmo "Avançado", recolhido num
     // alvo novo; o summary também é alvo de toque. Aberto, a regra com o JSON
@@ -492,7 +497,7 @@ for (const largura of [400, 1280]) {
       ['Verificação', page.getByRole('combobox', { name: 'Verificação' })],
     ])
     expect(await controlesEncobertos(page), `${largura} px: novo alvo`).toEqual([])
-    await page.goto('/channels')
+    await page.goto(P + '/channels')
     await expect(page.getByRole('heading', { name: 'Canais de notificação', level: 1 })).toBeVisible()
     await esperarOConteudo(page, '/channels')
     await conferir([
@@ -502,7 +507,7 @@ for (const largura of [400, 1280]) {
       ['Apagar', page.getByRole('button', { name: 'Apagar o canal discord.com/…/abcd' })],
     ])
     expect(await controlesEncobertos(page), `${largura} px: canais`).toEqual([])
-    await page.goto('/status-pages')
+    await page.goto(P + '/status-pages')
     await expect(page.getByRole('heading', { name: 'Status page', level: 1 })).toBeVisible()
     await esperarOConteudo(page, '/status-pages')
     await conferir([
@@ -540,13 +545,13 @@ for (const largura of [400, 1280]) {
   test(`rótulos dos eixos do gráfico inteiros, ${largura} px`, async ({ page }) => {
     await page.setViewportSize({ width: largura, height: 900 })
     await imitarApi(page)
-    await page.route('**/api/v1/targets/a1/checks**', (route) => {
+    await page.route('**/api/v1/projects/*/targets/a1/checks**', (route) => {
       const janela = new URL(route.request().url()).searchParams.get('window')
       return route.fulfill({ status: 200, json: janela === '7d' ? horariaLenta : lenta })
     })
     // O maior rótulo é o teto da escala robusta: 2400 ms vai a 5000; o p95
     // de 9800 ms, a 20000.
-    for (const [rota, maior] of [['/targets/a1', '5000 ms'], ['/targets/a1?janela=7d', '20000 ms']] as const) {
+    for (const [rota, maior] of [[`${P}/targets/a1`, '5000 ms'], [`${P}/targets/a1?janela=7d`, '20000 ms']] as const) {
       await page.goto(rota)
       await expect(page.getByRole('heading', { name: 'API', level: 1 })).toBeVisible()
       const grafico = page.getByTestId('grafico-latencia')
@@ -602,7 +607,7 @@ for (const largura of [400, 1280]) {
   test(`contador de abertos sem cobrir o texto da aba, ${largura} px`, async ({ page }) => {
     await page.setViewportSize({ width: largura, height: 700 })
     await imitarApi(page)
-    await page.goto('/')
+    await page.goto(P + '/')
     await expect(page.getByRole('heading', { name: 'Painel', level: 1 })).toBeVisible()
     // A API imitada tem um incidente de alvo e uma tarefa atrasada: o contador soma os dois.
     const aba = page.getByRole('navigation', { name: 'Principal' }).getByRole('link', { name: 'Incidentes, 2 abertos' })
@@ -619,17 +624,18 @@ for (const largura of [400, 1280]) {
 }
 
 // Teclado com a navegação nova: o salto continua o primeiro Tab e leva ao
-// conteúdo; o cabeçalho vem na ordem do DOM (as cinco abas, o tema, o Sair)
+// conteúdo; o cabeçalho vem na ordem do DOM (o seletor de projeto, as cinco
+// abas, o tema, o Sair)
 // nas duas larguras, porque é um <nav> só. No celular, cada controle do
 // conteúdo que recebe o foco pelo Tab fica acima da barra fixa (WCAG
 // 2.4.11). Sabotagem: tirar o scroll-padding-bottom do index.css.
-const ORDEM_DO_CABECALHO = ['Pular para o conteúdo', 'Painel', 'Incidentes', 'Canais', 'Status', 'Conta', 'Tema:', 'Sair']
+const ORDEM_DO_CABECALHO = ['Pular para o conteúdo', 'Projeto:', 'Painel', 'Incidentes', 'Canais', 'Status', 'Conta', 'Tema:', 'Sair']
 
 for (const largura of [400, 1280]) {
   test(`teclado a ${largura} px: salto, ordem do cabeçalho e foco fora da barra`, async ({ page }) => {
     await page.setViewportSize({ width: largura, height: 700 })
     await imitarApi(page)
-    for (const [rota, titulo] of [['/targets/new', 'Novo alvo'], ['/settings', 'Configurações']] as const) {
+    for (const [rota, titulo] of [[`${P}/targets/new`, 'Novo alvo'], ['/settings', 'Configurações']] as const) {
       await page.goto(rota)
       await expect(page.getByRole('heading', { name: titulo, level: 1 })).toBeVisible()
       await esperarOConteudo(page, rota)
@@ -688,8 +694,8 @@ for (const largura of [400, 1280]) {
       await page.setViewportSize({ width: largura, height: 900 })
       await page.emulateMedia({ colorScheme: tema === 'escuro' ? 'dark' : 'light' })
       await imitarApi(page)
-      await page.route('**/api/v1/targets/summary?*', (route) => route.fulfill({ status: 200, json: { items: [] } }))
-      await page.goto('/?tag=prod&estado=down&busca=nada')
+      await page.route('**/api/v1/projects/*/targets/summary?*', (route) => route.fulfill({ status: 200, json: { items: [] } }))
+      await page.goto(P + '/?tag=prod&estado=down&busca=nada')
       await expect(page.getByText('Nenhum monitor com esses filtros.')).toBeVisible()
       await expect(page.getByRole('group', { name: 'Tags' }).getByRole('button', { name: /^prod/ })).toHaveAttribute('aria-pressed', 'true')
       await esperarOConteudo(page, '/')
@@ -709,7 +715,7 @@ for (const largura of [400, 1280]) {
       await page.setViewportSize({ width: largura, height: 900 })
       await page.emulateMedia({ colorScheme: tema === 'escuro' ? 'dark' : 'light' })
       await imitarApi(page)
-      await page.goto('/')
+      await page.goto(P + '/')
       await page.getByRole('link', { name: 'Cadastrar heartbeat' }).click()
       await page.getByLabel('Nome', { exact: true }).fill('Backup')
       await page.getByRole('button', { name: 'Cadastrar', exact: true }).click()
@@ -738,7 +744,7 @@ for (const largura of [400, 1280]) {
         if (passo < 2) await page.goBack()
       }
 
-      await page.goto('/heartbeats/h1')
+      await page.goto(P + '/heartbeats/h1')
       await expect(page.getByRole('heading', { name: 'Backup noturno', level: 1 })).toBeVisible()
       await expect(page.getByRole('button', { name: /^Reconhecer o incidente/ })).toBeVisible()
       await expect(page.getByText('levou 3 min')).toBeVisible()
@@ -755,7 +761,7 @@ for (const largura of [400, 1280]) {
         expect(await pontosForaDoAlvo(controle)).toEqual([])
       }
 
-      await page.goto('/incidents')
+      await page.goto(P + '/incidents')
       await expect(page.getByRole('region', { name: 'Tarefas que pedem atenção' }).getByRole('link', { name: 'Backup noturno' })).toBeVisible()
       expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(largura)
       const incidentes = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze()
@@ -784,7 +790,7 @@ for (const largura of [400, 768, 1024, 1280]) {
     await page.setViewportSize({ width: largura, height: 900 })
     await imitarApi(page)
     // Registrada depois, esta rota vence a do imitarApi para o resumo.
-    await page.route('**/api/v1/targets/summary', (route) => route.fulfill({ status: 200, json: { items: MUITOS_ALVOS } }))
+    await page.route('**/api/v1/projects/*/targets/summary', (route) => route.fulfill({ status: 200, json: { items: MUITOS_ALVOS } }))
     const semRolagemLateral = async (contexto: string) => {
       expect(await page.evaluate(() => document.documentElement.scrollWidth), `${contexto}: largura`).toBe(largura)
       const axe = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze()
@@ -792,7 +798,7 @@ for (const largura of [400, 768, 1024, 1280]) {
       await controlePositivo(page, contexto)
     }
 
-    await page.goto('/')
+    await page.goto(P + '/')
     await expect(page.getByRole('heading', { name: 'Dois serviços e uma tarefa pedem atenção.', level: 2 })).toBeVisible()
     await esperarOConteudo(page, '/')
     const monitores = page.getByRole('table', { name: /^Monitores/ })
@@ -805,24 +811,24 @@ for (const largura of [400, 768, 1024, 1280]) {
     await expect(monitores.getByRole('link', { name: NOME_LONGO, exact: true })).toBeVisible()
     await semRolagemLateral(`painel ${largura}`)
     // O detalhe do alvo de nome longo, fora do ar.
-    await page.route('**/api/v1/targets/a1', (route) =>
+    await page.route('**/api/v1/projects/*/targets/a1', (route) =>
       route.fulfill({ status: 200, json: alvo({ id: 'a1', name: NOME_LONGO, created_at: agora }) }),
     )
-    await page.goto('/targets/a1')
+    await page.goto(P + '/targets/a1')
     await expect(page.getByRole('heading', { name: NOME_LONGO, level: 1 })).toBeVisible()
     await esperarOConteudo(page, '/targets/a1')
     await expect(page.getByRole('region', { name: 'Fora do ar' })).toBeVisible()
     await semRolagemLateral(`detalhe ${largura}`)
     // Os incidentes, com o nome longo e sem causa (Review Focus 7).
     await page.route(
-      (url) => url.pathname === '/api/v1/incidents',
+      (url) => url.pathname === `/api/v1${P}/incidents`,
       (route) =>
         route.fulfill({
           status: 200,
           json: { items: [incidente({ id: 'inc-longo', target_id: 'a1', target_name: NOME_LONGO, started_at: agora, cause: '' })] },
         }),
     )
-    await page.goto('/incidents')
+    await page.goto(P + '/incidents')
     await expect(page.getByRole('heading', { name: 'Incidentes', level: 1 })).toBeVisible()
     await esperarOConteudo(page, '/incidents')
     await expect(page.getByText(/^Causa não registrada · início /)).toBeVisible()
@@ -862,9 +868,9 @@ for (const tema of ['claro', 'escuro'] as const) {
     await page.emulateMedia({ colorScheme: tema === 'escuro' ? 'dark' : 'light' })
     await imitarApi(page)
     const casos: { rota: string; titulo: string; enviar: string; antes?: () => Promise<void> }[] = [
-      { rota: '/targets/new', titulo: 'Novo alvo', enviar: 'Cadastrar' },
+      { rota: `${P}/targets/new`, titulo: 'Novo alvo', enviar: 'Cadastrar' },
       {
-        rota: '/status-pages',
+        rota: `${P}/status-pages`,
         titulo: 'Status page',
         enviar: 'Salvar',
         // O slug vazio dá a mensagem de erro mais longa do painel: é ela que
@@ -938,13 +944,13 @@ test('celular de 400 px: a prévia da status page com nome de exibição longo',
   await page.setViewportSize({ width: 400, height: 700 })
   await imitarApi(page)
   const nomeLongo = 'N'.repeat(100)
-  await page.route('**/api/v1/status-pages', (route) =>
+  await page.route('**/api/v1/projects/*/status-pages', (route) =>
     route.fulfill({
       status: 200,
       json: { items: [pagina({ id: 'p1', items: [{ target_id: 'a1', display_name: nomeLongo }], created_at: agora })] },
     }),
   )
-  await page.goto('/status-pages')
+  await page.goto(P + '/status-pages')
   await expect(page.getByRole('heading', { name: 'Status page', level: 1 })).toBeVisible()
   await esperarOConteudo(page, '/status-pages')
   const previa = page.getByRole('region', { name: 'Prévia aproximada' })
@@ -962,7 +968,7 @@ test('erro num campo do "Avançado" abre a seção e foca o campo', async ({ pag
   await imitarApi(page)
   const avancado = page.locator('details', { has: page.locator('summary', { hasText: 'Avançado' }) })
   const preencher = async () => {
-    await page.goto('/targets/new')
+    await page.goto(P + '/targets/new')
     await expect(page.getByRole('heading', { name: 'Novo alvo', level: 1 })).toBeVisible()
     await page.getByLabel('Nome', { exact: true }).fill('API nova')
     await page.getByLabel('URL', { exact: true }).fill('https://api.exemplo.com/health')
@@ -980,7 +986,7 @@ test('erro num campo do "Avançado" abre a seção e foca o campo', async ({ pag
   await expect(page.getByLabel('Timeout (ms)')).toBeFocused()
 
   // Erro do servidor: o 400 aponta o status esperado, com a seção recolhida.
-  await page.route('**/api/v1/targets', (route) =>
+  await page.route('**/api/v1/projects/*/targets', (route) =>
     route.request().method() === 'POST'
       ? route.fulfill({
           status: 400,
@@ -1010,7 +1016,7 @@ test('fechar o "Avançado" com erro e reenviar reabre a seção e foca o campo',
   const avancado = page.locator('details', { has: summary })
   const cadastrar = page.getByRole('button', { name: 'Cadastrar', exact: true })
   const preencher = async () => {
-    await page.goto('/targets/new')
+    await page.goto(P + '/targets/new')
     await expect(page.getByRole('heading', { name: 'Novo alvo', level: 1 })).toBeVisible()
     await page.getByLabel('Nome', { exact: true }).fill('API nova')
     await page.getByLabel('URL', { exact: true }).fill('https://api.exemplo.com/health')
@@ -1031,7 +1037,7 @@ test('fechar o "Avançado" com erro e reenviar reabre a seção e foca o campo',
   await expect(page.getByText('Mínimo de 1000 ms.')).toBeVisible()
 
   // Erro do servidor: o 400 aponta o status esperado nos dois envios.
-  await page.route('**/api/v1/targets', (route) =>
+  await page.route('**/api/v1/projects/*/targets', (route) =>
     route.request().method() === 'POST'
       ? route.fulfill({
           status: 400,
@@ -1054,3 +1060,302 @@ test('fechar o "Avançado" com erro e reenviar reabre a seção e foca o campo',
   await expect(page.getByText('Fora do intervalo permitido.')).toBeVisible()
   await controlePositivo(page, 'erro no "Avançado" depois de fechar')
 })
+
+// Task 32: o seletor de projeto, o diálogo "Novo projeto" e a troca de
+// projeto, na auditoria WCAG 2.2 AA. O que o axe não mede (contraste de
+// borda e de foco, alvos, foco preso e devolvido, ordem) é medido aqui.
+const seletorDeProjeto = (page: Page) => page.getByRole('button', { name: /^Projeto:/ })
+
+// WCAG 1.4.11: o contraste entre uma cor do controle (o anel de foco, a
+// borda) e o que fica atrás dela. As cores computadas podem vir em oklch: o
+// canvas as converte para sRGB e compõe as camadas com alfa, de fora para
+// dentro (html, body, …, o controle). O anel fica fora da caixa
+// (outline-offset): atrás dele, só os ancestrais; a borda pinta sobre o
+// fundo do próprio controle.
+// boxShadow: o anel do Tailwind (ring) é uma das camadas da box-shadow (as
+// outras ficam transparentes e sem espessura); vale a cor da camada com
+// espessura, e sem ela o contraste é 1.
+async function contrasteContraOFundo(controle: Locator, propriedade: 'outlineColor' | 'borderTopColor' | 'boxShadow'): Promise<number> {
+  return controle.evaluate((e, prop) => {
+    const indicador =
+      prop === 'boxShadow'
+        ? (Array.from(getComputedStyle(e).boxShadow.matchAll(/((?:rgba?|oklch|oklab|lab|lch|color)\([^)]*\)) \S+ \S+ \S+ ([\d.]+)px/g)).find(
+            (m) => Number(m[2]) > 0,
+          )?.[1] ?? 'transparent')
+        : getComputedStyle(e)[prop]
+    const camadas: string[] = []
+    for (let a: Element | null = prop === 'outlineColor' ? e.parentElement : e; a; a = a.parentElement) {
+      camadas.unshift(getComputedStyle(a).backgroundColor)
+    }
+    const pintar = (cores: string[]) => {
+      const c = document.createElement('canvas')
+      c.width = 1
+      c.height = 1
+      const g = c.getContext('2d')
+      if (!g) throw new Error('sem canvas 2d')
+      for (const cor of ['rgb(255, 255, 255)', ...cores]) {
+        g.fillStyle = cor
+        g.fillRect(0, 0, 1, 1)
+      }
+      return Array.from(g.getImageData(0, 0, 1, 1).data.slice(0, 3))
+    }
+    const luminancia = (rgb: number[]) => {
+      const [r = 0, g = 0, b = 0] = rgb.map((v) => (v / 255 <= 0.04045 ? v / 255 / 12.92 : ((v / 255 + 0.055) / 1.055) ** 2.4))
+      return 0.2126 * r + 0.7152 * g + 0.0722 * b
+    }
+    const fundo = luminancia(pintar(camadas))
+    const frente = luminancia(pintar([...camadas, indicador]))
+    return (Math.max(fundo, frente) + 0.05) / (Math.min(fundo, frente) + 0.05)
+  }, propriedade)
+}
+
+// menuAberto: com o menu do Radix aberto (modo modal), o resto da página
+// fica aria-hidden e o foco fica preso no menu (o Tab o fecha e volta ao
+// botão: teste de teclado abaixo). O axe só reconhece esse padrão num
+// diálogo (aria-modal), e num menu acusa aria-hidden-focus nos controles
+// escondidos, que o teclado não alcança. Só essa regra sai, só nessa passada.
+async function semViolacoesDoAxe(page: Page, contexto: string, { menuAberto = false } = {}) {
+  const axe = new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa', 'wcag22aa'])
+  const r = await (menuAberto ? axe.disableRules(['aria-hidden-focus']) : axe).analyze()
+  expect(r.violations.map((v) => `${contexto}: ${v.id} (${v.nodes.map((n) => n.target.join(' ')).join(', ')})`)).toEqual([])
+  await controlePositivo(page, contexto)
+}
+
+for (const tema of ['claro', 'escuro'] as const) {
+  test(`seletor de projeto e diálogo "Novo projeto": axe, contraste, nome e estado, tema ${tema}`, async ({ page }) => {
+    await page.emulateMedia({ colorScheme: tema === 'escuro' ? 'dark' : 'light' })
+    await imitarApi(page)
+    await page.goto(P + '/')
+    await expect(page.getByRole('heading', { name: 'Painel', level: 1 })).toBeVisible()
+    await esperarOConteudo(page, 'painel')
+    // 2.4.2: a tela e o projeto no <title> (decisão da Task 31).
+    await expect(page).toHaveTitle('Painel — Projeto padrão — StillOn')
+    // 4.1.2: nome, papel e estado do botão.
+    const botao = seletorDeProjeto(page)
+    await expect(botao).toHaveAccessibleName('Projeto: Projeto padrão')
+    await expect(botao).toHaveAttribute('aria-haspopup', 'menu')
+    await expect(botao).toHaveAttribute('aria-expanded', 'false')
+    // 2.4.7 e 1.4.11: o anel de foco do botão, pelo teclado, se vê contra o
+    // cabeçalho.
+    await page.keyboard.press('Tab')
+    await page.keyboard.press('Tab')
+    await expect(botao).toBeFocused()
+    expect(await contrasteContraOFundo(botao, 'outlineColor'), 'anel de foco do seletor').toBeGreaterThanOrEqual(3)
+
+    await page.keyboard.press('Enter')
+    const menu = page.getByRole('menu')
+    await expect(menu).toBeVisible()
+    // Aberto, o botão fica aria-hidden com o resto da página (modo modal).
+    await expect(page.getByRole('button', { name: /^Projeto:/, includeHidden: true })).toHaveAttribute('aria-expanded', 'true')
+    // 4.1.2: os itens são opções de menu, com o atual marcado.
+    await expect(menu.getByRole('menuitemradio', { name: 'Projeto padrão' })).toHaveAttribute('aria-checked', 'true')
+    await expect(menu.getByRole('menuitemradio', { name: 'Clientes' })).toHaveAttribute('aria-checked', 'false')
+    await expect(menu.getByRole('menuitem', { name: 'Novo projeto' })).toBeVisible()
+    // 2.5.8: cada item tem 44 px de altura (acima dos 24 px) na largura do
+    // menu. Pela caixa, e não pelo hit-test: os itens são colados, e o ponto
+    // a meio pixel da borda cai no vizinho pelo arredondamento.
+    for (const opcao of await menu.locator('[role^="menuitem"]').all()) {
+      const caixa = await opcao.boundingBox()
+      expect(Math.min(caixa?.width ?? 0, caixa?.height ?? 0), `item ${await opcao.textContent()}`).toBeGreaterThanOrEqual(44)
+    }
+    // Pelo teclado, o foco abre no projeto atual, e não no primeiro item.
+    const marcado = menu.getByRole('menuitemradio', { name: 'Projeto padrão' })
+    await expect(marcado).toBeFocused()
+    // 2.4.7 / 1.4.11: o item em foco não fica só no fundo claro (1,2:1 contra
+    // o menu): um anel de 2 px na cor do foco, ≥ 3:1 contra o fundo do item.
+    await expect(marcado).toHaveAttribute('data-highlighted', '')
+    expect(await contrasteContraOFundo(marcado, 'boxShadow'), 'anel do item em foco').toBeGreaterThanOrEqual(3)
+    await semViolacoesDoAxe(page, `seletor aberto, ${tema}`, { menuAberto: true })
+
+    // O Radix move o foco do End num setTimeout: o Enter espera por ele.
+    await page.keyboard.press('End')
+    await expect(page.getByRole('menuitem', { name: 'Novo projeto' })).toBeFocused()
+    await page.keyboard.press('Enter')
+    const dialogo = page.getByRole('dialog', { name: 'Novo projeto' })
+    await expect(dialogo).toBeVisible()
+    const campo = dialogo.getByLabel('Nome do projeto')
+    await expect(campo).toBeFocused()
+    // 1.4.11: a borda do campo e o anel de foco contra a caixa do diálogo.
+    expect(await contrasteContraOFundo(campo, 'borderTopColor'), 'borda do campo').toBeGreaterThanOrEqual(3)
+    expect(await contrasteContraOFundo(campo, 'outlineColor'), 'anel de foco do campo').toBeGreaterThanOrEqual(3)
+    await semViolacoesDoAxe(page, `diálogo Novo projeto, ${tema}`)
+
+    // 3.3.1 e 3.3.2: o erro do campo, ligado a ele por aria-describedby, à
+    // vista e com o foco no campo.
+    await dialogo.getByRole('button', { name: 'Criar projeto' }).click()
+    await expect(campo).toHaveAttribute('aria-invalid', 'true')
+    await expect(campo).toHaveAccessibleDescription('Dê um nome ao projeto.')
+    await expect(campo).toBeFocused()
+    expect(await contrasteContraOFundo(campo, 'borderTopColor'), 'borda do campo com erro').toBeGreaterThanOrEqual(3)
+    await semViolacoesDoAxe(page, `diálogo com erro no campo, ${tema}`)
+  })
+}
+
+// 3.3.7 e 4.1.3: o 409 do limite aparece no diálogo, que fica aberto com o
+// nome digitado, e é anunciado (role="alert"). Sabotagem: tirar o role do
+// ErroDoFormulario.
+test('"Novo projeto": o limite de projetos é anunciado e não apaga o nome', async ({ page }) => {
+  await imitarApi(page)
+  await page.route('**/api/v1/projects', (route) =>
+    route.request().method() === 'POST'
+      ? route.fulfill({ status: 409, json: { error: { code: 'project_limit_reached', message: '' }, trace_id: 't' } })
+      : route.fallback(),
+  )
+  await page.goto(P + '/')
+  await expect(page.getByRole('heading', { name: 'Painel', level: 1 })).toBeVisible()
+  await seletorDeProjeto(page).click()
+  await page.getByRole('menu').getByRole('menuitem', { name: 'Novo projeto' }).click()
+  const dialogo = page.getByRole('dialog', { name: 'Novo projeto' })
+  await dialogo.getByLabel('Nome do projeto').fill('Projeto do limite')
+  await dialogo.getByRole('button', { name: 'Criar projeto' }).click()
+  await expect(dialogo.getByRole('alert')).toHaveText('Limite de projetos atingido.')
+  await expect(dialogo).toBeVisible()
+  await expect(dialogo.getByLabel('Nome do projeto')).toHaveValue('Projeto do limite')
+  await semViolacoesDoAxe(page, 'diálogo com o limite atingido')
+})
+
+// 2.1.1, 2.1.2 e 2.4.3: tudo pelo teclado. Tab chega ao seletor logo depois
+// do salto; Enter abre no projeto atual; Esc fecha e devolve o foco ao botão;
+// setas e Enter escolhem outro projeto, e o <h1> da tela dele recebe o foco;
+// o diálogo prende o Tab e, fechado, devolve o foco ao botão. Sabotagens: o
+// onCloseAutoFocus do menu sem condição (o foco não volta); o
+// DialogoNovoProjeto sem a reserva.
+test('teclado no seletor de projeto: abrir, escolher, Esc e o diálogo sem armadilha', async ({ page }) => {
+  await imitarApi(page)
+  await page.goto(P + '/')
+  await expect(page.getByRole('heading', { name: 'Painel', level: 1 })).toBeVisible()
+  await esperarOConteudo(page, 'painel')
+  const botao = seletorDeProjeto(page)
+  const menu = page.getByRole('menu')
+  await page.keyboard.press('Tab')
+  await expect(page.getByRole('link', { name: 'Pular para o conteúdo' })).toBeFocused()
+  await page.keyboard.press('Tab')
+  await expect(botao).toBeFocused()
+
+  await page.keyboard.press('Enter')
+  await expect(menu.getByRole('menuitemradio', { name: 'Projeto padrão' })).toBeFocused()
+  await page.keyboard.press('Escape')
+  await expect(menu).toBeHidden()
+  await expect(botao).toBeFocused()
+  // O Tab não passa do menu aberto para a página escondida atrás dele: fecha
+  // o menu e o foco volta ao botão.
+  await page.keyboard.press('Enter')
+  await expect(menu).toBeVisible()
+  await page.keyboard.press('Tab')
+  await expect(menu).toBeHidden()
+  await expect(botao).toBeFocused()
+
+  await page.keyboard.press('Enter')
+  await page.keyboard.press('ArrowDown')
+  await expect(menu.getByRole('menuitemradio', { name: 'Clientes' })).toBeFocused()
+  await page.keyboard.press('Enter')
+  await expect(page).toHaveURL(/\/projects\/proj-clientes\/$/)
+  await expect(page.getByRole('heading', { name: 'Painel', level: 1 })).toBeFocused()
+  await expect(page).toHaveTitle('Painel — Clientes — StillOn')
+  await expect(botao).toHaveAccessibleName('Projeto: Clientes')
+
+  await botao.focus()
+  await page.keyboard.press('Enter')
+  await page.keyboard.press('End')
+  await expect(menu.getByRole('menuitem', { name: 'Novo projeto' })).toBeFocused()
+  await page.keyboard.press('Enter')
+  const dialogo = page.getByRole('dialog', { name: 'Novo projeto' })
+  await expect(dialogo.getByLabel('Nome do projeto')).toBeFocused()
+  // O Tab dá voltas dentro do diálogo: campo, Cancelar, Criar projeto e de
+  // novo o campo, sem sair para a página atrás.
+  const paradas: string[] = []
+  for (let i = 0; i < 6; i++) {
+    await page.keyboard.press('Tab')
+    paradas.push(
+      await page.evaluate(() => {
+        const e = document.activeElement
+        const dentro = !!e?.closest('[role="dialog"]')
+        return `${dentro ? '' : 'FORA: '}${e?.tagName.toLowerCase()} "${(e?.getAttribute('aria-label') ?? e?.textContent ?? '').trim()}"`
+      }),
+    )
+  }
+  expect(paradas.filter((p) => p.startsWith('FORA')), `paradas: ${paradas.join(' | ')}`).toEqual([])
+  expect(paradas.slice(0, 2)).toEqual(['button "Cancelar"', 'button "Criar projeto"'])
+  // A terceira parada volta ao campo, e a volta recomeça igual.
+  expect(paradas[2], `paradas: ${paradas.join(' | ')}`).toMatch(/^input /)
+  expect(paradas.slice(3, 5)).toEqual(['button "Cancelar"', 'button "Criar projeto"'])
+  await page.keyboard.press('Escape')
+  await expect(dialogo).toBeHidden()
+  await expect(botao).toBeFocused()
+  await controlePositivo(page, 'teclado no seletor')
+})
+
+// 3.2.3: o seletor fica no mesmo lugar em toda tela (as do projeto e a conta).
+// Sabotagem: mostrar o seletor só nas telas de projeto.
+for (const largura of [400, 1280]) {
+  test(`seletor de projeto no mesmo lugar em toda tela, ${largura} px`, async ({ page }) => {
+    await page.setViewportSize({ width: largura, height: 900 })
+    await imitarApi(page)
+    let primeira: string | null = null
+    for (const [rota, titulo] of ROTAS) {
+      await page.goto(rota)
+      await expect(page.getByRole('heading', { name: titulo, level: 1 })).toBeVisible()
+      await esperarOConteudo(page, rota)
+      await expect(seletorDeProjeto(page), `${rota}: o seletor`).toBeVisible()
+      const caixa = await seletorDeProjeto(page).boundingBox()
+      const posicao = JSON.stringify({ x: caixa?.x, y: caixa?.y, altura: caixa?.height })
+      primeira ??= posicao
+      expect(posicao, `${rota}: a posição do seletor`).toBe(primeira)
+    }
+  })
+}
+
+// 1.4.10, 2.4.11 e 2.5.8 a 320 px: o menu aberto e o diálogo cabem sem
+// rolagem lateral, o botão em foco fica à vista (fora da barra inferior
+// fixa) e com 44 px de alvo. Sabotagem: trocar o w-[calc(100vw-2rem)] do
+// menu por w-96 (mais largo que a tela).
+for (const tema of ['claro', 'escuro'] as const) {
+  test(`celular de 320 px: seletor, menu e diálogo sem rolagem lateral, tema ${tema}`, async ({ page }) => {
+    await page.setViewportSize({ width: 320, height: 640 })
+    await page.emulateMedia({ colorScheme: tema === 'escuro' ? 'dark' : 'light' })
+    await imitarApi(page)
+    const semRolagemLateral = async (contexto: string) => {
+      await expect
+        .poll(() => page.evaluate(() => document.documentElement.scrollWidth), `${contexto}: largura`)
+        .toBe(320)
+    }
+    await page.goto(P + '/')
+    await expect(page.getByRole('heading', { name: 'Painel', level: 1 })).toBeVisible()
+    await esperarOConteudo(page, 'painel')
+    const botao = seletorDeProjeto(page)
+    expect(await pontosForaDoAlvo(botao), 'alvo do seletor').toEqual([])
+    await botao.focus()
+    const folga = await botao.evaluate((e) => {
+      const r = e.getBoundingClientRect()
+      const barra = document.querySelector('nav[aria-label="Principal"]')?.getBoundingClientRect()
+      return { topo: r.top, abaixo: (barra?.top ?? window.innerHeight) - r.bottom, direita: window.innerWidth - r.right }
+    })
+    expect(folga.topo, 'o seletor em foco fica à vista').toBeGreaterThanOrEqual(0)
+    expect(folga.abaixo, 'o seletor em foco fica acima da barra').toBeGreaterThanOrEqual(0)
+    expect(folga.direita, 'o seletor cabe na tela').toBeGreaterThanOrEqual(0)
+    await semRolagemLateral('seletor')
+
+    await page.keyboard.press('Enter')
+    const menu = page.getByRole('menu')
+    await expect(menu).toBeVisible()
+    const caixaDoMenu = await menu.boundingBox()
+    expect((caixaDoMenu?.x ?? -1) >= 0 && (caixaDoMenu?.x ?? 0) + (caixaDoMenu?.width ?? 0) <= 320, 'o menu cabe na tela').toBe(true)
+    await semRolagemLateral('menu aberto')
+    await semViolacoesDoAxe(page, `menu a 320 px, ${tema}`, { menuAberto: true })
+
+    // O Radix move o foco do End num setTimeout: o Enter espera por ele.
+    await page.keyboard.press('End')
+    await expect(page.getByRole('menuitem', { name: 'Novo projeto' })).toBeFocused()
+    await page.keyboard.press('Enter')
+    const dialogo = page.getByRole('dialog', { name: 'Novo projeto' })
+    await expect(dialogo).toBeVisible()
+    const caixa = await dialogo.boundingBox()
+    expect((caixa?.x ?? -1) >= 0 && (caixa?.x ?? 0) + (caixa?.width ?? 0) <= 320, 'o diálogo cabe na tela').toBe(true)
+    expect(await dialogo.evaluate((d) => d.scrollWidth <= d.clientWidth), 'nada rola de lado no diálogo').toBe(true)
+    await semRolagemLateral('diálogo')
+    for (const nome of ['Cancelar', 'Criar projeto']) {
+      expect(await pontosForaDoAlvo(dialogo.getByRole('button', { name: nome })), `alvo de ${nome}`).toEqual([])
+    }
+    await semViolacoesDoAxe(page, `diálogo a 320 px, ${tema}`)
+  })
+}

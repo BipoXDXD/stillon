@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest'
 import { incidente, itemDoResumo } from '@/test/fixtures'
 import { renderizarPainel } from '@/test/renderizar'
 import { servidor } from '@/test/setup'
+import { PROJETO_PADRAO } from '@/test/api-falsa'
 
 const ITENS = [
   itemDoResumo({ id: 'b', name: 'Banco', state: 'down', tags: ['prod', 'dados'], open_incident_id: 'inc-1' }),
@@ -107,7 +108,7 @@ describe('filtros do painel', () => {
   // pareceria um filtro que não filtra.
   it('se a consulta filtrada falha, a manchete fica e a tabela vira o erro com nova tentativa', async () => {
     const r = await preparar()
-    r.falsa.estado.forcar.set('GET /targets/summary?tag=web', { status: 503, code: 'unavailable' })
+    r.falsa.estado.forcar.set('GET /projects/:projectId/targets/summary?tag=web', { status: 503, code: 'unavailable' })
     await userEvent.click(filtro('Tags', /^web/))
     expect(await screen.findByRole('button', { name: 'Tentar de novo' })).toBeInTheDocument()
     expect(screen.queryByRole('table', { name: /^Monitores/ })).not.toBeInTheDocument()
@@ -121,8 +122,8 @@ describe('filtros do painel', () => {
     const r = await preparar('/?tag=web')
     await esperarNomes(['Site'])
     r.falsa.estado.resumo = ITENS.map((item) => ({ ...item, last_checked_at: new Date(Date.now() - 5000).toISOString() }))
-    r.cliente.setQueryData(['targets', 'summary'], r.cliente.getQueryData(['targets', 'summary']), { updatedAt: Date.now() - 60_000 })
-    await r.cliente.refetchQueries({ predicate: (q) => q.queryKey.length > 2 && q.queryKey[1] === 'summary' })
+    r.cliente.setQueryData(['projeto', PROJETO_PADRAO, 'targets', 'summary'], r.cliente.getQueryData(['projeto', PROJETO_PADRAO, 'targets', 'summary']), { updatedAt: Date.now() - 60_000 })
+    await r.cliente.refetchQueries({ predicate: (q) => q.queryKey.length > 4 && q.queryKey[3] === 'summary' })
     expect((await screen.findAllByText(/^Check há \d+ segundos$/)).length).toBeGreaterThan(0)
   })
 
@@ -133,7 +134,7 @@ describe('filtros do painel', () => {
     let soltar!: () => void
     const segurado = new Promise<void>((ok) => (soltar = ok))
     servidor.use(
-      http.get('*/api/v1/targets/summary', async ({ request }) => {
+      http.get('*/api/v1/projects/:projectId/targets/summary', async ({ request }) => {
         if (!new URL(request.url).searchParams.has('tag')) return undefined
         await segurado
         return HttpResponse.json({ items: r.falsa.estado.resumo.filter((item) => item.tags.includes('web')) })

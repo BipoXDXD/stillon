@@ -1,6 +1,6 @@
 import type { Page, Route } from '@playwright/test'
 import type { z } from 'zod'
-import type { ConfigDoCadastro, ConfirmacaoTotp, InicioDaTroca, Serie } from '../src/lib/api/schemas'
+import type { ConfigDoCadastro, ConfirmacaoTotp, InicioDaTroca, Projeto, Serie } from '../src/lib/api/schemas'
 import {
   alvo,
   canal,
@@ -11,6 +11,7 @@ import {
   itemDoResumo,
   me,
   pagina,
+  projeto,
   sessao,
   SITE_KEY_DO_TURNSTILE,
   TOKEN_DO_TURNSTILE,
@@ -22,6 +23,8 @@ import {
 // (src/test/fixtures.ts, z.input dos schemas): uma resposta fora do contrato
 // não compila aqui também (spec do Plano 6 §7.4).
 export const agora = new Date().toISOString()
+// O projeto das telas: o painel mora em /projects/{id}/….
+export const NO_PROJETO = '/projects/proj-padrao'
 export const hora = new Date(Math.floor(Date.now() / 3_600_000) * 3_600_000 - 3_600_000).toISOString()
 const spark = [{ bucket: hora, total: 60, ok: 60, p50_ms: 110 }]
 export const item = (id: string, name: string, state: 'up' | 'degraded' | 'down' | 'unknown', enabled = true) =>
@@ -147,8 +150,19 @@ const onload = document.currentScript && new URL(document.currentScript.src).sea
 if (onload && typeof window[onload] === 'function') window[onload]()
 `
 
-function respostaDe(metodo: string, u: URL): unknown {
-  const chave = `${metodo} ${u.pathname.replace('/api/v1', '')}`
+// Os projetos da pessoa: o padrão, em que as telas abrem, e outro para a
+// troca. Os recursos são os mesmos nos dois (a imitação não separa dados por
+// projeto); um projeto fora da lista é 404, como no servidor.
+const PROJETOS: z.input<typeof Projeto>[] = [
+  projeto({ id: 'proj-padrao', name: 'Projeto padrão', created_at: agora }),
+  projeto({ id: 'proj-clientes', name: 'Clientes', is_default: false, created_at: agora }),
+]
+
+function respostaDe(metodo: string, u: URL, projetos: readonly z.input<typeof Projeto>[]): unknown {
+  const caminho = u.pathname.replace('/api/v1', '')
+  const noProjeto = caminho.match(/^\/projects\/([^/]+)(\/.*)$/)
+  if (noProjeto && !projetos.some((p) => p.id === noProjeto[1])) return undefined
+  const chave = `${metodo} ${noProjeto ? noProjeto[2] : caminho}`
   // A janela vem pelo nome (?window=, B6 do Plano 10); acima de 48 h, o
   // servidor responde por hora.
   if (chave === 'GET /targets/a1/checks') {
@@ -161,11 +175,23 @@ export async function imitarApi(page: Page) {
   await page.route('https://challenges.cloudflare.com/turnstile/v0/api.js*', (route: Route) =>
     route.fulfill({ status: 200, contentType: 'text/javascript', body: TURNSTILE_IMITADO }),
   )
+  // Por página: o projeto criado entra na lista dela, como no servidor.
+  const projetos = [...PROJETOS]
   await page.route('**/api/v1/**', (route: Route) => {
     const u = new URL(route.request().url())
-    const status = semCorpo[`${route.request().method()} ${u.pathname.replace('/api/v1', '')}`]
+    const metodo = route.request().method()
+    const status = semCorpo[`${metodo} ${u.pathname.replace('/api/v1', '')}`]
     if (status !== undefined) return route.fulfill({ status })
-    const corpo = respostaDe(route.request().method(), u)
+    if (u.pathname === '/api/v1/projects') {
+      if (metodo === 'GET') return route.fulfill({ status: 200, json: { items: projetos } })
+      if (metodo === 'POST') {
+        const { name } = route.request().postDataJSON() as { name: string }
+        const novo = projeto({ id: `proj-${projetos.length + 1}`, name: name.trim(), is_default: false, created_at: agora })
+        projetos.push(novo)
+        return route.fulfill({ status: 201, json: novo })
+      }
+    }
+    const corpo = respostaDe(metodo, u, projetos)
     return corpo === undefined
       ? route.fulfill({ status: 404, json: { error: { code: 'not_found', message: '' }, trace_id: 't' } })
       : route.fulfill({ status: 200, json: corpo })

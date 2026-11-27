@@ -1,8 +1,10 @@
 package httpapi_test
 
 import (
+	"bytes"
 	"context"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -13,6 +15,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/BipoXDXD/stillon/internal/contaemail"
 	"github.com/BipoXDXD/stillon/internal/crypto"
 	"github.com/BipoXDXD/stillon/internal/httpapi"
 	"github.com/BipoXDXD/stillon/internal/notify"
@@ -35,11 +38,15 @@ func (f *discordFalso) SendTest(context.Context, crypto.Secret) error {
 type carteiroFalso struct {
 	mu    sync.Mutex
 	links []string
+	err   error
 }
 
 func (f *carteiroFalso) SendVerification(_ context.Context, _ crypto.Secret, link string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.err != nil {
+		return f.err
+	}
 	f.links = append(f.links, link)
 	return nil
 }
@@ -303,6 +310,125 @@ func TestChannelErrorsMapToCodes(t *testing.T) {
 		t.Errorf("reenviar Discord deu %d/%s, queria 409/channel_not_pending", resp.StatusCode, e.Error.Code)
 	}
 	resp.Body.Close()
+}
+
+func apiComTetoDeVerificacao(t *testing.T, limite int) *api {
+	t.Helper()
+	a := newAPI(t)
+	box, err := crypto.NewBox(testMasterKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	teto := storage.NewTetoDeEmailsDeConta(a.pool, a.clk, limite)
+	enviador := contaemail.New(&transporteContado{}, teto, a.deps.LimitesIP, testIPHashKey, slog.New(slog.DiscardHandler))
+	a.deps.Channels = notify.NewChannelService(a.pool, box, a.clk, a.discord,
+		contaemail.NovaVerificacaoComTeto(enviador, a.email), a.cfg.PublicBaseURL)
+	a.deps.CadastroPublico = httpapi.ConfigCadastro{}
+	a.reiniciar(t)
+	return a
+}
+
+func TestVerificacaoDeCanalSuprimidaPreservaEstado(t *testing.T) {
+	a := apiComTetoDeVerificacao(t, 1)
+	ctx := context.Background()
+	tok := tokenDe(t, a, a.userID)
+	legado := "/api/v1/channels"
+	projeto := "/api/v1/projects/" + testdb.ProjetoPadrao(t, a.userID).String() + "/channels"
+	criar := func(caminho, email string) canalJSON {
+		t.Helper()
+		resp := chamar(t, a, http.MethodPost, caminho, tok, map[string]string{"kind": "email", "email": email})
+		var criado canalJSON
+		corpo := lerCorpo(t, resp, &criado)
+		if resp.StatusCode != http.StatusCreated || criado.Status != "pending" {
+			t.Fatalf("criar canal: %d %s, queria 201 com status pending", resp.StatusCode, corpo)
+		}
+		return criado
+	}
+	lerCanal := func(id string) db.NotifChannel {
+		t.Helper()
+		canalID, err := uuid.Parse(id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var row db.NotifChannel
+		err = testdb.NoProjetoPadrao(t, a.pool, a.userID, func(q *db.Queries, projeto uuid.UUID) error {
+			var err error
+			row, err = q.GetChannel(ctx, db.GetChannelParams{ProjectID: projeto, ID: canalID})
+			return err
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return row
+	}
+	reenviar := func(caminho string) {
+		t.Helper()
+		if status, corpo := lerCru(t, a, http.MethodPost, caminho+"/verify/resend", tok, nil); status != http.StatusNoContent {
+			t.Fatalf("reenvio: %d %s, queria 204", status, corpo)
+		}
+	}
+
+	comLink := criar(legado, "com-link@exemplo.com")
+	linkAnterior := a.email.token(t)
+	antes := lerCanal(comLink.ID)
+	a.clk.Advance(time.Minute)
+
+	semLink := criar(projeto, "sem-link@exemplo.com")
+	if row := lerCanal(semLink.ID); row.VerifyTokenHash != nil || row.VerifyExpiresAt != nil {
+		t.Error("criação suprimida gravou hash ou validade sem entregar um link")
+	}
+
+	reenviar(projeto + "/" + comLink.ID)
+	depois := lerCanal(comLink.ID)
+	if !bytes.Equal(antes.VerifyTokenHash, depois.VerifyTokenHash) ||
+		antes.VerifyExpiresAt == nil || depois.VerifyExpiresAt == nil ||
+		!depois.VerifyExpiresAt.Equal(*antes.VerifyExpiresAt) {
+		t.Error("reenvio suprimido mudou o hash ou a validade do link anterior")
+	}
+	if st, err := a.deps.Channels.CheckToken(ctx, linkAnterior); err != nil || st != notify.VerifyPending {
+		t.Errorf("link anterior após reenvio suprimido: %v, %v, queria pendente", st, err)
+	}
+	if a.email.token(t) != linkAnterior {
+		t.Error("outro link foi enviado com o teto esgotado")
+	}
+
+	a.clk.Advance(24 * time.Hour)
+	tok = tokenDe(t, a, a.userID)
+	reenviar(legado + "/" + semLink.ID)
+	novo := a.email.token(t)
+	if novo == linkAnterior {
+		t.Fatal("reenvio do canal sem token após a renovação do teto não gerou um link")
+	}
+	if err := a.deps.Channels.ConfirmToken(ctx, novo); err != nil {
+		t.Errorf("confirmar o link do canal que nasceu suprimido: %v", err)
+	}
+}
+
+func TestReenvioComFalhaDoProvedorPreservaLink(t *testing.T) {
+	a := apiComTetoDeVerificacao(t, 2)
+	tok := tokenDe(t, a, a.userID)
+	resp := chamar(t, a, http.MethodPost, "/api/v1/channels", tok,
+		map[string]string{"kind": "email", "email": "pessoa@exemplo.com"})
+	var criado canalJSON
+	corpo := lerCorpo(t, resp, &criado)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("criar canal: %d %s, queria 201", resp.StatusCode, corpo)
+	}
+	link := a.email.token(t)
+	a.email.mu.Lock()
+	a.email.err = &notify.SendError{Reason: notify.ReasonRateLimited}
+	a.email.mu.Unlock()
+
+	resp = chamar(t, a, http.MethodPost, "/api/v1/channels/"+criado.ID+"/verify/resend", tok, nil)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadGateway {
+		t.Errorf("reenvio: %d, queria 502", resp.StatusCode)
+	} else if e := decodeEnvelope(t, resp); e.Error.Code != "delivery_failed" {
+		t.Errorf("código de erro no reenvio: %s, queria delivery_failed", e.Error.Code)
+	}
+	if err := a.deps.Channels.ConfirmToken(context.Background(), link); err != nil {
+		t.Errorf("link anterior após falha do provedor: %v", err)
+	}
 }
 
 // Um canal de e-mail pendente cujo destino não abre (config_enc corrompido,

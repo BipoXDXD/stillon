@@ -1,7 +1,7 @@
 import AxeBuilder from '@axe-core/playwright'
 import type { Page } from '@playwright/test'
 import { me } from '../src/test/fixtures'
-import { agora, imitarApi } from './api-imitada'
+import { agora, imitarApi, NO_PROJETO } from './api-imitada'
 import { controlePositivo, expect, test } from './fixtures'
 
 // A conta logada que ainda não confirmou o e-mail, com a API imitada
@@ -47,12 +47,12 @@ test('reenviar pede um link novo e confirma o envio', async ({ page }) => {
 })
 
 test('criar um alvo mostra a mensagem de e-mail não confirmado', async ({ page }) => {
-  await page.route('**/api/v1/targets', (route) =>
+  await page.route(`**/api/v1${NO_PROJETO}/targets`, (route) =>
     route.request().method() === 'POST'
       ? route.fulfill({ status: 403, json: { error: { code: 'email_not_verified', message: '' }, trace_id: 't' } })
       : route.fallback(),
   )
-  await page.goto('/targets/new')
+  await page.goto(NO_PROJETO + '/targets/new')
   await expect(page.getByRole('heading', { name: 'Novo alvo', level: 1 })).toBeVisible()
   await page.getByLabel('Nome', { exact: true }).fill('API nova')
   await page.getByLabel('URL', { exact: true }).fill('https://api.exemplo.com/health')
