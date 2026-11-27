@@ -17,8 +17,9 @@ CREATE TABLE account_tokens (
     emissao    bigint      GENERATED ALWAYS AS IDENTITY
 );
 
--- Cada dono emite sob uma trava, e o aceite de um envio pode substituir
--- apenas emissões anteriores do mesmo propósito.
+-- O primeiro link nasce na transação que cria a conta. A trava do dono
+-- ordena as emissões seguintes. O aceite de um envio só pode substituir
+-- emissões anteriores do mesmo propósito.
 CREATE INDEX account_tokens_user_purpose ON account_tokens (user_id, purpose);
 
 ALTER TABLE account_tokens ENABLE ROW LEVEL SECURITY;

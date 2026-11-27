@@ -19,6 +19,7 @@ import (
 	"github.com/BipoXDXD/stillon/internal/account"
 	"github.com/BipoXDXD/stillon/internal/auth"
 	"github.com/BipoXDXD/stillon/internal/clock"
+	"github.com/BipoXDXD/stillon/internal/crypto"
 	"github.com/BipoXDXD/stillon/internal/storage/testdb"
 )
 
@@ -323,24 +324,68 @@ func TestCadastrarSimultaneoUsaGrafiaDaContaCriada(t *testing.T) {
 	}
 }
 
+type observarCadastro func(emailEnviado, account.EntregaDeEmail)
+
+func (o observarCadastro) SendAccountEmail(_ context.Context, to, subject, body string, entrega account.EntregaDeEmail) error {
+	o(emailEnviado{to: to, subject: subject, body: body}, entrega)
+	return nil
+}
+
 func TestCadastrarFazOMesmoTrabalhoNosDoisRamos(t *testing.T) {
 	a := novoCadastro(t)
-	ctx := context.Background()
+	ctx := t.Context()
+	const email = "fulano@exemplo.com"
 
-	if err := a.cad.Cadastrar(ctx, "fulano@exemplo.com", senha); err != nil {
-		t.Fatal(err)
+	casos := []struct {
+		nome  string
+		senha string
+		novo  bool
+	}{
+		{nome: "conta nova", senha: senha, novo: true},
+		{nome: "conta existente", senha: "outra-senha-bem-comprida"},
 	}
-	if h, e := a.hasher.chamadas.Load(), len(a.mailer.todos()); h != 1 || e != 1 {
-		t.Fatalf("conta nova: %d hashes e %d e-mails; queria 1 e 1", h, e)
-	}
+	for _, caso := range casos {
+		chamadasDoBanco := a.pool.Stat().AcquireCount()
+		var hashes, envios int
+		mailer := observarCadastro(func(e emailEnviado, entrega account.EntregaDeEmail) {
+			envios++
+			if hashes != 1 {
+				t.Errorf("%s: começou a enfileirar após %d derivações, queria uma", caso.nome, hashes)
+			}
+			if n := contar(t, `SELECT count(*) FROM users WHERE email = $1 AND password_hash = $2`, email, prefixoBarato+senha); n != 1 {
+				t.Errorf("%s: a fila não viu o hash original já efetivado no banco", caso.nome)
+			}
+			if caso.novo {
+				tokenHash := crypto.HashToken(tokenDoEmail(t, e))
+				if n := contar(t, `SELECT count(*) FROM account_tokens t JOIN users u ON t.user_id = u.id
+					WHERE u.email = $1 AND t.token_hash = $2 AND t.purpose = 'confirm_email'`, email, tokenHash); n != 1 {
+					t.Error("a fila não viu o hash do link de confirmação já efetivado no banco")
+				}
+				if entrega.Preparar == nil || entrega.Concluir == nil {
+					t.Error("confirmação sem preparação ou conclusão para o trabalhador")
+				}
+			} else if entrega.Preparar != nil || entrega.Concluir != nil || !strings.Contains(e.body, linksDeTeste.EsqueciASenha()) {
+				t.Error("o aviso de conta existente deveria apontar para a recuperação sem emitir um link")
+			}
+		})
+		cad := account.NewCadastro(a.pool, a.clk, mailer, linksDeTeste)
+		cad.SetHash(func(ctx context.Context, plain string) (string, error) {
+			hashes++
+			if plain != caso.senha {
+				t.Errorf("%s: o hasher não recebeu a senha deste pedido", caso.nome)
+			}
+			if a.pool.Stat().AcquireCount() != chamadasDoBanco {
+				t.Errorf("%s: começou a derivar depois de acessar o banco", caso.nome)
+			}
+			return hashBarato(ctx, plain)
+		})
 
-	a.hasher.chamadas.Store(0)
-	a.mailer.limpar()
-	if err := a.cad.Cadastrar(ctx, "fulano@exemplo.com", senha); err != nil {
-		t.Fatal(err)
-	}
-	if h, e := a.hasher.chamadas.Load(), len(a.mailer.todos()); h != 1 || e != 1 {
-		t.Fatalf("conta existente: %d hashes e %d e-mails; queria 1 e 1", h, e)
+		if err := cad.Cadastrar(ctx, email, caso.senha); err != nil {
+			t.Fatal(err)
+		}
+		if hashes != 1 || envios != 1 {
+			t.Errorf("%s: %d derivações e %d e-mails, queria um de cada", caso.nome, hashes, envios)
+		}
 	}
 }
 
@@ -353,33 +398,44 @@ func mediana(ds []time.Duration) time.Duration {
 func TestCadastrarLevaTempoParecidoNosDoisRamos(t *testing.T) {
 	a := novoCadastro(t)
 	a.hasher.demora = 50 * time.Millisecond
-	ctx := context.Background()
+	ctx := t.Context()
 	const rodadas = 5
 	const existente = "existente@exemplo.com"
-	cadastrarEPegarToken(t, a, existente)
+	// A chamada pública termina depois de enfileirar. A confirmação do
+	// transporte e o SQL do trabalhador ficam fora do cronômetro.
+	fila := make(mailerAdiado, 1+2*rodadas)
+	cad := account.NewCadastro(a.pool, a.clk, fila, linksDeTeste)
+	cad.SetHash(a.hasher.hash)
+	if err := cad.Cadastrar(ctx, existente, senha); err != nil {
+		t.Fatal(err)
+	}
 
 	var novos, existentes []time.Duration
 	for i := range rodadas {
 		inicio := time.Now()
-		if err := a.cad.Cadastrar(ctx, fmt.Sprintf("novo%d@exemplo.com", i), senha); err != nil {
+		if err := cad.Cadastrar(ctx, fmt.Sprintf("novo%d@exemplo.com", i), senha); err != nil {
 			t.Fatal(err)
 		}
 		novos = append(novos, time.Since(inicio))
 
 		inicio = time.Now()
-		if err := a.cad.Cadastrar(ctx, existente, senha); err != nil {
+		if err := cad.Cadastrar(ctx, existente, senha); err != nil {
 			t.Fatal(err)
 		}
 		existentes = append(existentes, time.Since(inicio))
 	}
 
-	diferenca := mediana(novos) - mediana(existentes)
+	if n := len(fila); n != cap(fila) {
+		t.Fatalf("%d mensagens na fila, queria %d", n, cap(fila))
+	}
+	medianaNova, medianaExistente := mediana(novos), mediana(existentes)
+	diferenca := medianaNova - medianaExistente
 	if diferenca < 0 {
 		diferenca = -diferenca
 	}
+	t.Logf("medianas de cadastro: conta nova %v, existente %v, diferença %v", medianaNova, medianaExistente, diferenca)
 	if diferenca >= 40*time.Millisecond {
-		t.Fatalf("medianas: conta nova %v, existente %v; a diferença %v denuncia a conta",
-			mediana(novos), mediana(existentes), diferenca)
+		t.Fatalf("diferença %v entre as medianas, queria menos de 40 ms", diferenca)
 	}
 }
 
