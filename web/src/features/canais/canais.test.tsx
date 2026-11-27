@@ -203,6 +203,7 @@ describe('canais', () => {
     expect(await within(dialogo).findByText('Cole a URL do webhook.')).toBeInTheDocument()
     await r.usuario.click(within(dialogo).getByLabelText('E-mail', { selector: 'input[type=radio]' }))
     expect(within(dialogo).queryByText('Cole a URL do webhook.')).not.toBeInTheDocument()
+    expect(within(dialogo).getByRole('textbox', { name: 'E-mail' })).toHaveAccessibleDescription('O link de verificação vale por 24 horas.')
     await r.usuario.type(within(dialogo).getByLabelText('E-mail', { selector: 'input[type=email]' }), 'sem-arroba')
     await r.usuario.click(within(dialogo).getByRole('button', { name: 'Cadastrar canal' }))
     expect(await within(dialogo).findByText('Informe um e-mail válido.')).toBeInTheDocument()
@@ -237,7 +238,7 @@ describe('canais', () => {
     fireEvent.click(botao)
     fireEvent.click(botao)
     // Os dois cliques já saíram; um aviso por envio.
-    expect((await screen.findAllByText('Link de verificação reenviado.'))[0]).toBeInTheDocument()
+    expect((await screen.findAllByText('Pedido de reenvio recebido. Confira sua caixa de entrada.'))[0]).toBeInTheDocument()
     expect(r.falsa.chamadas(RESEND)).toBe(1)
     await waitFor(() => expect(botao).toBeEnabled())
   })
