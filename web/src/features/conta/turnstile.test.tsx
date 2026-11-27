@@ -1,7 +1,7 @@
-import { act, render, screen, waitFor } from '@testing-library/react'
+import { act, render, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { SITE_KEY_DO_TURNSTILE, TOKEN_DO_TURNSTILE } from '@/test/fixtures'
-import { esquecerOScriptDoTurnstile, Turnstile, URL_DO_TURNSTILE, type OpcoesDoTurnstile } from './Turnstile'
+import { esquecerOScriptDoTurnstile, Turnstile, URL_DO_TURNSTILE, type OpcoesDoTurnstile, type ResultadoDoTurnstile } from './Turnstile'
 
 // Um window.turnstile de mentira: guarda as opções de cada render, e o teste
 // faz o papel da Cloudflare chamando os callbacks.
@@ -24,7 +24,7 @@ function ultimo(widgets: OpcoesDoTurnstile[]): OpcoesDoTurnstile {
   return w
 }
 
-const props = { siteKey: SITE_KEY_DO_TURNSTILE, acao: 'signup', tema: 'auto', reiniciar: 0 } as const
+const props = { siteKey: SITE_KEY_DO_TURNSTILE, acao: 'signup', tema: 'auto', reiniciar: 0, falhou: false } as const
 
 beforeEach(() => esquecerOScriptDoTurnstile())
 afterEach(() => {
@@ -39,8 +39,8 @@ describe('Turnstile', () => {
     const { falso, widgets } = turnstileFalso()
     render(
       <>
-        <Turnstile {...props} aoResolver={() => {}} />
-        <Turnstile {...props} acao="forgot" aoResolver={() => {}} />
+        <Turnstile {...props} aoMudar={() => {}} />
+        <Turnstile {...props} acao="forgot" aoMudar={() => {}} />
       </>,
     )
     const scripts = document.querySelectorAll<HTMLScriptElement>('script')
@@ -58,35 +58,31 @@ describe('Turnstile', () => {
     expect(widgets[0]).toMatchObject({ sitekey: SITE_KEY_DO_TURNSTILE, theme: 'auto', language: 'pt-br' })
   })
 
-  // Sabotagem prevista: no expired-callback, não chamar aoResolver(null).
-  it('expirado chama aoResolver com null', async () => {
+  // Sabotagem prevista: não sinalizar a expiração do token.
+  it('expirado devolve o desafio à espera', async () => {
     const { falso, widgets } = turnstileFalso()
     window.turnstile = falso
-    const aoResolver = vi.fn<(token: string | null) => void>()
-    render(<Turnstile {...props} aoResolver={aoResolver} />)
+    const aoMudar = vi.fn<(resultado: ResultadoDoTurnstile) => void>()
+    render(<Turnstile {...props} aoMudar={aoMudar} />)
     await waitFor(() => expect(falso.render).toHaveBeenCalledTimes(1))
     act(() => ultimo(widgets).callback(TOKEN_DO_TURNSTILE))
-    expect(aoResolver).toHaveBeenLastCalledWith(TOKEN_DO_TURNSTILE)
+    expect(aoMudar).toHaveBeenLastCalledWith({ fase: 'resolvido', token: TOKEN_DO_TURNSTILE })
     act(() => ultimo(widgets)['expired-callback']())
-    expect(aoResolver).toHaveBeenLastCalledWith(null)
+    expect(aoMudar).toHaveBeenLastCalledWith({ fase: 'aguardando' })
   })
 
-  // Sabotagem prevista: no error-callback, não chamar aoResolver(null), ou
-  // não mostrar o aviso.
-  it('erro do widget chama aoResolver com null e explica o que fazer', async () => {
+  // Sabotagem prevista: não sinalizar a falha depois de um token resolvido.
+  it('erro do widget sinaliza que o desafio falhou', async () => {
     const { falso, widgets } = turnstileFalso()
     window.turnstile = falso
-    const aoResolver = vi.fn<(token: string | null) => void>()
-    render(<Turnstile {...props} aoResolver={aoResolver} />)
+    const aoMudar = vi.fn<(resultado: ResultadoDoTurnstile) => void>()
+    render(<Turnstile {...props} aoMudar={aoMudar} />)
     await waitFor(() => expect(falso.render).toHaveBeenCalledTimes(1))
     act(() => ultimo(widgets).callback(TOKEN_DO_TURNSTILE))
     act(() => {
       ultimo(widgets)['error-callback']()
     })
-    expect(aoResolver).toHaveBeenLastCalledWith(null)
-    expect(
-      screen.getByText('Não foi possível carregar a verificação. Desative bloqueadores para este site e recarregue a página.'),
-    ).toBeInTheDocument()
+    expect(aoMudar).toHaveBeenLastCalledWith({ fase: 'falhou' })
   })
 
   // Escolha 3 do dono: o widget segue o tema do painel e é recriado quando
@@ -94,26 +90,26 @@ describe('Turnstile', () => {
   it('trocar o tema recria o widget no tema novo', async () => {
     const { falso, widgets } = turnstileFalso()
     window.turnstile = falso
-    const aoResolver = vi.fn<(token: string | null) => void>()
-    const r = render(<Turnstile {...props} tema="light" aoResolver={aoResolver} />)
+    const aoMudar = vi.fn<(resultado: ResultadoDoTurnstile) => void>()
+    const r = render(<Turnstile {...props} tema="light" aoMudar={aoMudar} />)
     await waitFor(() => expect(falso.render).toHaveBeenCalledTimes(1))
     act(() => ultimo(widgets).callback(TOKEN_DO_TURNSTILE))
-    r.rerender(<Turnstile {...props} tema="dark" aoResolver={aoResolver} />)
+    r.rerender(<Turnstile {...props} tema="dark" aoMudar={aoMudar} />)
     await waitFor(() => expect(falso.render).toHaveBeenCalledTimes(2))
     expect(falso.remove).toHaveBeenCalledWith('w1')
     expect(ultimo(widgets).theme).toBe('dark')
     // O token do widget antigo morreu com ele.
-    expect(aoResolver).toHaveBeenLastCalledWith(null)
+    expect(aoMudar).toHaveBeenLastCalledWith({ fase: 'aguardando' })
   })
 
   // Sabotagem prevista: tirar o reset do efeito do reiniciar.
   it('reiniciar reseta o widget, e desmontar o remove', async () => {
     const { falso } = turnstileFalso()
     window.turnstile = falso
-    const r = render(<Turnstile {...props} aoResolver={() => {}} />)
+    const r = render(<Turnstile {...props} aoMudar={() => {}} />)
     await waitFor(() => expect(falso.render).toHaveBeenCalledTimes(1))
     expect(falso.reset).not.toHaveBeenCalled()
-    r.rerender(<Turnstile {...props} reiniciar={1} aoResolver={() => {}} />)
+    r.rerender(<Turnstile {...props} reiniciar={1} aoMudar={() => {}} />)
     expect(falso.reset).toHaveBeenCalledWith('w1')
     r.unmount()
     expect(falso.remove).toHaveBeenCalledWith('w1')

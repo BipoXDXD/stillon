@@ -78,7 +78,8 @@ export function PaginaLogin() {
   // Os links do cadastro só com a config dizendo enabled: é o único sinal
   // público de que o servidor manda e-mail. Desligado, carregando ou com a
   // config falhando, o login fica como era.
-  const cadastroLigado = useConfigDoCadastro().data?.enabled === true
+  const configDoCadastro = useConfigDoCadastro()
+  const cadastroLigado = configDoCadastro.isSuccess && configDoCadastro.data.enabled
   const destino = destinoSeguro(params.get('next'))
   const textoDoMotivo = textoDoMotivoEm(local.state)
 

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { Tema } from '@/lib/tema'
 
 // O widget do Cloudflare Turnstile (cadastro e "esqueci a senha"). O api.js
@@ -7,6 +7,8 @@ import type { Tema } from '@/lib/tema'
 // o confere no siteverify e não o guarda.
 
 export type TemaDoTurnstile = 'light' | 'dark' | 'auto'
+type TamanhoDoTurnstile = 'compact' | 'flexible'
+export type ResultadoDoTurnstile = { fase: 'aguardando' | 'falhou' } | { fase: 'resolvido'; token: string }
 
 export type OpcoesDoTurnstile = {
   sitekey: string
@@ -16,7 +18,7 @@ export type OpcoesDoTurnstile = {
   'error-callback': () => void
   theme: TemaDoTurnstile
   language: string
-  size: 'flexible'
+  size: TamanhoDoTurnstile
   appearance: 'always'
 }
 
@@ -63,76 +65,88 @@ export function temaDoTurnstile(t: Tema): TemaDoTurnstile {
   return t === 'escuro' ? 'dark' : 'auto'
 }
 
+export const ID_DA_FALHA_DO_TURNSTILE = 'falha-da-verificacao'
 const FALHA = 'Não foi possível carregar a verificação. Desative bloqueadores para este site e recarregue a página.'
+// A Cloudflare documenta 300 px como largura mínima do modo flexível.
+const MINIMO_DO_FLEXIVEL_PX = 300
 
-// aoResolver recebe o token, ou null quando ele deixa de valer (expirou,
-// erro, widget recriado ou reiniciado). Mudar `reiniciar` reseta o widget:
-// depois de um envio recusado, o token já foi gasto.
+// Mudar `reiniciar` reseta o widget depois de uma tentativa que gastou o token.
 export function Turnstile({
   siteKey,
   acao,
   tema,
-  aoResolver,
+  aoMudar,
+  falhou,
   reiniciar,
 }: {
   siteKey: string
   acao: 'signup' | 'forgot'
   tema: TemaDoTurnstile
-  aoResolver: (token: string | null) => void
+  aoMudar: (resultado: ResultadoDoTurnstile) => void
+  falhou: boolean
   reiniciar: number
 }) {
   const alvo = useRef<HTMLDivElement>(null)
   const id = useRef<string | undefined>(undefined)
-  const [falhou, setFalhou] = useState(false)
+  const [tamanho, setTamanho] = useState<TamanhoDoTurnstile | null>(null)
   // O callback mais recente, sem recriar o widget a cada render de quem usa.
-  const resolver = useRef(aoResolver)
+  const mudar = useRef(aoMudar)
   useEffect(() => {
-    resolver.current = aoResolver
+    mudar.current = aoMudar
   })
 
-  // Recriado quando a chave, a ação ou o tema mudam (o tema do widget só se
-  // escolhe no render).
+  useLayoutEffect(() => {
+    const elemento = alvo.current
+    if (!elemento) return
+    const medir = () => setTamanho(elemento.clientWidth < MINIMO_DO_FLEXIVEL_PX ? 'compact' : 'flexible')
+    medir()
+    const observador = new ResizeObserver(medir)
+    observador.observe(elemento)
+    return () => observador.disconnect()
+  }, [])
+
+  // Chave, ação, tema e tamanho são opções de montagem do widget.
   useEffect(() => {
+    if (tamanho === null) return
     let vivo = true
-    carregarScript().then(
-      () => {
-        if (!vivo || !alvo.current || !window.turnstile) return
-        id.current = window.turnstile.render(alvo.current, {
-          sitekey: siteKey,
-          action: acao,
-          callback: (token) => {
-            setFalhou(false)
-            resolver.current(token)
-          },
-          'expired-callback': () => resolver.current(null),
-          'error-callback': () => {
-            setFalhou(true)
-            resolver.current(null)
-          },
-          theme: tema,
-          language: 'pt-br',
-          size: 'flexible',
-          appearance: 'always',
-        })
-      },
-      () => {
-        if (vivo) setFalhou(true)
-      },
-    )
+    function sinalizar(resultado: ResultadoDoTurnstile) {
+      if (vivo) mudar.current(resultado)
+    }
+    function falharMontagem() {
+      sinalizar({ fase: 'falhou' })
+      vivo = false
+    }
+
+    void carregarScript().then(() => {
+      if (!vivo || !alvo.current) return
+      id.current = window.turnstile?.render(alvo.current, {
+        sitekey: siteKey,
+        action: acao,
+        callback: (token) => sinalizar({ fase: 'resolvido', token }),
+        'expired-callback': () => sinalizar({ fase: 'aguardando' }),
+        'error-callback': () => sinalizar({ fase: 'falhou' }),
+        theme: tema,
+        language: 'pt-br',
+        size: tamanho,
+        appearance: 'always',
+      }) || undefined
+      if (id.current === undefined) falharMontagem()
+    }).catch(falharMontagem)
+
     return () => {
       vivo = false
       if (id.current !== undefined) window.turnstile?.remove(id.current)
       id.current = undefined
-      resolver.current(null)
+      mudar.current({ fase: 'aguardando' })
     }
-  }, [siteKey, acao, tema])
+  }, [siteKey, acao, tema, tamanho])
 
   const anterior = useRef(reiniciar)
   useEffect(() => {
     if (reiniciar === anterior.current) return
     anterior.current = reiniciar
+    mudar.current({ fase: 'aguardando' })
     if (id.current !== undefined) window.turnstile?.reset(id.current)
-    resolver.current(null)
   }, [reiniciar])
 
   return (
@@ -140,9 +154,11 @@ export function Turnstile({
       {/* O iframe da Cloudflare traz título próprio; o grupo diz o que é. */}
       <fieldset className="min-w-0">
         <legend className="sr-only">Verificação de segurança</legend>
-        <div ref={alvo} />
+        <div ref={alvo} className="w-full" />
       </fieldset>
-      {falhou && <p className="text-sm text-perigo">{FALHA}</p>}
+      <p id={ID_DA_FALHA_DO_TURNSTILE} aria-live="assertive" aria-atomic="true" className="text-sm text-perigo empty:sr-only">
+        {falhou ? FALHA : null}
+      </p>
     </div>
   )
 }

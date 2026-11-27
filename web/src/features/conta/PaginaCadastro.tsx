@@ -17,7 +17,6 @@ import {
   ConfiraSeuEmail,
   EsperaDaVerificacao,
   FalhaDaConfig,
-  ID_DA_ESPERA,
   LinkTerciario,
   marcarCamposDoServidor,
   MolduraPublica,
@@ -125,18 +124,19 @@ export function PaginaCadastro() {
                 siteKey={config.data.turnstile_site_key}
                 acao="signup"
                 tema={desafio.tema}
-                aoResolver={desafio.aoResolver}
+                aoMudar={desafio.aoMudar}
+                falhou={desafio.falhou}
                 reiniciar={desafio.reiniciar}
               />
               <Botao
                 type="submit"
                 className="w-full"
                 disabled={!desafio.token}
-                aria-describedby={!desafio.token && !enviando ? ID_DA_ESPERA : undefined}
+                aria-describedby={enviando ? undefined : desafio.descritoPor}
               >
                 {enviando ? 'Criando conta…' : 'Criar conta'}
               </Botao>
-              <EsperaDaVerificacao visivel={!desafio.token && !enviando} />
+              <EsperaDaVerificacao visivel={desafio.aguardando && !enviando} />
             </fieldset>
           </form>
         </>

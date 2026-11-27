@@ -33,14 +33,14 @@ test('o aviso aparece no topo do conteúdo, com o e-mail da conta', async ({ pag
   await controlePositivo(page, 'aviso')
 })
 
-test('reenviar pede um link novo e confirma o envio', async ({ page }) => {
+test('reenviar mostra que o pedido foi aceito', async ({ page }) => {
   await page.goto('/')
   const pedido = page.waitForRequest(
     (r) => r.url().endsWith('/api/v1/auth/email/resend') && r.method() === 'POST',
   )
   await aviso(page).getByRole('button', { name: 'Reenviar e-mail' }).click()
   expect((await pedido).headers()['x-requested-with']).toBe('stillon')
-  await expect(aviso(page).getByRole('status')).toHaveText('Link reenviado. Confira sua caixa de entrada.')
+  await expect(aviso(page).getByRole('status')).toHaveText('Pedido de reenvio recebido. Se o e-mail ainda precisar de confirmação, confira sua caixa de entrada.')
   await expect(aviso(page).getByRole('button', { name: 'Reenviar e-mail' })).toHaveCount(0)
   // O foco não cai no <body> quando o botão dá lugar ao texto.
   await expect(page.locator('body')).not.toBeFocused()
@@ -72,7 +72,7 @@ for (const tema of ['claro', 'escuro'] as const) {
     const antes = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze()
     expect(antes.violations.map((v) => `${v.id} (${v.nodes.map((n) => n.target.join(' ')).join(', ')})`)).toEqual([])
     await aviso(page).getByRole('button', { name: 'Reenviar e-mail' }).click()
-    await expect(aviso(page)).toContainText('Link reenviado.')
+    await expect(aviso(page)).toContainText('Pedido de reenvio recebido.')
     const depois = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze()
     expect(depois.violations.map((v) => `${v.id} (${v.nodes.map((n) => n.target.join(' ')).join(', ')})`)).toEqual([])
     await controlePositivo(page, `aviso, tema ${tema}`)

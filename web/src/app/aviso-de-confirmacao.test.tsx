@@ -7,6 +7,7 @@ import { renderizarPainel } from '@/test/renderizar'
 import { servidor } from '@/test/setup'
 
 const TEXTO = 'Confirme seu e-mail para criar monitores, canais e páginas.'
+const PEDIDO_ACEITO = 'Pedido de reenvio recebido. Se o e-mail ainda precisar de confirmação, confira sua caixa de entrada.'
 
 function aviso(): HTMLElement | null {
   return screen.queryByRole('complementary', { name: 'Confirmação de e-mail' })
@@ -62,7 +63,7 @@ describe('aviso de e-mail não confirmado', () => {
       await reenviar.mock.results[0]?.value
     })
 
-    const confirmacao = faixa.getByText('Link reenviado. Confira sua caixa de entrada.')
+    const confirmacao = faixa.getByText(PEDIDO_ACEITO)
     expect(falsa.chamadas('POST /auth/email/resend')).toBe(1)
     expect(falsa.estado.cadastro.tokens.size).toBe(1)
     expect(faixa.queryByRole('button')).not.toBeInTheDocument()
@@ -78,12 +79,15 @@ describe('aviso de e-mail não confirmado', () => {
       vi.advanceTimersByTime(1)
     })
     const botao = faixa.getByRole('button', { name: 'Reenviar e-mail' })
-    expect(avisoNaTela()).not.toHaveTextContent('Link reenviado.')
+    expect(avisoNaTela()).not.toHaveTextContent('Pedido de reenvio recebido.')
     expect(moverFoco ? titulo : botao).toHaveFocus()
   })
 
-  it('a região de status fica montada e anuncia só o resultado do reenvio', async () => {
-    const { usuario } = await painelNaoConfirmado()
+  it('a região de status permanece montada quando o reenvio é aceito sem gerar um link', async () => {
+    const { falsa, usuario } = await painelNaoConfirmado()
+    // O painel ainda exibe a faixa depois da confirmação em outro aparelho.
+    // Nesse caso a API aceita o pedido, mas não gera um link novo.
+    falsa.estado.emailConfirmado = true
     const faixa = within(avisoNaTela())
     const status = faixa.getByRole('status')
     const botao = faixa.getByRole('button', { name: 'Reenviar e-mail' })
@@ -91,7 +95,8 @@ describe('aviso de e-mail não confirmado', () => {
     expect(status).not.toContainElement(botao)
 
     await usuario.click(botao)
-    await waitFor(() => expect(status).toHaveTextContent(/^Link reenviado\. Confira sua caixa de entrada\.$/))
+    await waitFor(() => expect(status.textContent).toBe(PEDIDO_ACEITO))
+    expect(falsa.estado.cadastro.tokens.size).toBe(0)
     expect(faixa.getByRole('status')).toBe(status)
   })
 

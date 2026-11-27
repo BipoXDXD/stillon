@@ -8,7 +8,7 @@ import { useApi } from './contexto'
 // servidor também limita; isto só evita o clique repetido.
 const ESPERA_DO_REENVIO_MS = 60_000
 
-type Estado = { fase: 'pronto' } | { fase: 'reenviando' } | { fase: 'reenviado' } | { fase: 'falhou'; mensagem: string }
+type Estado = { fase: 'pronto' } | { fase: 'reenviando' } | { fase: 'aceito' } | { fase: 'falhou'; mensagem: string }
 
 // A faixa no topo do conteúdo enquanto o e-mail da conta não foi confirmado
 // (o Layout a monta com email_verified false).
@@ -22,7 +22,7 @@ export function AvisoDeConfirmacao({ email }: { email: string }) {
   const seguirOFoco = useRef(false)
 
   useEffect(() => {
-    if (estado.fase !== 'reenviado') return
+    if (estado.fase !== 'aceito') return
     if (seguirOFoco.current) confirmacao.current?.focus()
     const t = setTimeout(() => {
       seguirOFoco.current = document.activeElement === confirmacao.current
@@ -43,7 +43,7 @@ export function AvisoDeConfirmacao({ email }: { email: string }) {
     try {
       await api.reenviarConfirmacao()
       seguirOFoco.current = document.activeElement === botao.current
-      setEstado({ fase: 'reenviado' })
+      setEstado({ fase: 'aceito' })
     } catch (e) {
       setEstado({ fase: 'falhou', mensagem: mensagemDe(e) })
     }
@@ -63,16 +63,17 @@ export function AvisoDeConfirmacao({ email }: { email: string }) {
         // A T12 pede um papel de status explícito para leitores de tela.
         // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role
         role="status"
-        tabIndex={estado.fase === 'reenviado' ? -1 : undefined}
+        tabIndex={estado.fase === 'aceito' ? -1 : undefined}
         className={cn(
           'font-semibold outline-none empty:sr-only',
           estado.fase === 'falhou' ? 'sm:col-start-1 sm:row-start-2' : 'sm:col-start-2 sm:row-start-1',
         )}
       >
-        {estado.fase === 'reenviado' && 'Link reenviado. Confira sua caixa de entrada.'}
+        {estado.fase === 'aceito' &&
+          'Pedido de reenvio recebido. Se o e-mail ainda precisar de confirmação, confira sua caixa de entrada.'}
         {estado.fase === 'falhou' && estado.mensagem}
       </p>
-      {estado.fase !== 'reenviado' && (
+      {estado.fase !== 'aceito' && (
         // aria-disabled, e não disabled, enquanto o pedido voa: o foco não cai no <body>.
         <Botao
           ref={botao}
