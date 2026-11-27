@@ -4,8 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -111,7 +109,10 @@ func (c *Cadastro) Cadastrar(ctx context.Context, email, senha string) error {
 		if _, err := storage.CriarProjetoPadraoNaTx(ctx, q, id, now); err != nil {
 			return err
 		}
-		if err := gravarTokenDeConfirmacao(ctx, q, id, tokenHash, now); err != nil {
+		if err := q.LockUserSessions(ctx, id); err != nil {
+			return fmt.Errorf("travar o usuário: %w", err)
+		}
+		if err := gravarTokenDeConta(ctx, q, id, tokenHash, propositoConfirmacao, c.clk.Now(), ValidadeDaConfirmacao); err != nil {
 			return err
 		}
 		return audit(ctx, q, id, "user.signed_up", nil, nil, nil, now)
@@ -120,105 +121,79 @@ func (c *Cadastro) Cadastrar(ctx context.Context, email, senha string) error {
 		return err
 	}
 
-	var assunto, corpo string
 	if existente {
-		assunto, corpo = emailJaTemConta(c.links.EsqueciASenha())
+		assunto, corpo := emailJaTemConta(c.links.EsqueciASenha())
+		enviarEmailDeConta(ctx, c.mailer, destino, assunto, corpo, EntregaDeEmail{})
 	} else {
-		assunto, corpo = emailDeConfirmacao(c.links.ConfirmarEmail(token))
+		assunto, corpo := emailDeConfirmacao(c.links.ConfirmarEmail(token))
+		enviarEmailDeConta(ctx, c.mailer, destino, assunto, corpo, entregaDoTokenDeConta(c.pool, c.clk, id, tokenHash, propositoConfirmacao))
 	}
-	c.enviarSemOraculo(ctx, destino, assunto, corpo)
 	return nil
 }
 
-// ConfirmarEmail consome o token do link e marca o e-mail como confirmado, na
-// mesma transação. Token inexistente, já usado ou vencido é ErrTokenInvalido,
-// sem distinção. O consumo é um UPDATE só (ConsumeAccountToken): de dois
-// cliques simultâneos, exatamente um vence.
+// ConfirmarEmail consome o link, confirma o e-mail e revoga os outros links
+// do propósito na mesma transação. Token inexistente, usado ou vencido é
+// ErrTokenInvalido. De dois cliques simultâneos, exatamente um vence.
 func (c *Cadastro) ConfirmarEmail(ctx context.Context, token string) error {
-	now := c.clk.Now()
 	tokenHash := crypto.HashToken(token)
 	return storage.InAccountTokenTx(ctx, c.pool, tokenHash, func(q *db.Queries) error {
-		userID, err := q.ConsumeAccountToken(ctx, db.ConsumeAccountTokenParams{
-			Now: now, TokenHash: tokenHash, Purpose: propositoConfirmacao,
-		})
-		if errors.Is(err, pgx.ErrNoRows) {
-			return ErrTokenInvalido
-		}
+		dono, err := donoDoToken(ctx, q, tokenHash, propositoConfirmacao, c.clk.Now())
 		if err != nil {
-			return fmt.Errorf("consumir token de confirmação: %w", err)
+			return err
+		}
+		if err := q.LockUserSessions(ctx, dono); err != nil {
+			return fmt.Errorf("travar o usuário: %w", err)
+		}
+		now := c.clk.Now()
+		userID, err := consumirTokenDeConta(ctx, q, tokenHash, propositoConfirmacao, now)
+		if err != nil {
+			return err
+		}
+		if err := q.ScopeToUser(ctx, userID); err != nil {
+			return fmt.Errorf("escopo do usuário: %w", err)
 		}
 		if err := q.MarkEmailVerified(ctx, db.MarkEmailVerifiedParams{Now: now, ID: userID}); err != nil {
 			return fmt.Errorf("marcar e-mail confirmado: %w", err)
+		}
+		if err := q.DeleteAccountTokens(ctx, db.DeleteAccountTokensParams{
+			UserID: userID, Purpose: propositoConfirmacao,
+		}); err != nil {
+			return fmt.Errorf("revogar links de confirmação: %w", err)
 		}
 		return audit(ctx, q, userID, "user.email_verified", nil, nil, nil, now)
 	})
 }
 
-// ReenviarConfirmacao manda um link de confirmação novo para o usuário da
-// sessão; o token novo apaga os anteriores, então só o último e-mail vale.
-// Com o e-mail já confirmado, devolve nil sem mandar nada. Usuário que não
-// existe mais é ErrUserNotFound.
+// ReenviarConfirmacao enfileira um link para o usuário da sessão. O novo
+// substitui os anteriores quando o transporte o aceita. Se o usuário já
+// confirmou o e-mail, nada é enviado. Usuário ausente é ErrUserNotFound.
 func (c *Cadastro) ReenviarConfirmacao(ctx context.Context, userID uuid.UUID) error {
-	conta, err := db.New(c.pool).GetAccount(ctx, userID)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return ErrUserNotFound
-	}
-	if err != nil {
-		return fmt.Errorf("ler conta: %w", err)
-	}
-	if conta.EmailVerifiedAt != nil {
-		return nil
-	}
 	token, tokenHash, err := novoTokenDeConta()
 	if err != nil {
 		return err
 	}
-	now := c.clk.Now()
-	err = emTx(ctx, c.pool, func(q *db.Queries) error {
-		if err := q.ScopeToUser(ctx, userID); err != nil {
-			return fmt.Errorf("escopo do usuário: %w", err)
+	var destino string
+	err = storage.InUserTx(ctx, c.pool, userID, func(q *db.Queries) error {
+		if err := q.LockUserSessions(ctx, userID); err != nil {
+			return fmt.Errorf("travar o usuário: %w", err)
 		}
-		return gravarTokenDeConfirmacao(ctx, q, userID, tokenHash, now)
+		conta, err := q.GetAccount(ctx, userID)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrUserNotFound
+		}
+		if err != nil {
+			return fmt.Errorf("ler conta: %w", err)
+		}
+		if conta.EmailVerifiedAt != nil {
+			return nil
+		}
+		destino = conta.Email
+		return gravarTokenDeConta(ctx, q, userID, tokenHash, propositoConfirmacao, c.clk.Now(), ValidadeDaConfirmacao)
 	})
-	if err != nil {
+	if err != nil || destino == "" {
 		return err
 	}
 	assunto, corpo := emailDeConfirmacao(c.links.ConfirmarEmail(token))
-	return c.enviar(ctx, conta.Email, assunto, corpo)
-}
-
-// gravarTokenDeConfirmacao apaga os tokens de confirmação anteriores do
-// usuário e grava o novo, com a validade de 24 h. Supõe o escopo do usuário
-// ligado na transação de q.
-func gravarTokenDeConfirmacao(ctx context.Context, q *db.Queries, userID uuid.UUID, tokenHash []byte, now time.Time) error {
-	if err := q.DeleteAccountTokens(ctx, db.DeleteAccountTokensParams{
-		UserID: userID, Purpose: propositoConfirmacao,
-	}); err != nil {
-		return fmt.Errorf("apagar tokens de confirmação anteriores: %w", err)
-	}
-	if err := q.InsertAccountToken(ctx, db.InsertAccountTokenParams{
-		TokenHash: tokenHash, UserID: userID, Purpose: propositoConfirmacao,
-		CreatedAt: now, ExpiresAt: now.Add(ValidadeDaConfirmacao),
-	}); err != nil {
-		return fmt.Errorf("gravar token de confirmação: %w", err)
-	}
+	enviarEmailDeConta(ctx, c.mailer, destino, assunto, corpo, entregaDoTokenDeConta(c.pool, c.clk, userID, tokenHash, propositoConfirmacao))
 	return nil
-}
-
-func (c *Cadastro) enviar(ctx context.Context, to, assunto, corpo string) error {
-	if err := c.mailer.SendAccountEmail(ctx, to, assunto, corpo); err != nil {
-		return fmt.Errorf("enfileirar e-mail de conta: %w", err)
-	}
-	return nil
-}
-
-// enviarSemOraculo é o envio do Cadastrar: a falha do mailer vai para o log,
-// sem endereço nem link, e não muda a resposta. Os dois ramos mandam e-mail,
-// mas um erro que dependesse do conteúdo (ou do tamanho da fila num ramo só)
-// separaria as respostas; "reenviar" e "esqueci a senha" resolvem o e-mail
-// perdido.
-func (c *Cadastro) enviarSemOraculo(ctx context.Context, to, assunto, corpo string) {
-	if err := c.enviar(ctx, to, assunto, corpo); err != nil {
-		slog.ErrorContext(ctx, "e-mail do cadastro não enfileirado", "erro", err)
-	}
 }

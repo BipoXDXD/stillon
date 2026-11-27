@@ -29,10 +29,13 @@ type carteiro struct {
 	enviados []emailDeRecuperacao
 }
 
-func (c *carteiro) SendAccountEmail(_ context.Context, to, subject, body string) error {
+func (c *carteiro) SendAccountEmail(ctx context.Context, to, subject, body string, entrega account.EntregaDeEmail) error {
 	c.mu.Lock()
-	defer c.mu.Unlock()
 	c.enviados = append(c.enviados, emailDeRecuperacao{to, subject, body})
+	c.mu.Unlock()
+	if entrega.Concluir != nil {
+		return entrega.Concluir(ctx, account.AceitoPeloTransporte)
+	}
 	return nil
 }
 
@@ -435,7 +438,7 @@ func TestPedirRedefinicaoComMailerForaDoArRespondeComoSemConta(t *testing.T) {
 		t.Fatalf("%d e-mails tentados; queria 1 (só o da conta)", n)
 	}
 	saida := log.String()
-	if !strings.Contains(saida, "fila de e-mails de conta fora do ar") {
+	if !strings.Contains(saida, "e-mail de conta não enfileirado") {
 		t.Errorf("o erro do mailer não foi para o log: %s", saida)
 	}
 	if strings.Contains(saida, "dono@") || strings.Contains(saida, "token") {
@@ -443,8 +446,8 @@ func TestPedirRedefinicaoComMailerForaDoArRespondeComoSemConta(t *testing.T) {
 	}
 }
 
-// Dois pedidos simultâneos não deixam dois links válidos: a trava do usuário
-// antes do DELETE faz o segundo pedido ver (e apagar) o token do primeiro.
+// Pedidos simultâneos, todos aceitos pelo transporte, deixam válido apenas
+// o link da última emissão, independentemente da ordem das conclusões.
 func TestPedidosSimultaneosDeixamUmSoLink(t *testing.T) {
 	c := montar(t)
 	r, m := novaRecuperacao(c.pool, c.clk)

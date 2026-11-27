@@ -9,11 +9,13 @@ package contaemail
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/BipoXDXD/stillon/internal/account"
 	"github.com/BipoXDXD/stillon/internal/auth"
 	"github.com/BipoXDXD/stillon/internal/crypto"
 	"github.com/BipoXDXD/stillon/internal/notify"
@@ -33,6 +35,7 @@ const (
 	rajadaDestino  = 3
 	capacidadeFila = 100
 	prazoEnvio     = 15 * time.Second
+	prazoConclusao = 3 * time.Second
 )
 
 // Transporte entrega o e-mail. *notify.Resend satisfaz.
@@ -52,6 +55,7 @@ type Orcamentos interface {
 
 type mensagem struct {
 	para, assunto, corpo string
+	entrega              account.EntregaDeEmail
 }
 
 // Enviador enfileira os e-mails de conta e os entrega em segundo plano, para
@@ -64,6 +68,7 @@ type Enviador struct {
 	chave      []byte
 	log        *slog.Logger
 	fila       chan mensagem
+	descartes  chan account.ConclusaoDoEnvio
 
 	// mu protege parado: depois de Rodar voltar, ninguém consome a fila, e
 	// SendAccountEmail registra a perda em vez de enfileirar.
@@ -76,26 +81,37 @@ type Enviador struct {
 func New(t Transporte, teto Teto, o Orcamentos, chave []byte, log *slog.Logger) *Enviador {
 	return &Enviador{
 		transporte: t, teto: teto, orcamentos: o, chave: chave, log: log,
-		fila: make(chan mensagem, capacidadeFila),
+		fila:      make(chan mensagem, capacidadeFila),
+		descartes: make(chan account.ConclusaoDoEnvio, capacidadeFila),
 	}
 }
 
-// SendAccountEmail enfileira e volta nil. Com a fila cheia, descarta e
-// registra no log: nunca bloqueia quem responde à requisição. Depois do
-// encerramento de Rodar, também descarta e registra.
-func (e *Enviador) SendAccountEmail(_ context.Context, to, subject, body string) error {
+// SendAccountEmail enfileira sem esperar o transporte e devolve
+// ErrEmailSuprimido se a fila está cheia ou já encerrou.
+func (e *Enviador) SendAccountEmail(_ context.Context, to, subject, body string, entrega account.EntregaDeEmail) error {
 	e.mu.Lock()
-	defer e.mu.Unlock()
-	if e.parado {
-		e.log.Warn("e-mail de conta suprimido", "motivo", "encerrado")
-		return nil
+	motivo := "encerrado"
+	if !e.parado {
+		select {
+		case e.fila <- mensagem{to, subject, body, entrega}:
+			e.mu.Unlock()
+			return nil
+		default:
+			motivo = "fila"
+			if entrega.Concluir != nil {
+				// O trabalhador pode limpar a recusa sem guardar o corpo
+				// nem atrasar a resposta HTTP. Se o buffer lotar, a
+				// próxima emissão do titular pode podar o link vencido.
+				select {
+				case e.descartes <- entrega.Concluir:
+				default:
+				}
+			}
+		}
 	}
-	select {
-	case e.fila <- mensagem{to, subject, body}:
-	default:
-		e.log.Warn("e-mail de conta suprimido", "motivo", "fila")
-	}
-	return nil
+	e.mu.Unlock()
+	e.log.Warn("e-mail de conta suprimido", "motivo", motivo)
+	return account.ErrEmailSuprimido
 }
 
 // Rodar consome a fila até ctx encerrar e então drena o que restou. O
@@ -129,6 +145,8 @@ func (e *Enviador) Rodar(ctx context.Context) {
 		select {
 		case m := <-e.fila:
 			e.entregar(limite, m)
+		case concluir := <-e.descartes:
+			e.concluir(limite, concluir, account.EnvioDescartado)
 		case <-ctx.Done():
 		}
 	}
@@ -137,30 +155,81 @@ dreno:
 		select {
 		case m := <-e.fila:
 			e.entregar(limite, m)
+		case concluir := <-e.descartes:
+			e.concluir(limite, concluir, account.EnvioDescartado)
 		default:
 			break dreno
 		}
 	}
-	// O que ainda estiver na fila conta como descartado. Sob mu, nenhum
-	// SendAccountEmail entra entre a contagem e o parado.
+	// Fecha a admissão antes de retirar os descartes. A conclusão roda
+	// fora de mu e usa o orçamento restante de encerramento.
 	e.mu.Lock()
 	e.parado = true
-	n := len(e.fila)
 	e.mu.Unlock()
+	n := len(e.fila)
+	for range n {
+		m := <-e.fila
+		e.concluir(limite, m.entrega.Concluir, account.EnvioDescartado)
+	}
+	for range len(e.descartes) {
+		e.concluir(limite, <-e.descartes, account.EnvioDescartado)
+	}
 	if n > 0 {
 		e.log.Warn("e-mails de conta descartados no encerramento", "quantidade", n)
 	}
 }
 
 func (e *Enviador) entregar(ctx context.Context, m mensagem) {
-	ctx, cancel := context.WithTimeout(ctx, prazoEnvio)
-	defer cancel()
+	envioCtx, cancelar := context.WithTimeout(ctx, prazoEnvio)
+	resultado := e.enviar(envioCtx, m)
+	cancelar()
+	// A conclusão no banco tem prazo próprio, inclusive quando o
+	// transporte esgotou o dele. Em shutdown o total continua limitado.
+	e.concluir(ctx, m.entrega.Concluir, resultado)
+}
+
+func (e *Enviador) enviar(ctx context.Context, m mensagem) account.ResultadoDoEnvio {
+	if m.entrega.Preparar != nil {
+		valido, err := m.entrega.Preparar(ctx)
+		if err != nil {
+			e.log.Error("não foi possível conferir o link do e-mail de conta")
+		}
+		if err != nil || !valido {
+			return account.EnvioDescartado
+		}
+	}
 	liberado, err := e.liberar(ctx, m.para)
-	if err != nil || !liberado {
+	if err != nil || !liberado || ctx.Err() != nil {
+		return account.EnvioDescartado
+	}
+	err = e.transporte.SendAccount(ctx, crypto.Secret(m.para), m.assunto, m.corpo)
+	if err == nil {
+		return account.AceitoPeloTransporte
+	}
+	e.log.Error("e-mail de conta falhou")
+	var falha *notify.SendError
+	if errors.As(err, &falha) && falha.Permanent {
+		return account.EnvioDescartado
+	}
+	return account.EnvioIncerto
+}
+
+func (e *Enviador) concluir(ctx context.Context, concluir account.ConclusaoDoEnvio, resultado account.ResultadoDoEnvio) {
+	if concluir == nil {
 		return
 	}
-	if err := e.transporte.SendAccount(ctx, crypto.Secret(m.para), m.assunto, m.corpo); err != nil {
-		e.log.Error("e-mail de conta falhou", "erro", err)
+	conclusaoCtx, cancelar := context.WithTimeout(ctx, prazoConclusao)
+	defer cancelar()
+	if err := concluir(conclusaoCtx, resultado); err == nil {
+		return
+	}
+	// O primeiro commit pode ter sido efetivado sem confirmação do
+	// banco. Repete a conclusão idempotente sem enviar outro e-mail.
+	if conclusaoCtx.Err() == nil && concluir(conclusaoCtx, resultado) == nil {
+		return
+	}
+	if ctx.Err() == nil || resultado == account.AceitoPeloTransporte {
+		e.log.Error("não foi possível registrar o resultado do e-mail de conta")
 	}
 }
 
@@ -170,7 +239,7 @@ func (e *Enviador) liberar(ctx context.Context, para string) (bool, error) {
 	chave := crypto.HashIP(e.chave, baldeDestino+":"+chaveDoDestino(para))
 	_, ok, err := e.orcamentos.Gastar(ctx, baldeDestino, chave, aCadaDestino, rajadaDestino)
 	if err != nil {
-		e.log.Error("balde do destinatário falhou", "erro", err)
+		e.log.Error("balde do destinatário falhou")
 		return false, err
 	}
 	if !ok {
@@ -179,7 +248,7 @@ func (e *Enviador) liberar(ctx context.Context, para string) (bool, error) {
 	}
 	ok, err = e.teto.Reservar(ctx)
 	if err != nil {
-		e.log.Error("teto de e-mails de conta falhou", "erro", err)
+		e.log.Error("teto de e-mails de conta falhou")
 		return false, err
 	}
 	if !ok {
@@ -221,8 +290,8 @@ func (v *verificacaoComTeto) SendVerification(ctx context.Context, dest crypto.S
 // SemEnvio é o enviador com o e-mail desligado: registra e descarta.
 type SemEnvio struct{ Log *slog.Logger }
 
-// SendAccountEmail registra que o e-mail não saiu, sem o endereço, e volta nil.
-func (s SemEnvio) SendAccountEmail(_ context.Context, _, _, _ string) error {
+// SendAccountEmail registra e sinaliza o descarte, sem o endereço.
+func (s SemEnvio) SendAccountEmail(_ context.Context, _, _, _ string, _ account.EntregaDeEmail) error {
 	s.Log.Warn("e-mail de conta não enviado", "motivo", "email_desligado")
-	return nil
+	return account.ErrEmailSuprimido
 }

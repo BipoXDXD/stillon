@@ -31,10 +31,13 @@ type mailerFalso struct {
 	enviados []emailEnviado
 }
 
-func (m *mailerFalso) SendAccountEmail(_ context.Context, to, subject, body string) error {
+func (m *mailerFalso) SendAccountEmail(ctx context.Context, to, subject, body string, entrega account.EntregaDeEmail) error {
 	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.enviados = append(m.enviados, emailEnviado{to: to, subject: subject, body: body})
+	m.enviados = append(m.enviados, emailEnviado{to, subject, body})
+	m.mu.Unlock()
+	if entrega.Concluir != nil {
+		return entrega.Concluir(ctx, account.AceitoPeloTransporte)
+	}
 	return nil
 }
 
@@ -545,9 +548,9 @@ func TestReenviarJaConfirmadoNaoManda(t *testing.T) {
 // mailerForaDoAr recusa todo e-mail, como uma fila que não aceita mais nada.
 type mailerForaDoAr struct{ chamadas atomic.Int32 }
 
-func (m *mailerForaDoAr) SendAccountEmail(context.Context, string, string, string) error {
+func (m *mailerForaDoAr) SendAccountEmail(context.Context, string, string, string, account.EntregaDeEmail) error {
 	m.chamadas.Add(1)
-	return errors.New("fila de e-mails de conta fora do ar")
+	return errors.New("falha sintética: endereço, corpo e token da mensagem")
 }
 
 // capturarLog troca o logger padrão por um que escreve no buffer devolvido, e
@@ -585,7 +588,7 @@ func TestCadastrarComMailerForaDoArDevolveNilNosDoisRamos(t *testing.T) {
 		t.Fatalf("%d usuários; queria 1 (a conta nasce mesmo sem o e-mail)", n)
 	}
 	saida := log.String()
-	if !strings.Contains(saida, "fila de e-mails de conta fora do ar") {
+	if !strings.Contains(saida, "e-mail de conta não enfileirado") {
 		t.Errorf("o erro do mailer não foi para o log: %s", saida)
 	}
 	if strings.Contains(saida, "fulano") || strings.Contains(saida, "token") {

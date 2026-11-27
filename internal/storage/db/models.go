@@ -22,6 +22,7 @@ type AccountToken struct {
 	CreatedAt time.Time
 	ExpiresAt time.Time
 	UsedAt    *time.Time
+	Emissao   *int64
 }
 
 type AuditLog struct {

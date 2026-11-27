@@ -46,6 +46,9 @@ var chamadoresDeScopeToUser = []string{
 // consulta devolve vazio em silêncio e a contagem dá zero.
 var chamadoresDeInUserTx = map[string]string{
 	"internal/account/account.go":       "conta e perfil da pessoa",
+	"internal/account/cadastro.go":      "emissão de confirmação do endereço da própria conta",
+	"internal/account/recuperacao.go":   "emissão de redefinição da senha da conta",
+	"internal/account/tokens.go":        "conclusão da entrega dos links da conta",
 	"internal/auth/provas.go":           "provas de família de sessão (00029)",
 	"internal/tenancy/pgstore/store.go": "projects e project_members: a lista e o Projeto padrão da pessoa",
 	"internal/storage/scope.go":         "definição",
