@@ -4517,26 +4517,37 @@ Coolify. Um passo por vez; só siga depois do **Confira**.
    campo da entrada do passo 1. **Por quê:** o hostname faz a Cloudflare recusar token gerado em
    outro site. **Confira:** a entrada tem os dois valores, e o widget aparece na lista do
    Turnstile.
-3. **Resend.** Em **Domains → Add domain**, adicione o domínio do remetente de conta (sugestão:
-   `conta.stillon.tech`). Crie cada registro que a Resend mostrar na Hostinger, na área **DNS
-   records** do domínio (não em **Nameservers**: lá dá "invalid nameserver structure").
+3. **Resend.** Se for usar um domínio separado para o remetente de conta, adicione-o em
+   **Domains → Add domain** (por exemplo, `conta.stillon.tech`). Crie na área **DNS records**
+   do domínio na Hostinger cada registro que o Resend mostrar. Em **Nameservers**, a Hostinger
+   retorna "invalid nameserver structure".
    **Por quê:** o remetente de conta separado não mistura a reputação dos avisos com a dos
    e-mails de cadastro. **Confira:** os registros aparecem na lista de DNS records da Hostinger.
-4. **Resend.** Clique em **Verify** no domínio novo e espere. **Confira:** o domínio fica
-   **Verified** (de minutos a algumas horas).
+4. **Resend.** Se adicionou o domínio, clique em **Verify** e espere. **Confira:** o domínio fica
+   **Verified** (de minutos a algumas horas). A ativação depende de o Resend autorizar o envio do
+   remetente de conta com a `RESEND_API_KEY`. A chave do passo 1.5 é restrita a envios no domínio
+   dos avisos. Com essa chave, deixe `ACCOUNT_EMAIL_FROM` vazia para usar o `EMAIL_FROM`, ou
+   escolha um endereço de conta autorizado nesse mesmo domínio.
 5. **Coolify.** No recurso do app, em **Environment Variables**, cadastre
-   `TURNSTILE_SITE_KEY` e `TURNSTILE_SECRET_KEY` colando do Bitwarden, e
-   `ACCOUNT_EMAIL_FROM` como `StillOn <conta@conta.stillon.tech>`. **Por quê:** com só uma das
-   chaves do Turnstile, com uma chave de teste da Cloudflare (começa com `1x00000000`,
-   `2x00000000` ou `3x00000000`) ou com o remetente sem o Resend, o app recusa subir. **Confira:** as três
-   aparecem na lista, com o secret mascarado.
-6. **Ativação.** Siga a seção "Ativação em produção" do
+   `TURNSTILE_SITE_KEY` e `TURNSTILE_SECRET_KEY` colando do Bitwarden. Preencha
+   `ACCOUNT_EMAIL_FROM` se escolheu um remetente autorizado no passo 4. Confira também o par
+   `RESEND_API_KEY` e `EMAIL_FROM` no recurso. **Por quê:** o Coolify usa as variáveis do recurso
+   para preencher os valores referenciados pelo manifesto na publicação. **Confira:** as chaves
+   do Turnstile aparecem na lista, com o secret mascarado.
+6. **Ativação.** Após a publicação dos termos de uso, salvo decisão contrária do dono, siga a
+   seção "Ativação em produção" do
    [plano do cadastro público](../superpowers/plans/2026-11-23-pr3-cadastro-publico.md)
-   (`deploy/coolify/app.json` e o Passo 7). Ela espera os termos de uso publicados, salvo decisão
-   contrária do dono.
+   para atualizar `deploy/coolify/app.json`, fixar o novo commit de infraestrutura no recurso
+   pelo Passo 7 e publicá-lo. **Por quê:** o par do Turnstile e `ACCOUNT_EMAIL_FROM` só chegam
+   ao processo quando a publicação usa um manifesto que os repassa em
+   `services.app.environment`. Na inicialização desse contêiner, o app recusa um par de e-mail
+   ou Turnstile incompleto, uma chave de teste da Cloudflare (prefixos `1x00000000`, `2x00000000`
+   e `3x00000000`) ou `ACCOUNT_EMAIL_FROM` sem o par de e-mail. O Resend verifica a autorização
+   do remetente no envio.
 
-**Confira:** no seu computador, `curl -s https://stillon.tech/api/v1/auth/signup-config` mostra
-`"enabled":true`.
+   **Confira:** no seu computador, `curl -s https://stillon.tech/api/v1/auth/signup-config` mostra
+   `"enabled":true`. Faça um cadastro com seu e-mail e confirme que a mensagem chegou do
+   remetente esperado.
 
 Para trocar o secret do Turnstile: em **Turnstile → widget → Rotate secret key** na Cloudflare,
 cole o novo no Bitwarden e no Coolify e publique de novo.
