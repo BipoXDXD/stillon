@@ -237,7 +237,8 @@ func TestCadastrarContaExistenteMandaJaTemConta(t *testing.T) {
 
 func TestCadastrarComCaixaDiferenteContaComoExistente(t *testing.T) {
 	a := novoCadastro(t)
-	cadastrarEPegarToken(t, a, "fulano@x.com")
+	const emailCadastrado = "FuLaNo@x.com"
+	cadastrarEPegarToken(t, a, emailCadastrado)
 
 	if err := a.cad.Cadastrar(context.Background(), "Fulano@X.com", senha); err != nil {
 		t.Fatal(err)
@@ -248,6 +249,74 @@ func TestCadastrarComCaixaDiferenteContaComoExistente(t *testing.T) {
 	enviados := a.mailer.todos()
 	if len(enviados) != 1 || !strings.Contains(enviados[0].body, linksDeTeste.EsqueciASenha()) {
 		t.Fatalf("e-mails %+v; queria 1 \"já tem conta\"", enviados)
+	}
+	if enviados[0].to != emailCadastrado {
+		t.Fatalf("destinatário %q; queria o endereço cadastrado %q", enviados[0].to, emailCadastrado)
+	}
+}
+
+func TestCadastrarSimultaneoUsaGrafiaDaContaCriada(t *testing.T) {
+	a := novoCadastro(t)
+	ctx := t.Context()
+	admin := testdb.Admin(t)
+	trava, err := admin.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cadastros sync.WaitGroup
+	defer func() {
+		_ = trava.Rollback(context.Background())
+		cadastros.Wait()
+	}()
+	// Quem insere a conta fica preso no Projeto padrão enquanto o outro
+	// cadastro espera pela restrição de e-mail único.
+	if _, err := trava.Exec(ctx, `LOCK TABLE projects IN ACCESS EXCLUSIVE MODE`); err != nil {
+		t.Fatal(err)
+	}
+	fim := make(chan error, 2)
+	for _, email := range []string{"FuLaNo@exemplo.com", "fulano@exemplo.com"} {
+		cadastros.Go(func() { fim <- a.cad.Cadastrar(ctx, email, senha) })
+	}
+	if !testdb.EsperarBloqueados(t, admin, 2, fim) {
+		t.Fatal("um cadastro terminou antes de os dois alcançarem as travas")
+	}
+	if err := trava.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		if err := <-fim; err != nil {
+			t.Fatalf("Cadastrar: %v; queria nil", err)
+		}
+	}
+
+	if n := contar(t, `SELECT count(*) FROM users`); n != 1 {
+		t.Fatalf("%d usuários; queria 1", n)
+	}
+	if n := contar(t, `SELECT count(*) FROM projects`); n != 1 {
+		t.Fatalf("%d projetos; queria 1", n)
+	}
+	var cadastrado string
+	if err := admin.QueryRow(ctx, `SELECT email FROM users`).Scan(&cadastrado); err != nil {
+		t.Fatal(err)
+	}
+	enviados := a.mailer.todos()
+	if len(enviados) != 2 {
+		t.Fatalf("%d e-mails; queria 2", len(enviados))
+	}
+	var confirmacoes, avisos int
+	for _, email := range enviados {
+		if email.to != cadastrado {
+			t.Errorf("destinatário %q; queria a grafia gravada %q", email.to, cadastrado)
+		}
+		switch {
+		case strings.Contains(email.body, linksDeTeste.ConfirmarEmail("")):
+			confirmacoes++
+		case strings.Contains(email.body, linksDeTeste.EsqueciASenha()):
+			avisos++
+		}
+	}
+	if confirmacoes != 1 || avisos != 1 {
+		t.Errorf("%d confirmações e %d avisos de conta existente; queria 1 de cada", confirmacoes, avisos)
 	}
 }
 
