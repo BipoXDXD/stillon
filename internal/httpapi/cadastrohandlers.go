@@ -13,6 +13,8 @@ import (
 	"github.com/BipoXDXD/stillon/internal/account"
 	"github.com/BipoXDXD/stillon/internal/apierr"
 	"github.com/BipoXDXD/stillon/internal/auth"
+	"github.com/BipoXDXD/stillon/internal/clock"
+	"github.com/BipoXDXD/stillon/internal/crypto"
 	"github.com/BipoXDXD/stillon/internal/httpapi/middleware"
 	"github.com/BipoXDXD/stillon/internal/observability"
 	"github.com/BipoXDXD/stillon/internal/turnstile"
@@ -21,7 +23,7 @@ import (
 // Cadastrador é o cadastro público (account.Cadastro).
 type Cadastrador interface {
 	Cadastrar(ctx context.Context, email, senha string) error
-	ConfirmarEmail(ctx context.Context, token, senha string) error
+	ConfirmarEmail(ctx context.Context, token, senha string, ipHash []byte) error
 	ReenviarConfirmacao(ctx context.Context, userID uuid.UUID) error
 }
 
@@ -66,10 +68,15 @@ type CadastroHandlers struct {
 	turnstile   VerificadorTurnstile
 	config      ConfigCadastro
 	proxies     middleware.Proxies
+	// ipKey é a chave do HMAC do IP, a mesma do login (auth.Manager.IPHash):
+	// a auditoria da trava vinda da confirmação grava o ip_hash como a do
+	// login. clk dá o agora do Retry-After da trava.
+	ipKey []byte
+	clk   clock.Clock
 }
 
-func NewCadastroHandlers(c Cadastrador, r Recuperador, t VerificadorTurnstile, cfg ConfigCadastro, proxies middleware.Proxies) *CadastroHandlers {
-	return &CadastroHandlers{cadastro: c, recuperacao: r, turnstile: t, config: cfg, proxies: proxies}
+func NewCadastroHandlers(c Cadastrador, r Recuperador, t VerificadorTurnstile, cfg ConfigCadastro, proxies middleware.Proxies, ipKey []byte, clk clock.Clock) *CadastroHandlers {
+	return &CadastroHandlers{cadastro: c, recuperacao: r, turnstile: t, config: cfg, proxies: proxies, ipKey: ipKey, clk: clk}
 }
 
 type configCadastroResponse struct {
@@ -146,8 +153,8 @@ type confirmarEmailRequest struct {
 //   - 429 rate_limited: o balde por IP, o teto do Argon2id ou a conta
 //     travada pelo bloqueio do login (cinco senhas erradas, no login ou aqui).
 //     A trava se anuncia aqui, ao contrário do login: quem chega à senha já
-//     tem o token, que prova que a conta existe. O Retry-After da trava é a
-//     duração inteira dela (auth.LockDuration), um teto.
+//     tem o token, que prova que a conta existe. O Retry-After da trava é o
+//     que falta dela, arredondado para cima.
 func (h *CadastroHandlers) ConfirmarEmail(w http.ResponseWriter, r *http.Request) {
 	var req confirmarEmailRequest
 	if !decodeJSON(w, r, &req) {
@@ -157,14 +164,16 @@ func (h *CadastroHandlers) ConfirmarEmail(w http.ResponseWriter, r *http.Request
 		apierr.WriteError(w, r, apierr.CodeTokenInvalid)
 		return
 	}
-	err := h.cadastro.ConfirmarEmail(r.Context(), req.Token, req.Password)
+	ipHash := crypto.HashIP(h.ipKey, middleware.ClientIP(r, h.proxies))
+	err := h.cadastro.ConfirmarEmail(r.Context(), req.Token, req.Password, ipHash)
+	var travada auth.LockedError
 	switch {
 	case errors.Is(err, account.ErrTokenInvalido):
 		apierr.WriteError(w, r, apierr.CodeTokenInvalid)
 	case errors.Is(err, account.ErrInvalidCredentials):
 		apierr.WriteError(w, r, apierr.CodeInvalidCredentials)
-	case errors.Is(err, auth.ErrLocked):
-		w.Header().Set("Retry-After", strconv.Itoa(int(auth.LockDuration/time.Second)))
+	case errors.As(err, &travada):
+		w.Header().Set("Retry-After", strconv.Itoa(segundosAte(travada.Until, h.clk.Now())))
 		apierr.WriteError(w, r, apierr.CodeRateLimited)
 	case err != nil:
 		h.internal(w, r, "confirmar e-mail", err)
@@ -288,4 +297,12 @@ func (h *CadastroHandlers) internal(w http.ResponseWriter, r *http.Request, op s
 		return
 	}
 	erroInterno(w, r, op, err)
+}
+
+// segundosAte é o Retry-After até ate: o que falta, arredondado para cima, e
+// nunca menos de 1 s (a trava que venceu entre a recusa e a resposta).
+func segundosAte(ate, agora time.Time) int {
+	falta := ate.Sub(agora)
+	segundos := int((falta + time.Second - 1) / time.Second)
+	return max(segundos, 1)
 }

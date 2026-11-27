@@ -159,7 +159,7 @@ func Routes(ctx context.Context, cfg *config.Config, d Deps) http.Handler {
 	sp := NewStatusPageHandlers(d.StatusPages, cfg.PublicBaseURL)
 	ah := NewAccountHandlers(d.Accounts, proxiesDe(cfg), secureCookie, provas)
 	ph := NewProjectHandlers(d.Projects)
-	cad := NewCadastroHandlers(d.Cadastro, d.Recuperacao, d.Turnstile, d.CadastroPublico, proxiesDe(cfg))
+	cad := NewCadastroHandlers(d.Cadastro, d.Recuperacao, d.Turnstile, d.CadastroPublico, proxiesDe(cfg), cfg.IPHashKey, d.Clock)
 	authn := middleware.Authn(cfg.JWTSecret, d.Clock)
 	// criacao é a trava "sem e-mail confirmado não cria" (403
 	// email_not_verified), em todo POST que cria targets, heartbeats (inclusive

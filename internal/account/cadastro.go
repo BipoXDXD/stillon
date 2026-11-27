@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -145,7 +146,9 @@ func (c *Cadastro) Cadastrar(ctx context.Context, email, senha string) error {
 //     (auth.CheckPasswordOrLocked): a vaga do Argon2id, a reserva no bloqueio
 //     da CONTA (o mesmo contador do login, então a confirmação não é um
 //     oráculo de senha à parte) e o Argon2id. Errada é ErrInvalidCredentials,
-//     e a reserva fica contada; a conta travada é auth.ErrLocked. Certa, a
+//     e a reserva fica contada; a conta travada é auth.LockedError (que é
+//     auth.ErrLocked), com o fim da trava. ipHash, o HMAC do IP de quem
+//     tenta, vai para a auditoria se esta tentativa travar a conta. Certa, a
 //     reserva volta ainda com a vaga: só a errada conta;
 //  4. a transação de antes: trava do usuário, o token consumido, o hash
 //     conferido de novo (a senha trocada depois da verificação recusa), o
@@ -154,7 +157,7 @@ func (c *Cadastro) Cadastrar(ctx context.Context, email, senha string) error {
 // Só o passo 4 consome o link: nos erros de senha ele continua valendo. De
 // dois cliques simultâneos, exatamente um vence. Com o teto do Argon2id
 // cheio, auth.ErrArgon2Busy, sem contar tentativa.
-func (c *Cadastro) ConfirmarEmail(ctx context.Context, token, senha string) error {
+func (c *Cadastro) ConfirmarEmail(ctx context.Context, token, senha string, ipHash []byte) error {
 	tokenHash := crypto.HashToken(token)
 	var dono uuid.UUID
 	err := storage.InAccountTokenTx(ctx, c.pool, tokenHash, func(q *db.Queries) error {
@@ -168,7 +171,7 @@ func (c *Cadastro) ConfirmarEmail(ctx context.Context, token, senha string) erro
 	if senha == "" {
 		return ErrInvalidCredentials
 	}
-	verificado, err := c.conferirSenha(ctx, dono, senha)
+	verificado, err := c.conferirSenha(ctx, dono, senha, ipHash)
 	if err != nil {
 		return err
 	}
@@ -207,9 +210,11 @@ func (c *Cadastro) ConfirmarEmail(ctx context.Context, token, senha string) erro
 }
 
 // conferirSenha é o passo 3 de ConfirmarEmail e devolve o hash que conferiu.
-// O ip_hash da auditoria do bloqueio fica vazio: o cadastro não tem a chave
-// de IP.
-func (c *Cadastro) conferirSenha(ctx context.Context, dono uuid.UUID, senha string) (string, error) {
+// ipHash é o HMAC do IP de quem tenta, que a auditoria grava se esta
+// tentativa travar a conta. A conta travada é auth.LockedError, com o fim da
+// trava relido depois da recusa (a trava pode ter vindo de outra tentativa
+// no meio); se ela já venceu nesse intervalo, o fim é agora.
+func (c *Cadastro) conferirSenha(ctx context.Context, dono uuid.UUID, senha string, ipHash []byte) (string, error) {
 	u, err := c.users.ByID(ctx, dono)
 	if err != nil {
 		// O dono do token tem conta (a FK apaga os tokens com ela): ausente
@@ -219,8 +224,12 @@ func (c *Cadastro) conferirSenha(ctx context.Context, dono uuid.UUID, senha stri
 		}
 		return "", err
 	}
-	tentativas := auth.AccountAttempts(c.users, dono, nil, c.clk.Now())
+	agora := c.clk.Now()
+	tentativas := auth.AccountAttempts(c.users, dono, ipHash, agora)
 	ok, err := auth.CheckPasswordOrLocked(ctx, tentativas, u, senha)
+	if errors.Is(err, auth.ErrLocked) {
+		return "", c.fimDaTrava(ctx, dono, agora)
+	}
 	if err != nil {
 		return "", err
 	}
@@ -228,6 +237,19 @@ func (c *Cadastro) conferirSenha(ctx context.Context, dono uuid.UUID, senha stri
 		return "", ErrInvalidCredentials
 	}
 	return u.PasswordHash, nil
+}
+
+// fimDaTrava é o auth.LockedError da conta travada, com o locked_until atual.
+func (c *Cadastro) fimDaTrava(ctx context.Context, dono uuid.UUID, agora time.Time) error {
+	u, err := c.users.ByID(ctx, dono)
+	if err != nil {
+		return fmt.Errorf("ler o fim da trava: %w", err)
+	}
+	ate := agora
+	if u.LockedUntil != nil && u.LockedUntil.After(agora) {
+		ate = *u.LockedUntil
+	}
+	return auth.LockedError{Until: ate}
 }
 
 // ReenviarConfirmacao enfileira um link para o usuário da sessão. O novo

@@ -1,6 +1,7 @@
 package httpapi_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -281,32 +282,56 @@ func TestConfirmarExigeASenhaDoCadastro(t *testing.T) {
 	}
 }
 
-// Cinco senhas erradas travam a conta no bloqueio do login. Travada, até a
-// senha certa é 429 rate_limited, com Retry-After da trava (e não o do balde
-// por IP); vencida a trava, o mesmo link confirma.
+// confirmarDe é o confirmar() vindo de origem (X-Forwarded-For), numa api
+// atrás de proxy: cada origem tem o seu balde por IP.
+func confirmarDe(t *testing.T, a *api, token, senha, origem string) respostaCrua {
+	t.Helper()
+	resp := enviarDe(t, a, "/api/v1/auth/email/confirm", map[string]string{"token": token, "password": senha}, origem)
+	defer resp.Body.Close()
+	lido, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return respostaCrua{status: resp.StatusCode, cabecalhos: resp.Header.Clone(), corpo: string(lido)}
+}
+
+// Cinco senhas erradas travam a conta no bloqueio do login, e a auditoria da
+// trava leva o HMAC do IP de quem deu a quinta. Travada, até a senha certa é
+// 429 rate_limited, com Retry-After do que falta da trava; vencida a trava, o
+// mesmo link confirma.
 func TestConfirmarContaTravadaDa429(t *testing.T) {
-	a := newAPI(t)
+	a := apiAtrasDeProxy(t)
 	const email = "fulano@exemplo.com"
 	exigir202SemCorpo(t, "signup", signup(t, a, email))
 	token := a.conta.tokenDoUltimo(t)
 
+	var ultima string
 	for i := range auth.LockThreshold {
-		exigirErro(t, fmt.Sprintf("senha errada %d", i+1), confirmar(t, a, token, "outra-senha-bem-comprida"),
+		ultima = novaOrigem()
+		exigirErro(t, fmt.Sprintf("senha errada %d", i+1), confirmarDe(t, a, token, "outra-senha-bem-comprida", ultima),
 			http.StatusUnauthorized, apierr.CodeInvalidCredentials)
 	}
-	// Uma ficha do balde por IP de volta: o 429 que vem agora é o da trava.
+	var ipDaTrava []byte
+	if err := a.pool.QueryRow(context.Background(), `SELECT a.ip_hash FROM audit_log a JOIN users u ON u.id = a.user_id
+		WHERE u.email = $1 AND a.action = 'user.locked'`, email).Scan(&ipDaTrava); err != nil {
+		t.Fatalf("auditoria user.locked: %v", err)
+	}
+	if !bytes.Equal(ipDaTrava, crypto.HashIP(testIPHashKey, ultima)) {
+		t.Errorf("ip_hash da trava = %x, queria o HMAC de %s, a origem da quinta tentativa", ipDaTrava, ultima)
+	}
+
 	a.clk.Advance(6 * time.Second)
-	travada := confirmar(t, a, token, testPass)
+	travada := confirmarDe(t, a, token, testPass, novaOrigem())
 	exigirErro(t, "senha certa com a conta travada", travada, http.StatusTooManyRequests, apierr.CodeRateLimited)
-	if ra := travada.cabecalhos.Get("Retry-After"); ra != "900" {
-		t.Errorf("Retry-After = %q, queria 900 (a trava de 15 min)", ra)
+	if ra := travada.cabecalhos.Get("Retry-After"); ra != "894" {
+		t.Errorf("Retry-After = %q, queria 894 (os 15 min da trava menos os 6 s)", ra)
 	}
 	if n := contarConfirmados(t, a, email); n != 0 {
 		t.Fatal("a conta travada confirmou o e-mail")
 	}
 
 	a.clk.Advance(auth.LockDuration)
-	if r := confirmar(t, a, token, testPass); r.status != http.StatusNoContent {
+	if r := confirmarDe(t, a, token, testPass, novaOrigem()); r.status != http.StatusNoContent {
 		t.Fatalf("depois da trava: %d %s, queria 204", r.status, r.corpo)
 	}
 }

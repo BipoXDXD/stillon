@@ -154,6 +154,15 @@ func CheckPassword(ctx context.Context, t Attempts, u User, plain string) (ok, n
 // CheckPasswordOrLocked o devolve: o login não anuncia o bloqueio.
 var ErrLocked = errors.New("auth: tentativas bloqueadas")
 
+// LockedError é o ErrLocked com o fim da trava, para o Retry-After de quem o
+// anuncia. errors.Is(err, ErrLocked) vale para ele.
+type LockedError struct{ Until time.Time }
+
+func (e LockedError) Error() string {
+	return ErrLocked.Error() + " até " + e.Until.UTC().Format(time.RFC3339)
+}
+func (e LockedError) Is(target error) bool { return target == ErrLocked }
+
 // CheckPasswordOrLocked é o CheckPassword (mesma vaga, mesma reserva, mesmo
 // contador) para a rota que já exigiu outra posse antes da senha e por isso
 // pode anunciar o bloqueio: o contador bloqueado devolve ErrLocked, sem
