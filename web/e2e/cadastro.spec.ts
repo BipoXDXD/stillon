@@ -40,15 +40,31 @@ test('cadastro até o confira seu e-mail', async ({ page }) => {
   await controlePositivo(page, 'cadastro')
 })
 
-test('confirmação pelo link do e-mail, com o token no fragmento', async ({ page }) => {
-  const pedido = page.waitForRequest('**/api/v1/auth/email/confirm')
+test('confirmação pelo link do e-mail, com o token no fragmento e a senha do cadastro', async ({ page }) => {
   await page.goto('/confirm-email#token=token-da-caixa')
-  expect((await pedido).postDataJSON()).toEqual({ token: 'token-da-caixa' })
+  await expect(page.getByRole('heading', { name: 'Confirme seu e-mail', level: 1 })).toBeVisible()
+  // O fragmento saiu da barra, e nada foi ao servidor antes da senha.
+  expect(page.url()).not.toContain('token-da-caixa')
+  await page.getByLabel('Senha').fill(SENHA_NOVA)
+  const pedido = page.waitForRequest('**/api/v1/auth/email/confirm')
+  await page.getByRole('button', { name: 'Confirmar e-mail' }).click()
+  expect((await pedido).postDataJSON()).toEqual({ token: 'token-da-caixa', password: SENHA_NOVA })
   expect((await pedido).url()).not.toContain('token-da-caixa')
   await expect(page.getByRole('heading', { name: 'E-mail confirmado', level: 1 })).toBeVisible()
-  // O fragmento saiu da barra.
-  expect(page.url()).not.toContain('token-da-caixa')
   await controlePositivo(page, 'confirmação')
+})
+
+test('confirmação com senha errada mantém o formulário', async ({ page }) => {
+  await page.route('**/api/v1/auth/email/confirm', (route) =>
+    route.fulfill({ status: 401, json: { error: { code: 'invalid_credentials', message: '' }, trace_id: 't' } }),
+  )
+  await page.goto('/confirm-email#token=token-da-caixa')
+  const senha = page.getByLabel('Senha')
+  await senha.fill('outra senha qualquer')
+  await page.getByRole('button', { name: 'Confirmar e-mail' }).click()
+  await expect(page.getByText('Senha incorreta. O link continua valendo: tente de novo.')).toBeVisible()
+  await expect(senha).toBeFocused()
+  await controlePositivo(page, 'confirmação com senha errada')
 })
 
 test('confirmação com link inválido ou vencido', async ({ page }) => {
@@ -56,6 +72,8 @@ test('confirmação com link inválido ou vencido', async ({ page }) => {
     route.fulfill({ status: 400, json: { error: { code: 'token_invalid', message: '' }, trace_id: 't' } }),
   )
   await page.goto('/confirm-email#token=usado')
+  await page.getByLabel('Senha').fill(SENHA_NOVA)
+  await page.getByRole('button', { name: 'Confirmar e-mail' }).click()
   await expect(page.getByRole('heading', { name: 'Link inválido ou vencido', level: 1 })).toBeVisible()
   await expect(page.getByRole('link', { name: 'Entrar' })).toHaveAttribute('href', '/login')
   await controlePositivo(page, 'confirmação inválida')
