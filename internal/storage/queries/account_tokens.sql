@@ -7,10 +7,34 @@
 INSERT INTO account_tokens (token_hash, user_id, purpose, created_at, expires_at)
 VALUES (sqlc.arg(token_hash), sqlc.arg(user_id), sqlc.arg(purpose), sqlc.arg(created_at), sqlc.arg(expires_at));
 
--- Um token novo invalida os anteriores do mesmo propósito: o último e-mail
--- enviado é o único link que vale.
+-- Revoga todos os links do propósito, inclusive envios pendentes.
 -- name: DeleteAccountTokens :exec
 DELETE FROM account_tokens WHERE user_id = sqlc.arg(user_id) AND purpose = sqlc.arg(purpose);
+
+-- name: DeleteAllAccountTokens :exec
+DELETE FROM account_tokens WHERE user_id = sqlc.arg(user_id);
+
+-- Remove candidatos vencidos no próximo pedido do usuário, inclusive após
+-- uma interrupção do processo entre a emissão e a conclusão do envio.
+-- name: DeleteExpiredAccountTokens :exec
+DELETE FROM account_tokens
+ WHERE user_id = sqlc.arg(user_id) AND expires_at <= sqlc.arg(now);
+
+-- Um descarte comprovado remove só a própria emissão.
+-- name: DeleteDiscardedAccountToken :exec
+DELETE FROM account_tokens
+ WHERE user_id = sqlc.arg(user_id) AND token_hash = sqlc.arg(token_hash);
+
+-- A conclusão só substitui as emissões anteriores enquanto o próprio link
+-- ainda pode ser usado. A consulta também serve para repetir a conclusão.
+-- name: ReplaceOlderAccountTokens :exec
+DELETE FROM account_tokens AS anterior
+ USING account_tokens AS aceito
+ WHERE aceito.token_hash = sqlc.arg(token_hash)
+   AND aceito.user_id = sqlc.arg(user_id)
+   AND aceito.used_at IS NULL AND aceito.expires_at > sqlc.arg(now)
+   AND anterior.user_id = aceito.user_id AND anterior.purpose = aceito.purpose
+   AND anterior.emissao < aceito.emissao;
 
 -- O dono de um token válido, sem consumi-lo.
 -- name: PeekAccountToken :one

@@ -37,10 +37,13 @@ type mailerDeContaFalso struct {
 	enviados []emailDeConta
 }
 
-func (m *mailerDeContaFalso) SendAccountEmail(_ context.Context, to, subject, body string) error {
+func (m *mailerDeContaFalso) SendAccountEmail(ctx context.Context, to, subject, body string, entrega account.EntregaDeEmail) error {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	m.enviados = append(m.enviados, emailDeConta{to, subject, body})
+	m.mu.Unlock()
+	if entrega.Concluir != nil {
+		return entrega.Concluir(ctx, account.AceitoPeloTransporte)
+	}
 	return nil
 }
 

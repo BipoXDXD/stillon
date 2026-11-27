@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"time"
 
 	"github.com/google/uuid"
@@ -37,7 +36,7 @@ func NewRecuperacao(pool *pgxpool.Pool, clk clock.Clock, mailer AccountMailer, l
 
 // PedirRedefinicao manda o link de redefinição se o e-mail tiver conta, e
 // devolve nil com conta ou sem conta: a resposta não diz se o e-mail está
-// cadastrado. O token novo apaga os anteriores (só o último link vale).
+// cadastrado. O novo link substitui os anteriores quando o transporte o aceita.
 //
 // O link vai para o endereço gravado, e não para o digitado: o citext casa
 // "Dono@" com "dono@", mas um servidor de e-mail pode tratar a parte local
@@ -59,40 +58,18 @@ func (r *Recuperacao) PedirRedefinicao(ctx context.Context, email string) error 
 	if err != nil {
 		return err
 	}
-	now := r.clk.Now()
 	var destino string
-	err = emTx(ctx, r.pool, func(q *db.Queries) error {
-		conta, err := q.GetAccount(ctx, userID)
-		if err != nil {
-			// ErrNoRows (a conta apagada entre as duas leituras) segue até o
-			// errors.Is abaixo e vira "sem conta".
-			return fmt.Errorf("ler conta: %w", err)
-		}
-		destino = conta.Email
-		// Gravar e apagar tokens é do escopo do dono (políticas da 00047).
-		if err := q.ScopeToUser(ctx, userID); err != nil {
-			return fmt.Errorf("escopo do usuário: %w", err)
-		}
-		// A trava do usuário antes do DELETE: sem ela, dois pedidos
-		// simultâneos não veem o INSERT um do outro, e os dois links ficam
-		// valendo. Com ela, o segundo espera o commit do primeiro e o apaga.
-		// É a mesma trava que Redefinir toma antes de consumir o token, e na
-		// mesma ordem (trava, depois linhas): as duas não se travam em ciclo.
+	err = storage.InUserTx(ctx, r.pool, userID, func(q *db.Queries) error {
 		if err := q.LockUserSessions(ctx, userID); err != nil {
 			return fmt.Errorf("travar o usuário: %w", err)
 		}
-		if err := q.DeleteAccountTokens(ctx, db.DeleteAccountTokensParams{
-			UserID: userID, Purpose: propositoRedefinicao,
-		}); err != nil {
-			return fmt.Errorf("apagar links anteriores: %w", err)
+		conta, err := q.GetAccount(ctx, userID)
+		if err != nil {
+			// A conta pode ter sido apagada desde a busca de userID.
+			return fmt.Errorf("ler conta: %w", err)
 		}
-		if err := q.InsertAccountToken(ctx, db.InsertAccountTokenParams{
-			TokenHash: hash, UserID: userID, Purpose: propositoRedefinicao,
-			CreatedAt: now, ExpiresAt: now.Add(ValidadeDaRedefinicao),
-		}); err != nil {
-			return fmt.Errorf("gravar link de redefinição: %w", err)
-		}
-		return nil
+		destino = conta.Email
+		return gravarTokenDeConta(ctx, q, userID, hash, propositoRedefinicao, r.clk.Now(), ValidadeDaRedefinicao)
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil
@@ -102,12 +79,7 @@ func (r *Recuperacao) PedirRedefinicao(ctx context.Context, email string) error 
 	}
 
 	assunto, corpo := emailDeRedefinicao(r.links.RedefinirSenha(token))
-	if err := r.mailer.SendAccountEmail(ctx, destino, assunto, corpo); err != nil {
-		// Devolver o erro só aqui, no ramo "tem conta", seria um oráculo:
-		// o ramo sem conta nunca falha. Vai para o log, sem endereço nem
-		// link, e a resposta fica igual; "pedir de novo" resolve.
-		slog.ErrorContext(ctx, "e-mail de redefinição não enfileirado", "erro", err)
-	}
+	enviarEmailDeConta(ctx, r.mailer, destino, assunto, corpo, entregaDoTokenDeConta(r.pool, r.clk, userID, hash, propositoRedefinicao))
 	return nil
 }
 
@@ -120,7 +92,7 @@ func (r *Recuperacao) PedirRedefinicao(ctx context.Context, email string) error 
 //  4. a transação: a trava de sessões do dono espiado, o consumo atômico do
 //     token (quem perde a corrida recebe ErrTokenInvalido), o hash trocado, TODAS as
 //     sessões encerradas, o e-mail confirmado (o link prova a posse da
-//     caixa), os tokens de redefinição apagados e a auditoria.
+//     caixa), os links dos dois propósitos apagados e a auditoria.
 //
 // O 2FA confirmado continua ligado: o link prova a caixa, não o fator.
 //
@@ -135,16 +107,8 @@ func (r *Recuperacao) Redefinir(ctx context.Context, token, novaSenha string) er
 	var dono uuid.UUID
 	err := storage.InAccountTokenTx(ctx, r.pool, tokenHash, func(q *db.Queries) error {
 		var err error
-		dono, err = q.PeekAccountToken(ctx, db.PeekAccountTokenParams{
-			TokenHash: tokenHash, Purpose: propositoRedefinicao, Now: r.clk.Now(),
-		})
-		if errors.Is(err, pgx.ErrNoRows) {
-			return ErrTokenInvalido
-		}
-		if err != nil {
-			return fmt.Errorf("conferir link: %w", err)
-		}
-		return nil
+		dono, err = donoDoToken(ctx, q, tokenHash, propositoRedefinicao, r.clk.Now())
+		return err
 	})
 	if err != nil {
 		return err
@@ -155,42 +119,26 @@ func (r *Recuperacao) Redefinir(ctx context.Context, token, novaSenha string) er
 		return err
 	}
 
-	now := r.clk.Now()
 	return storage.InAccountTokenTx(ctx, r.pool, tokenHash, func(q *db.Queries) error {
-		// A trava do dono (o espiado) antes de qualquer linha: é a ordem de
-		// PedirRedefinicao, que a toma antes de apagar os tokens. Consumir
-		// primeiro travaria a linha do token, e um pedido simultâneo com a
-		// trava na mão esperaria por ela no DELETE: um ciclo.
 		if err := q.LockUserSessions(ctx, dono); err != nil {
-			return fmt.Errorf("travar sessões: %w", err)
+			return fmt.Errorf("travar o usuário: %w", err)
 		}
-		// O UPDATE é o árbitro: de dois consumos simultâneos, só um
-		// devolve a linha.
-		userID, err := q.ConsumeAccountToken(ctx, db.ConsumeAccountTokenParams{
-			Now: now, TokenHash: tokenHash, Purpose: propositoRedefinicao,
-		})
-		if errors.Is(err, pgx.ErrNoRows) {
-			return ErrTokenInvalido
-		}
+		now := r.clk.Now()
+		userID, err := consumirTokenDeConta(ctx, q, tokenHash, propositoRedefinicao, now)
 		if err != nil {
-			return fmt.Errorf("consumir link: %w", err)
+			return err
 		}
 		return trocarSenhaPeloLink(ctx, q, userID, hash, now)
 	})
 }
 
 // trocarSenhaPeloLink é o resto do passo 4 de Redefinir, na sequência do
-// set-password do CLI (ResetPassword): escopo, trava, hash e revogação.
+// set-password do CLI (ResetPassword), com a trava do usuário já adquirida.
 func trocarSenhaPeloLink(ctx context.Context, q *db.Queries, userID uuid.UUID, hash string, now time.Time) error {
 	// O dono só aparece ao consumir o token: daqui em diante a transação é
 	// dele, para a RLS de sessions, de account_tokens e da auditoria.
 	if err := q.ScopeToUser(ctx, userID); err != nil {
 		return fmt.Errorf("escopo do usuário: %w", err)
-	}
-	// A trava antes de tocar em sessions: sem ela, uma rotação em curso
-	// deixaria o sucessor fora da revogação.
-	if err := q.LockUserSessions(ctx, userID); err != nil {
-		return fmt.Errorf("travar sessões: %w", err)
 	}
 	if _, err := q.ReplaceUserHash(ctx, db.ReplaceUserHashParams{ID: userID, PasswordHash: hash}); err != nil {
 		return fmt.Errorf("gravar senha: %w", err)
@@ -203,10 +151,8 @@ func trocarSenhaPeloLink(ctx context.Context, q *db.Queries, userID uuid.UUID, h
 	if err := q.MarkEmailVerified(ctx, db.MarkEmailVerifiedParams{Now: now, ID: userID}); err != nil {
 		return fmt.Errorf("confirmar e-mail: %w", err)
 	}
-	if err := q.DeleteAccountTokens(ctx, db.DeleteAccountTokensParams{
-		UserID: userID, Purpose: propositoRedefinicao,
-	}); err != nil {
-		return fmt.Errorf("apagar links de redefinição: %w", err)
+	if err := q.DeleteAllAccountTokens(ctx, userID); err != nil {
+		return fmt.Errorf("revogar links de conta: %w", err)
 	}
 	return audit(ctx, q, userID, "user.password_reset_by_email", nil, nil, nil, now)
 }

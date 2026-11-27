@@ -13,10 +13,12 @@ CREATE TABLE account_tokens (
     purpose    text        NOT NULL CHECK (purpose IN ('confirm_email', 'reset_password')),
     created_at timestamptz NOT NULL,
     expires_at timestamptz NOT NULL CHECK (expires_at > created_at),
-    used_at    timestamptz
+    used_at    timestamptz,
+    emissao    bigint      GENERATED ALWAYS AS IDENTITY
 );
 
--- Um token novo apaga os anteriores do mesmo dono e propósito.
+-- Cada dono emite sob uma trava, e o aceite de um envio pode substituir
+-- apenas emissões anteriores do mesmo propósito.
 CREATE INDEX account_tokens_user_purpose ON account_tokens (user_id, purpose);
 
 ALTER TABLE account_tokens ENABLE ROW LEVEL SECURITY;

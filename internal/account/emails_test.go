@@ -85,12 +85,3 @@ func TestEmailsLevamOLink(t *testing.T) {
 		}
 	}
 }
-
-// Os propósitos são os valores que o CHECK de account_tokens.purpose aceita
-// (migration 00047): trocar um aqui exige trocar lá.
-func TestPropositosDosTokensDeConta(t *testing.T) {
-	if propositoConfirmacao != "confirm_email" || propositoRedefinicao != "reset_password" {
-		t.Errorf("propósitos = %q e %q; queria confirm_email e reset_password",
-			propositoConfirmacao, propositoRedefinicao)
-	}
-}

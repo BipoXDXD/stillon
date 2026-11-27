@@ -45,10 +45,51 @@ type DeleteAccountTokensParams struct {
 	Purpose string
 }
 
-// Um token novo invalida os anteriores do mesmo propósito: o último e-mail
-// enviado é o único link que vale.
+// Revoga todos os links do propósito, inclusive envios pendentes.
 func (q *Queries) DeleteAccountTokens(ctx context.Context, arg DeleteAccountTokensParams) error {
 	_, err := q.db.Exec(ctx, deleteAccountTokens, arg.UserID, arg.Purpose)
+	return err
+}
+
+const deleteAllAccountTokens = `-- name: DeleteAllAccountTokens :exec
+DELETE FROM account_tokens WHERE user_id = $1
+`
+
+func (q *Queries) DeleteAllAccountTokens(ctx context.Context, userID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, deleteAllAccountTokens, userID)
+	return err
+}
+
+const deleteDiscardedAccountToken = `-- name: DeleteDiscardedAccountToken :exec
+DELETE FROM account_tokens
+ WHERE user_id = $1 AND token_hash = $2
+`
+
+type DeleteDiscardedAccountTokenParams struct {
+	UserID    uuid.UUID
+	TokenHash []byte
+}
+
+// Um descarte comprovado remove só a própria emissão.
+func (q *Queries) DeleteDiscardedAccountToken(ctx context.Context, arg DeleteDiscardedAccountTokenParams) error {
+	_, err := q.db.Exec(ctx, deleteDiscardedAccountToken, arg.UserID, arg.TokenHash)
+	return err
+}
+
+const deleteExpiredAccountTokens = `-- name: DeleteExpiredAccountTokens :exec
+DELETE FROM account_tokens
+ WHERE user_id = $1 AND expires_at <= $2
+`
+
+type DeleteExpiredAccountTokensParams struct {
+	UserID uuid.UUID
+	Now    time.Time
+}
+
+// Remove candidatos vencidos no próximo pedido do usuário, inclusive após
+// uma interrupção do processo entre a emissão e a conclusão do envio.
+func (q *Queries) DeleteExpiredAccountTokens(ctx context.Context, arg DeleteExpiredAccountTokensParams) error {
+	_, err := q.db.Exec(ctx, deleteExpiredAccountTokens, arg.UserID, arg.Now)
 	return err
 }
 
@@ -99,4 +140,27 @@ func (q *Queries) PeekAccountToken(ctx context.Context, arg PeekAccountTokenPara
 	var user_id uuid.UUID
 	err := row.Scan(&user_id)
 	return user_id, err
+}
+
+const replaceOlderAccountTokens = `-- name: ReplaceOlderAccountTokens :exec
+DELETE FROM account_tokens AS anterior
+ USING account_tokens AS aceito
+ WHERE aceito.token_hash = $1
+   AND aceito.user_id = $2
+   AND aceito.used_at IS NULL AND aceito.expires_at > $3
+   AND anterior.user_id = aceito.user_id AND anterior.purpose = aceito.purpose
+   AND anterior.emissao < aceito.emissao
+`
+
+type ReplaceOlderAccountTokensParams struct {
+	TokenHash []byte
+	UserID    uuid.UUID
+	Now       time.Time
+}
+
+// A conclusão só substitui as emissões anteriores enquanto o próprio link
+// ainda pode ser usado. A consulta também serve para repetir a conclusão.
+func (q *Queries) ReplaceOlderAccountTokens(ctx context.Context, arg ReplaceOlderAccountTokensParams) error {
+	_, err := q.db.Exec(ctx, replaceOlderAccountTokens, arg.TokenHash, arg.UserID, arg.Now)
+	return err
 }
