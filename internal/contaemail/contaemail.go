@@ -64,9 +64,6 @@ type Enviador struct {
 	chave      []byte
 	log        *slog.Logger
 	fila       chan mensagem
-	// prazoDreno é o orçamento do encerramento inteiro, contado do
-	// cancelamento de ctx. Campo só para o teste o encurtar.
-	prazoDreno time.Duration
 
 	// mu protege parado: depois de Rodar voltar, ninguém consome a fila, e
 	// SendAccountEmail registra a perda em vez de enfileirar.
@@ -79,7 +76,7 @@ type Enviador struct {
 func New(t Transporte, teto Teto, o Orcamentos, chave []byte, log *slog.Logger) *Enviador {
 	return &Enviador{
 		transporte: t, teto: teto, orcamentos: o, chave: chave, log: log,
-		fila: make(chan mensagem, capacidadeFila), prazoDreno: PrazoDreno,
+		fila: make(chan mensagem, capacidadeFila),
 	}
 }
 
@@ -109,8 +106,25 @@ func (e *Enviador) SendAccountEmail(_ context.Context, to, subject, body string)
 func (e *Enviador) Rodar(ctx context.Context) {
 	limite, cancelar := context.WithCancel(context.WithoutCancel(ctx))
 	defer cancelar()
-	pararTimer := context.AfterFunc(ctx, func() { time.AfterFunc(e.prazoDreno, cancelar) })
-	defer pararTimer()
+	fim := make(chan struct{})
+	observadorParou := make(chan struct{})
+	pararObservador := context.AfterFunc(ctx, func() {
+		defer close(observadorParou)
+		timer := time.NewTimer(PrazoDreno)
+		defer timer.Stop()
+		select {
+		case <-fim:
+		case <-timer.C:
+			cancelar()
+		}
+	})
+	defer func() {
+		close(fim)
+		// Se já disparou, deixa o observador parar o timer antes de voltar.
+		if !pararObservador() {
+			<-observadorParou
+		}
+	}()
 	for ctx.Err() == nil {
 		select {
 		case m := <-e.fila:

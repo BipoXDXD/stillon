@@ -63,14 +63,16 @@ func TestAvisoSaiComTetoDeContaEsgotado(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// O teto do dia UTC já esgotado, gravado como superusuário (a RLS só abre
-	// a tabela ao escopo do teto).
+	// Esgota o dia UTC atual e o seguinte para cobrir uma virada durante o
+	// teste. A RLS só abre a tabela ao escopo do teto e ao superusuário.
 	admin, err := pgx.Connect(ctx, testdb.AdminDSN(t))
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { admin.Close(context.Background()) })
-	if _, err := admin.Exec(ctx, `INSERT INTO account_email_daily (day, sent) VALUES ($1::date, 50)`, agora.UTC().Format(time.DateOnly)); err != nil {
+	hoje := time.Now().UTC()
+	dias := []string{hoje.Format(time.DateOnly), hoje.AddDate(0, 0, 1).Format(time.DateOnly)}
+	if _, err := admin.Exec(ctx, `INSERT INTO account_email_daily (day, sent) VALUES ($1::date, 50), ($2::date, 50)`, dias[0], dias[1]); err != nil {
 		t.Fatal(err)
 	}
 
@@ -80,9 +82,21 @@ func TestAvisoSaiComTetoDeContaEsgotado(t *testing.T) {
 	cfg.ResendAPIKey, cfg.EmailFrom, cfg.AccountEmailFrom = chaveResendDeTeste, "avisos@exemplo.test", "conta@exemplo.test"
 	cfg.TurnstileSiteKey, cfg.TurnstileSecretKey = turnstiletest.SiteKeyPassa, turnstiletest.SecretPassa
 	runCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
-	fim := make(chan error, 1)
-	go func() { fim <- run(runCtx, cfg) }()
+	fim := make(chan struct{})
+	var erroRun error
+	go func() {
+		defer close(fim)
+		erroRun = run(runCtx, cfg)
+	}()
+	parar := func() {
+		cancel()
+		select {
+		case <-fim:
+		case <-time.After(20 * time.Second):
+			t.Fatal("run não encerrou depois do cancelamento")
+		}
+	}
+	t.Cleanup(parar)
 
 	// 1. O alvo cai, o incidente abre e o aviso chega ao Resend falso.
 	prazo := time.After(30 * time.Second)
@@ -91,8 +105,8 @@ func TestAvisoSaiComTetoDeContaEsgotado(t *testing.T) {
 	vistos := 0
 	for !chegouPara(rf, emailDoCanal) {
 		select {
-		case err := <-fim:
-			t.Fatalf("run terminou antes do aviso: %v", err)
+		case <-fim:
+			t.Fatalf("run terminou antes do aviso: %v", erroRun)
 		case <-prazo:
 			t.Fatalf("o aviso não chegou em 30 s: %d checks, estado %+v", vistos, estadoDoFluxo(t, pool, dono, canal))
 		case <-passo.C:
@@ -126,29 +140,24 @@ func TestAvisoSaiComTetoDeContaEsgotado(t *testing.T) {
 		t.Fatalf("forgot = %d, queria 202", resp.StatusCode)
 	}
 
-	// O enviador gasta o balde do destinatário antes de olhar o teto: a
-	// linha do balde prova que o e-mail já passou pela fila.
+	// O balde confirma que o trabalhador retirou o e-mail da fila. O
+	// retorno de run confirma que ele terminou de processá-lo.
 	esperarBaldeDoDestino(t, admin)
-	time.Sleep(300 * time.Millisecond)
+	parar()
+	if erroRun != nil {
+		t.Fatalf("run encerrou com erro: %v", erroRun)
+	}
 	if chegouPara(rf, emailDoDono) {
 		t.Error("o e-mail de conta chegou ao Resend com o teto esgotado")
 	}
-	var enviados int
-	if err := admin.QueryRow(ctx, `SELECT sent FROM account_email_daily WHERE day = $1::date`, agora.UTC().Format(time.DateOnly)).Scan(&enviados); err != nil {
-		t.Fatal(err)
-	}
-	if enviados != 50 {
-		t.Errorf("account_email_daily.sent = %d, queria 50 (o aviso não conta no teto)", enviados)
-	}
-
-	cancel()
-	select {
-	case err := <-fim:
-		if err != nil {
-			t.Errorf("run encerrou com erro: %v", err)
+	for _, dia := range dias {
+		var enviados int
+		if err := admin.QueryRow(ctx, `SELECT sent FROM account_email_daily WHERE day = $1::date`, dia).Scan(&enviados); err != nil {
+			t.Fatal(err)
 		}
-	case <-time.After(20 * time.Second):
-		t.Fatal("run não encerrou depois do cancelamento")
+		if enviados != 50 {
+			t.Errorf("account_email_daily.sent em %s = %d, queria 50 (o aviso não conta no teto)", dia, enviados)
+		}
 	}
 }
 
@@ -163,18 +172,22 @@ func chegouPara(rf *resendFalso, para string) bool {
 
 func esperarBaldeDoDestino(t *testing.T, admin *pgx.Conn) {
 	t.Helper()
-	prazo := time.Now().Add(10 * time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	passo := time.NewTicker(50 * time.Millisecond)
+	defer passo.Stop()
 	for {
-		var n int
-		if err := admin.QueryRow(context.Background(), `SELECT count(*) FROM ip_rate_limits WHERE bucket = 'conta_destino'`).Scan(&n); err != nil {
-			t.Fatal(err)
+		var passou bool
+		if err := admin.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM ip_rate_limits WHERE bucket = 'conta_destino')`).Scan(&passou); err != nil && ctx.Err() == nil {
+			t.Fatalf("consultar o balde do destinatário: %v", err)
 		}
-		if n > 0 {
+		if passou {
 			return
 		}
-		if time.Now().After(prazo) {
+		select {
+		case <-ctx.Done():
 			t.Fatal("o e-mail de conta não passou pelo balde do destinatário em 10 s")
+		case <-passo.C:
 		}
-		time.Sleep(50 * time.Millisecond)
 	}
 }
