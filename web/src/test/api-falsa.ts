@@ -34,7 +34,7 @@ type Json = Record<string, unknown>
 
 type Entrada<T extends z.ZodType> = z.input<T>
 
-type Contexto = { request: Request; params: Record<string, string>; corpo: Json }
+type Contexto = { request: Request; params: Record<string, string>; corpo: Json; corpoInvalido: boolean }
 type Tratador = (a: Contexto) => Response | Promise<Response>
 
 export const EMAIL = 'dono@exemplo.com'
@@ -330,10 +330,19 @@ export function criarApiFalsa() {
   ): (a: A) => Response | Promise<Response> {
     return (a) => {
       const recusado =
+        a.corpoInvalido ||
         temCampoAlheio(a.corpo, permitidos) ||
         Object.entries(aninhados).some(([campo, nomes]) => temCampoAlheio(a.corpo[campo], nomes))
       return recusado ? erro(400, 'validation_failed') : fn(a)
     }
+  }
+
+  function exigeEmailConfirmado<A extends Contexto>(fn: (a: A) => Response | Promise<Response>) {
+    return (a: A) => (st.emailConfirmado ? fn(a) : erro(403, 'email_not_verified'))
+  }
+
+  function comCadastroHabilitado(fn: Tratador): Tratador {
+    return (a) => (st.cadastro.habilitado ? fn(a) : erro(404, 'not_found'))
   }
 
   // ValidateNewPassword do servidor: o motivo da recusa, ou null.
@@ -465,7 +474,10 @@ export function criarApiFalsa() {
   ): HttpHandler {
     return http[metodo](`*/api/v1${caminho}`, async ({ request, params }) => {
       const chave = `${metodo.toUpperCase()} ${caminho}`
-      const corpo = request.headers.get('Content-Type')?.includes('json') ? ((await request.json()) as Json) : {}
+      // Guardas como a do cadastro respondem antes de validar o JSON.
+      const corpo = request.headers.get('Content-Type')?.includes('json')
+        ? ((await request.json().catch(() => undefined)) as Json | undefined)
+        : {}
       const consulta = Object.fromEntries(new URL(request.url).searchParams)
       contar(chave, metodo === 'get' ? (Object.keys(consulta).length ? consulta : undefined) : corpo)
       if (metodo !== 'get' && request.headers.get('X-Requested-With') !== 'stillon') return erro(403, 'forbidden')
@@ -478,20 +490,21 @@ export function criarApiFalsa() {
       }
       const f = st.forcar.get(chave)
       if (f) return responderErro(f)
-      return fn({ request, params: params as Record<string, string>, corpo })
+      return fn({ request, params: params as Record<string, string>, corpo: corpo ?? {}, corpoInvalido: corpo === undefined })
     })
   }
 
-  // As rotas dos recursos, sob o prefixo /projects/:projectId. Projeto que não
-  // existe (ou de que o usuário não é membro) é 404, como no servidor.
+  // Rotas legadas e de projeto. O escopo vem depois da sessão e um projeto
+  // ausente da lista de membros dá 404 antes da trava de e-mail.
   function rotasDosRecursos(
     prefixo: string,
     recursosDe: (params: Record<string, string>) => RecursosFalsos | undefined,
   ): HttpHandler[] {
+    type TratadorDeRecurso = (a: Contexto & { r: RecursosFalsos }) => Response | Promise<Response>
     const rotaR = (
       metodo: 'get' | 'post' | 'patch' | 'delete',
       caminho: string,
-      fn: (a: Contexto & { r: RecursosFalsos }) => Response | Promise<Response>,
+      fn: TratadorDeRecurso,
     ) =>
       rota(metodo, prefixo + caminho, async (a) => {
         const r = recursosDe(a.params)
@@ -499,6 +512,8 @@ export function criarApiFalsa() {
         if (r.atrasoMs > 0) await delay(r.atrasoMs)
         return fn({ ...a, r })
       })
+    const criarRecurso = (caminho: string, fn: TratadorDeRecurso) => rotaR('post', caminho, exigeEmailConfirmado(fn))
+
     return [
       // O filtro do servidor (targets.SummaryFilter): tags em E, estados em OU.
       rotaR('get', '/targets/summary', ({ r, request }) => {
@@ -517,7 +532,7 @@ export function criarApiFalsa() {
         return HttpResponse.json({ items })
       }),
       rotaR('get', '/targets', ({ r, request }) => paginar(r.alvos, request)),
-      rotaR('post', '/targets', estrita(CAMPOS_DO_ALVO, ({ r, corpo }) => {
+      criarRecurso('/targets', estrita(CAMPOS_DO_ALVO, ({ r, corpo }) => {
         const alvo = {
           id: `alvo-${r.alvos.length + 1}`,
           name: String(corpo.name),
@@ -598,7 +613,7 @@ export function criarApiFalsa() {
       }),
 
       rotaR('get', '/heartbeats', ({ r, request }) => paginar(r.heartbeats, request)),
-      rotaR('post', '/heartbeats', estrita(CAMPOS_DO_HEARTBEAT, ({ r, corpo }) => {
+      criarRecurso('/heartbeats', estrita(CAMPOS_DO_HEARTBEAT, ({ r, corpo }) => {
         const h = {
           id: `hb-${r.heartbeats.length + 1}`,
           name: String(corpo.name),
@@ -665,7 +680,7 @@ export function criarApiFalsa() {
       }),
       // O clone do servidor: sem token, eventos, last_* nem incidentes; o nome
       // cortado para o sufixo caber em 100 caracteres (Rulings do PR 2 da SP1).
-      rotaR('post', '/heartbeats/:id/clone', ({ r, params }) => {
+      criarRecurso('/heartbeats/:id/clone', ({ r, params }) => {
         const h = r.heartbeats.find((x) => x.id === params.id)
         if (!h) return erro(404, 'not_found')
         if (Agendamento.parse(h.schedule).kind === 'unknown') return erro(409, 'schedule_unsupported')
@@ -720,7 +735,7 @@ export function criarApiFalsa() {
       }),
 
       rotaR('get', '/channels', ({ r }) => HttpResponse.json({ items: r.canais })),
-      rotaR('post', '/channels', estrita(['kind', 'url', 'email'], ({ r, corpo }) => {
+      criarRecurso('/channels', estrita(['kind', 'url', 'email'], ({ r, corpo }) => {
         const email = corpo.kind === 'email'
         const c = {
           id: `canal-${r.canais.length + 1}`,
@@ -755,9 +770,9 @@ export function criarApiFalsa() {
       // required; enabled que não é booleano é invalid. Depois, canal que não
       // existe (ou de outro usuário) é 404. Mudar para o valor que já está é
       // 200 sem efeito.
-      rotaR('patch', '/channels/:id', ({ r, params, corpo }) => {
+      rotaR('patch', '/channels/:id', ({ r, params, corpo, corpoInvalido }) => {
         const chaves = Object.keys(corpo)
-        if (chaves.some((k) => k !== 'enabled')) return erro(400, 'validation_failed')
+        if (corpoInvalido || chaves.some((k) => k !== 'enabled')) return erro(400, 'validation_failed')
         if (typeof corpo.enabled !== 'boolean') {
           return erro(400, 'validation_failed', [{ field: 'enabled', reason: chaves.includes('enabled') ? 'invalid' : 'required' }])
         }
@@ -768,7 +783,7 @@ export function criarApiFalsa() {
       }),
 
       rotaR('get', '/status-pages', ({ r }) => HttpResponse.json({ items: r.paginas })),
-      rotaR('post', '/status-pages', estrita(CAMPOS_DA_PAGINA, ({ r, corpo }) => {
+      criarRecurso('/status-pages', estrita(CAMPOS_DA_PAGINA, ({ r, corpo }) => {
         if (r.paginas.length > 0) return erro(409, 'status_page_exists')
         const p = {
           id: 'pagina-1',
@@ -889,8 +904,7 @@ export function criarApiFalsa() {
     rota(
       'post',
       '/auth/signup',
-      estrita(['email', 'password', 'turnstile_token'], ({ corpo }) => {
-        if (!st.cadastro.habilitado) return erro(404, 'not_found')
+      comCadastroHabilitado(estrita(['email', 'password', 'turnstile_token'], ({ corpo }) => {
         const recusa = recusaDoFormulario(corpo, 'password')
         if (recusa) return recusa
         const email = String(corpo.email)
@@ -899,7 +913,7 @@ export function criarApiFalsa() {
           novoTokenDeConta('confirm_email')
         }
         return aceito()
-      }),
+      })),
       false,
     ),
     rota(
@@ -921,13 +935,12 @@ export function criarApiFalsa() {
     rota(
       'post',
       '/auth/password/forgot',
-      estrita(['email', 'turnstile_token'], ({ corpo }) => {
-        if (!st.cadastro.habilitado) return erro(404, 'not_found')
+      comCadastroHabilitado(estrita(['email', 'turnstile_token'], ({ corpo }) => {
         const recusa = recusaDoFormulario(corpo)
         if (recusa) return recusa
         if (st.cadastro.contas.has(String(corpo.email))) novoTokenDeConta('reset_password')
         return aceito()
-      }),
+      })),
       false,
     ),
     // A política da senha antes do token, como o servidor. O reset também
@@ -945,6 +958,7 @@ export function criarApiFalsa() {
       false,
     ),
 
+    ...rotasDosRecursos('', () => st),
     ...rotasDosRecursos('/projects/:projectId', (params) => st.projetos.find((p) => p.projeto.id === params.projectId)?.recursos),
 
     // tenancy.Service.List: o padrão primeiro, depois por id.
@@ -958,7 +972,7 @@ export function criarApiFalsa() {
     // ProjectHandlers.Create: o nome como tenancy.ParseProjectName (o
     // invisível aqui é só controle e formato, sem a exceção do ZWJ entre
     // visíveis de rotulo.TemInvisivel) e o teto contado pelo titular.
-    rota('post', '/projects', estrita(['name'], ({ corpo }) => {
+    rota('post', '/projects', exigeEmailConfirmado(estrita(['name'], ({ corpo }) => {
       const nome = typeof corpo.name === 'string' ? corpo.name.trim() : ''
       const motivo =
         nome === '' ? 'required' : [...nome].length > MAX_NOME_DO_PROJETO ? 'too_long' : INVISIVEL.test(nome) ? 'invalid' : null
@@ -967,7 +981,7 @@ export function criarApiFalsa() {
         return erro(409, 'project_limit_reached')
       }
       return HttpResponse.json(criarProjeto(nome).projeto, { status: 201 })
-    })),
+    }))),
 
     rota('get', '/sessions', () => HttpResponse.json({ items: st.sessoes })),
     rota('delete', '/sessions/:id', ({ params }) => {
@@ -1004,7 +1018,7 @@ export function criarApiFalsa() {
       st.desafioValido = false
       return new HttpResponse(null, { status: 204 })
     })),
-    rota('post', '/auth/totp/enroll', estrita(['password'], ({ request, corpo }) => {
+    rota('post', '/auth/totp/enroll', exigeEmailConfirmado(estrita(['password'], ({ request, corpo }) => {
       if (corpo.password !== SENHA) return provaErrada(request, 401, 'invalid_credentials')
       // Com o 2FA ligado, a senha certa NÃO zera a família (C1 da revisão do
       // Plano 10): 403, e a reserva volta. Só o cadastro feito zera.
@@ -1012,7 +1026,7 @@ export function criarApiFalsa() {
       provaCerta(request)
       st.totpPendente = true
       return HttpResponse.json({ otpauth_uri: 'otpauth://totp/StillOn:dono%40exemplo.com?secret=JBSWY3DPEHPK3PXP&issuer=StillOn' })
-    })),
+    }))),
     // TOTP.Confirm com o 2FA já ligado é 403 forbidden ANTES de olhar o
     // código (C1 da revisão do Plano 10): o mesmo 403 para o certo e o
     // errado, sem contar nem zerar a família. Com o cadastro pendente, o
