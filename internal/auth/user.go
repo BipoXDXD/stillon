@@ -143,21 +143,69 @@ func (c contaAttempts) Reset(ctx context.Context) error {
 // needsRehash só vale quando ok. Com o teto do Argon2id cheio, devolve
 // ErrArgon2Busy sem reservar nada.
 func CheckPassword(ctx context.Context, t Attempts, u User, plain string) (ok, needsRehash bool, err error) {
+	reservou, ok, needsRehash, err := reservarEVerificar(ctx, t, u, plain, false)
+	if err != nil || !reservou {
+		return false, false, err
+	}
+	return ok, needsRehash, nil
+}
+
+// ErrLocked é o contador de tentativas bloqueado, anunciado. Só
+// CheckPasswordOrLocked o devolve: o login não anuncia o bloqueio.
+var ErrLocked = errors.New("auth: tentativas bloqueadas")
+
+// CheckPasswordOrLocked é o CheckPassword (mesma vaga, mesma reserva, mesmo
+// contador) para a rota que já exigiu outra posse antes da senha e por isso
+// pode anunciar o bloqueio: o contador bloqueado devolve ErrLocked, sem
+// reservar nada, mesmo com a senha certa. É a confirmação do e-mail: quem
+// chega à senha já tem o token do link, que prova que a conta existe, então o
+// silêncio do login (contra a enumeração) não protege nada ali.
+//
+// Não há passo seguinte que decida o destino da reserva: a senha errada a
+// deixa contada, e a certa a devolve (Refund) ali mesmo, ainda com a vaga do
+// Argon2id. Assim as reservas pendentes nunca passam do teto de vagas, e N
+// confirmações simultâneas com a senha certa não travam a conta enquanto o teto
+// fica abaixo de LockThreshold (o padrão, DefaultArgon2MaxConcurrent, é no
+// máximo 4). Falhar ao devolver só vai para o log: a senha estava certa, e o
+// pior caso é uma tentativa a mais contada.
+func CheckPasswordOrLocked(ctx context.Context, t Attempts, u User, plain string) (ok bool, err error) {
+	reservou, ok, _, err := reservarEVerificar(ctx, t, u, plain, true)
+	if err != nil {
+		return false, err
+	}
+	if !reservou {
+		return false, ErrLocked
+	}
+	return ok, nil
+}
+
+// reservarEVerificar é o miolo do CheckPassword: a vaga do Argon2id, a reserva
+// e a verificação, nessa ordem. Sem reserva (contador bloqueado), roda o dummy
+// e devolve reservou false. Com devolverSeCerta, a senha certa devolve a
+// reserva antes de soltar a vaga.
+func reservarEVerificar(ctx context.Context, t Attempts, u User, plain string, devolverSeCerta bool) (reservou, ok, needsRehash bool, err error) {
 	soltar, err := ReserveArgon2(ctx)
 	if err != nil {
-		return false, false, err
+		return false, false, false, err
 	}
 	defer soltar()
 
-	reservou, err := t.Reserve(ctx)
+	reservou, err = t.Reserve(ctx)
 	if err != nil {
-		return false, false, err
+		return false, false, false, err
 	}
 	if !reservou {
 		_, _, _ = verificarSenha(dummyHash(), plain)
-		return false, false, nil
+		return false, false, false, nil
 	}
-	return verificarSenha(u.PasswordHash, plain)
+	ok, needsRehash, err = verificarSenha(u.PasswordHash, plain)
+	if ok && err == nil && devolverSeCerta {
+		if err := t.Refund(ctx); err != nil {
+			slog.ErrorContext(ctx, "devolver a reserva da senha certa", "erro", err,
+				"user_id", u.ID, "trace_id", observability.TraceID(ctx))
+		}
+	}
+	return true, ok, needsRehash, err
 }
 
 type UserStore interface {

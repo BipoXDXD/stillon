@@ -365,6 +365,54 @@ func TestCheckPassword(t *testing.T) {
 	}
 }
 
+// CheckPasswordOrLocked é o CheckPassword que anuncia o bloqueio: a senha certa
+// devolve a própria reserva (só a errada conta), e o contador bloqueado vira
+// ErrLocked, sem reservar nada, mesmo com a senha certa.
+func TestCheckPasswordOrLocked(t *testing.T) {
+	_, pool, clk, userID := setup(t)
+	store := auth.NewPGStore(pool)
+	ctx := context.Background()
+
+	hash, err := auth.HashPasswordWith(senha, []byte("sal-de-teste-16b"), 8, 1, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE users SET password_hash = $2 WHERE id = $1`, userID, hash); err != nil {
+		t.Fatal(err)
+	}
+	u, err := store.ByID(ctx, userID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	conta := auth.AccountAttempts(store, userID, nil, clk.Now())
+
+	if ok, err := auth.CheckPasswordOrLocked(ctx, conta, u, senha); err != nil || !ok {
+		t.Fatalf("senha certa: ok = %v, erro = %v", ok, err)
+	}
+	if n, _ := lerTravas(t, pool, userID); n != 0 {
+		t.Errorf("senha certa: %d reservas, queria 0 (a reserva volta)", n)
+	}
+	for range 2 {
+		if ok, err := auth.CheckPasswordOrLocked(ctx, conta, u, "senha-errada-com-mais-de-15"); err != nil || ok {
+			t.Fatalf("senha errada: ok = %v, erro = %v", ok, err)
+		}
+	}
+	if n, _ := lerTravas(t, pool, userID); n != 2 {
+		t.Errorf("senhas erradas: %d reservas, queria 2", n)
+	}
+
+	if _, err := pool.Exec(ctx, `UPDATE users SET locked_until = $2 WHERE id = $1`, userID, clk.Now().Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	ok, err := auth.CheckPasswordOrLocked(ctx, conta, u, senha)
+	if ok || !errors.Is(err, auth.ErrLocked) {
+		t.Fatalf("conta bloqueada: ok = %v, erro = %v, queria ErrLocked", ok, err)
+	}
+	if n, _ := lerTravas(t, pool, userID); n != 2 {
+		t.Errorf("conta bloqueada contou reserva: %d, queria 2", n)
+	}
+}
+
 // On point: no instante de locked_until a conta já não está bloqueada.
 func TestIsLockedEndsAtTheExactDeadline(t *testing.T) {
 	agora := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
