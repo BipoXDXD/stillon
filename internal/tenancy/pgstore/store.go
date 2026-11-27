@@ -130,7 +130,7 @@ func (s *Store) Create(ctx context.Context, p tenancy.NewProject) (tenancy.Proje
 		if err != nil {
 			return fmt.Errorf("contar projetos do titular: %w", err)
 		}
-		if total >= int64(tenancy.ProjectLimit(operador)) {
+		if total >= int64(tenancy.LimitesDe(operador).Projetos) {
 			return tenancy.ErrProjectLimit
 		}
 		linha, err = q.InsertProject(ctx, db.InsertProjectParams{

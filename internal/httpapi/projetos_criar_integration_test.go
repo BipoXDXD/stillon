@@ -169,7 +169,7 @@ func TestCreateProjectLimitIs409(t *testing.T) {
 	a := newAPI(t)
 	token := tokenDe(t, a, a.userID)
 	testdb.ProjetoPadrao(t, a.userID)
-	for i := 2; i <= tenancy.MaxProjectsPerTitular; i++ {
+	for i := 2; i <= tenancy.LimitesDe(false).Projetos; i++ {
 		if status, corpo := criarProjetoHTTP(t, a, token, map[string]string{"name": "Extra"}); status != http.StatusCreated {
 			t.Fatalf("o %dº projeto deu %d, queria 201: %s", i, status, corpo)
 		}
@@ -178,8 +178,8 @@ func TestCreateProjectLimitIs409(t *testing.T) {
 	if status != http.StatusConflict || codigoNoCorpo(t, corpo) != string(apierr.CodeProjectLimit) {
 		t.Errorf("o 4º projeto deu %d %s, queria 409 project_limit_reached", status, corpo)
 	}
-	if n := projetosDoTitular(t, a.userID); n != tenancy.MaxProjectsPerTitular {
-		t.Errorf("o titular tem %d projetos, queria %d", n, tenancy.MaxProjectsPerTitular)
+	if n := projetosDoTitular(t, a.userID); n != tenancy.LimitesDe(false).Projetos {
+		t.Errorf("o titular tem %d projetos, queria %d", n, tenancy.LimitesDe(false).Projetos)
 	}
 }
 
