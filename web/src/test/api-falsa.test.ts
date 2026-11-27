@@ -22,6 +22,10 @@ const DO_PROJETO = /^\/(targets|heartbeats|incidents|channels|status-pages)\b/
 
 function pedir(metodo: string, caminhoDoRecurso: string, corpo?: unknown) {
   const caminho = DO_PROJETO.test(caminhoDoRecurso) ? `/projects/${PROJETO_PADRAO}${caminhoDoRecurso}` : caminhoDoRecurso
+  return pedirNaRota(metodo, caminho, corpo)
+}
+
+function pedirNaRota(metodo: string, caminho: string, corpo?: unknown) {
   const headers = new Headers({ 'X-Requested-With': 'stillon', Authorization: `Bearer ${TOKEN}` })
   if (corpo === undefined) return fetch(new URL(`/api/v1${caminho}`, location.origin), { method: metodo, headers })
   headers.set('Content-Type', 'application/json')
@@ -591,14 +595,47 @@ describe('tabela de erros (errorTable do servidor)', () => {
 // As rotas públicas do cadastro (contrato HTTP do PR 3): sem Bearer.
 describe('o cadastro público', () => {
   function pedirPublico(caminho: string, corpo: unknown) {
+    return pedirPublicoComJson(caminho, JSON.stringify(corpo))
+  }
+
+  function pedirPublicoComJson(caminho: string, body: string) {
     return fetch(new URL(`/api/v1${caminho}`, location.origin), {
       method: 'POST',
       headers: { 'X-Requested-With': 'stillon', 'Content-Type': 'application/json' },
-      body: JSON.stringify(corpo),
+      body,
     })
   }
 
   const cadastro = (email: string) => ({ email, password: SENHA, turnstile_token: TOKEN_DO_TURNSTILE })
+
+  it.each([
+    ['/auth/signup', cadastro('nova@exemplo.com')],
+    ['/auth/password/forgot', { email: EMAIL, turnstile_token: TOKEN_DO_TURNSTILE }],
+  ] as const)('desligado, %s devolve 404 antes de validar os campos do corpo', async (caminho, corpo) => {
+    const falsa = usarApiFalsa()
+    falsa.estado.cadastro.habilitado = false
+
+    const resposta = await pedirPublico(caminho, { ...corpo, campo_extra: true })
+
+    expect(resposta.status).toBe(404)
+    expect(await resposta.json()).toMatchObject({ error: { code: 'not_found' } })
+    expect([...falsa.estado.cadastro.contas]).toEqual([EMAIL])
+    expect(falsa.estado.cadastro.tokens.size).toBe(0)
+  })
+
+  it.each(['/auth/signup', '/auth/password/forgot'])('%s só valida JSON malformado quando habilitado', async (caminho) => {
+    const falsa = usarApiFalsa()
+    falsa.estado.cadastro.habilitado = false
+
+    const desligado = await pedirPublicoComJson(caminho, '{')
+    expect(desligado.status).toBe(404)
+    expect(await desligado.json()).toMatchObject({ error: { code: 'not_found' } })
+
+    falsa.estado.cadastro.habilitado = true
+    const ligado = await pedirPublicoComJson(caminho, '{')
+    expect(ligado.status).toBe(400)
+    expect(await ligado.json()).toMatchObject({ error: { code: 'validation_failed' } })
+  })
 
   it('signup com campo a mais dá 400', async () => {
     const falsa = usarApiFalsa()
@@ -634,5 +671,111 @@ describe('o cadastro público', () => {
     expect(falsa.estado.emailConfirmado).toBe(true)
     expect(segunda.status).toBe(400)
     expect(await segunda.json()).toMatchObject({ error: { code: 'token_invalid' } })
+  })
+})
+
+describe('trava de e-mail antes da criação', () => {
+  const projetoSecundario = 'proj-secundario'
+  const criarRecursos = [
+    ['/targets', { name: 'Início', url: 'https://exemplo.com/', method: 'GET', interval_sec: 60, timeout_ms: 3000, expected_status: 200 }],
+    ['/heartbeats', { name: 'Rotina', schedule: { kind: 'period', period_sec: 60 }, grace_sec: 60 }],
+    ['/heartbeats/h1/clone', undefined],
+    ['/channels', { kind: 'email', email: 'avisos@exemplo.com' }],
+    ['/status-pages', { slug: 'indicadores', title: 'Indicadores', published: false, items: [] }],
+  ] as const
+
+  const rotas = [
+    ...criarRecursos,
+    ...criarRecursos.map(([caminho, corpo]) => [`/projects/${projetoSecundario}${caminho}`, corpo] as const),
+    ['/projects', { name: 'Novo projeto' }],
+    ['/auth/totp/enroll', { password: SENHA }],
+  ] as const
+
+  it.each(rotas)('a conta não confirmada recebe 403 em POST %s sem alterar o estado', async (caminho, corpo) => {
+    const falsa = apiLogada()
+    falsa.estado.emailConfirmado = false
+    falsa.estado.heartbeats = [heartbeat({ id: 'h1' })]
+    const outro = falsa.criarProjeto('Secundário')
+    outro.projeto.id = projetoSecundario
+    outro.recursos.heartbeats = [heartbeat({ id: 'h1' })]
+
+    const recursos = () =>
+      [falsa.estado, outro.recursos].map(({ alvos, canais, heartbeats, paginas }) => ({ alvos, canais, heartbeats, paginas }))
+    const antes = structuredClone(recursos())
+    const resposta = await pedirNaRota('POST', caminho, corpo)
+
+    expect(resposta.status).toBe(403)
+    expect(await resposta.json()).toMatchObject({ error: { code: 'email_not_verified' } })
+    expect(recursos()).toEqual(antes)
+    expect(falsa.estado.projetos.map((p) => p.projeto.id)).toEqual([PROJETO_PADRAO, projetoSecundario])
+    expect(falsa.estado.totpPendente).toBe(false)
+  })
+
+  it.each([
+    ['sem acesso válido', false, false, '/projects/ausente/targets', 401, 'unauthorized'],
+    ['com sessão revogada', true, true, '/projects/ausente/targets', 401, 'unauthorized'],
+    ['sem pertença ao projeto', true, false, '/projects/ausente/targets', 404, 'not_found'],
+    ['com e-mail não confirmado', true, false, '/projects', 403, 'email_not_verified'],
+  ] as const)('respeita a precedência das guardas %s', async (_caso, autenticada, revogada, caminho, status, code) => {
+    const falsa = autenticada ? apiLogada() : usarApiFalsa()
+    falsa.estado.familiaRevogada = revogada
+    falsa.estado.emailConfirmado = false
+
+    const resposta = await pedirNaRota('POST', caminho, { campo_extra: true })
+
+    expect(resposta.status).toBe(status)
+    expect(await resposta.json()).toMatchObject({ error: { code } })
+  })
+
+  it.each([
+    ['legadas', ''],
+    ['de projeto', `/projects/${PROJETO_PADRAO}`],
+  ])('ler, editar, apagar e registrar sinal continuam disponíveis nas rotas %s', async (_familia, prefixo) => {
+    const falsa = apiLogada()
+    falsa.estado.emailConfirmado = false
+    falsa.estado.heartbeats = [heartbeat({ id: 'h1', name: 'Rotina' })]
+
+    const leitura = await pedirNaRota('GET', `${prefixo}/heartbeats/h1`)
+    expect(leitura.status).toBe(200)
+    expect(await leitura.json()).toMatchObject({ name: 'Rotina' })
+
+    const edicao = await pedirNaRota('PATCH', `${prefixo}/heartbeats/h1`, { name: 'Rotina noturna' })
+    expect(edicao.status).toBe(200)
+    expect(await edicao.json()).toMatchObject({ name: 'Rotina noturna' })
+
+    const sinal = await pedirNaRota('POST', `${prefixo}/heartbeats/h1/ping-now`)
+    expect(sinal.status).toBe(200)
+    expect(await sinal.json()).toMatchObject({ state: 'up' })
+
+    expect((await pedirNaRota('DELETE', `${prefixo}/heartbeats/h1`)).status).toBe(204)
+    expect(falsa.estado.heartbeats).toEqual([])
+  })
+
+  it('a confirmação libera a criação nas duas famílias de rotas com a mesma sessão', async () => {
+    const falsa = apiLogada()
+    falsa.estado.emailConfirmado = false
+    falsa.estado.cadastro.tokens.set('token-1', 'confirm_email')
+    const caminho = '/channels'
+    const corpo = { kind: 'email', email: 'avisos@exemplo.com' }
+
+    expect((await pedirNaRota('POST', caminho, corpo)).status).toBe(403)
+    expect((await pedirNaRota('POST', '/auth/email/confirm', { token: 'token-1' })).status).toBe(204)
+    expect((await pedirNaRota('POST', caminho, corpo)).status).toBe(201)
+    expect((await pedirNaRota('POST', `/projects/${PROJETO_PADRAO}${caminho}`, corpo)).status).toBe(201)
+    expect(falsa.estado.canais).toHaveLength(2)
+  })
+
+  it.each([
+    ['pendente', false, ['confirm_email']],
+    ['confirmado', true, []],
+  ] as const)('reenviar com e-mail %s responde 202 sem corpo', async (_caso, confirmado, novosTokens) => {
+    const falsa = apiLogada()
+    falsa.estado.emailConfirmado = confirmado
+
+    const resposta = await pedirNaRota('POST', '/auth/email/resend')
+
+    expect(resposta.status).toBe(202)
+    expect(await resposta.text()).toBe('')
+    expect([...falsa.estado.cadastro.tokens.values()]).toEqual(novosTokens)
   })
 })

@@ -140,7 +140,7 @@ window.turnstile = {
   render(el, o) {
     const alvo = typeof el === 'string' ? document.querySelector(el) : el
     if (alvo) alvo.setAttribute('data-turnstile-imitado', '')
-    o.callback(${JSON.stringify(TOKEN_DO_TURNSTILE)})
+    o?.callback?.(${JSON.stringify(TOKEN_DO_TURNSTILE)})
     return 'w1'
   },
   reset() {},
