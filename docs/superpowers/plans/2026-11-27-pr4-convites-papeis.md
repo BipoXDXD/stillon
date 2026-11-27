@@ -44,6 +44,8 @@
 
 ### Precisam do dono (com recomendação; nada do que depende delas começa antes)
 
+**Decidido em 2026-11-27:** D1 = (a), os quatro papéis da spec; D2 = (a), transferência em dois passos (o 4.3 entra). D3, D4 e D5 seguem a recomendação (a). D6 continua esperando o dono, na T12.
+
 | # | Decisão | Opções (prós / contras) | Recomendo | Bloqueia |
 |---|---|---|---|---|
 | D1 | Nomes dos papéis. A spec aprovada e o código (`tenancy.Role`, CHECK de `project_members`) têm **quatro**: owner, manager, member, viewer. O pedido desta tarefa fala em owner/editor/viewer. | (a) Manter os quatro: zero migração, segue a spec, manager separa "gerir canais e convidar" de "editar monitores". (b) Três (owner/editor/viewer): mais simples de explicar; exige migration de dados, mexe em toda verificação `Require` e na matriz, e perde o papel intermediário. | (a). Os rótulos em português ficam para a T12. | nada (o plano segue a) |
