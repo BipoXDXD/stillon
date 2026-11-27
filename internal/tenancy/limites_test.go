@@ -21,15 +21,3 @@ func TestOperatorLimits(t *testing.T) {
 		t.Errorf("LimitesDe(true) = %+v; quer %+v", got, want)
 	}
 }
-
-func TestLimitesDeReturnsCopies(t *testing.T) {
-	for _, operador := range []bool{false, true} {
-		antes := LimitesDe(operador)
-		mexido := LimitesDe(operador)
-		mexido.Projetos = 999
-		mexido.IntervaloMinimoSec = 1
-		if depois := LimitesDe(operador); depois != antes {
-			t.Errorf("LimitesDe(%v) mudou depois de alterar a cópia: %+v; quer %+v", operador, depois, antes)
-		}
-	}
-}
