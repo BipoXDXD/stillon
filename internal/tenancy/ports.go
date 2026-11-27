@@ -14,6 +14,8 @@ type ProjectSummary struct {
 	IsDefault bool
 	Role      Role
 	CreatedAt time.Time
+	// Limites são os do titular do projeto, não os de quem pede a lista.
+	Limites Limites
 }
 
 // NewProject é o projeto a criar pela API: nunca o padrão.

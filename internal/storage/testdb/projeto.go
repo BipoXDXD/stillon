@@ -129,6 +129,20 @@ func Suspender(t *testing.T, usuario uuid.UUID) {
 	}
 }
 
+// Operador marca a conta como operadora (sem as cotas do plano grátis), por
+// fora da RLS.
+func Operador(t *testing.T, usuario uuid.UUID) {
+	t.Helper()
+	tag, err := Admin(t).Exec(context.Background(),
+		`UPDATE users SET is_operator = true WHERE id = $1`, usuario)
+	if err != nil {
+		t.Fatalf("tornar %s operador: %v", usuario, err)
+	}
+	if tag.RowsAffected() != 1 {
+		t.Fatalf("tornar %s operador: usuário não existe", usuario)
+	}
+}
+
 // ProjetoDoAlvo lê, por fora da RLS, o projeto em que o alvo vive. Falha se o
 // alvo não tem projeto: o gatilho só o preenche quando o dono já tem o
 // Projeto padrão (chame ProjetoPadrao antes de criar o alvo).
