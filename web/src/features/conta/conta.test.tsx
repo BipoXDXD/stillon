@@ -329,6 +329,26 @@ describe('confirmação de e-mail', () => {
     expect(senha).toHaveValue(SENHA)
     expect(screen.getByRole('button', { name: 'Confirmar e-mail' })).toBeEnabled()
   })
+
+  // Conta travada: o backend manda o Retry-After com o que falta da trava
+  // (até 900 s). Sabotagem prevista: ignorar o cabeçalho e cair no "um minuto".
+  it('conta travada diz quanto tempo falta pelo Retry-After', async () => {
+    const { falsa, usuario } = await renderizarPainel('/confirm-email#token=token-da-caixa', { logado: false })
+    falsa.estado.cadastro.tokens.set('token-da-caixa', 'confirm_email')
+    servidor.use(
+      http.post('*/api/v1/auth/email/confirm', () =>
+        HttpResponse.json(
+          { error: { code: 'rate_limited', message: 'limite' }, trace_id: 't' },
+          { status: 429, headers: { 'Retry-After': '900' } },
+        ),
+      ),
+    )
+    const senha = await screen.findByLabelText('Senha')
+    await usuario.type(senha, SENHA)
+    await usuario.click(screen.getByRole('button', { name: 'Confirmar e-mail' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('Aguarde 15 minutos e tente de novo.')
+    expect(senha).toHaveValue(SENHA)
+  })
 })
 
 describe('esqueci a senha', () => {
