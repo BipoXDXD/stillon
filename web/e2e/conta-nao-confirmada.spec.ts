@@ -1,5 +1,5 @@
 import AxeBuilder from '@axe-core/playwright'
-import type { Page } from '@playwright/test'
+import type { Locator, Page } from '@playwright/test'
 import { me } from '../src/test/fixtures'
 import { agora, imitarApi } from './api-imitada'
 import { controlePositivo, expect, test } from './fixtures'
@@ -17,7 +17,7 @@ async function contaNaoConfirmada(page: Page) {
   await page.route('**/api/v1/me', (route) => route.fulfill({ json: me({ created_at: agora, email_verified: false }) }))
 }
 
-const aviso = (page: Page) => page.getByRole('status').filter({ hasText: TEXTO_DO_AVISO })
+const aviso = (raiz: Locator | Page) => raiz.getByRole('complementary', { name: 'Confirmação de e-mail' })
 
 test.beforeEach(async ({ page }) => {
   await contaNaoConfirmada(page)
@@ -27,8 +27,9 @@ test('o aviso aparece no topo do conteúdo, com o e-mail da conta', async ({ pag
   await page.goto('/')
   await expect(page.getByRole('heading', { name: 'Painel', level: 1 })).toBeVisible()
   await expect(aviso(page)).toBeVisible()
+  await expect(aviso(page)).toContainText(TEXTO_DO_AVISO)
   await expect(aviso(page)).toContainText(`Enviamos um link para ${EMAIL_DA_CONTA}.`)
-  await expect(page.locator('#conteudo').getByRole('status').filter({ hasText: TEXTO_DO_AVISO })).toBeVisible()
+  await expect(aviso(page.locator('#conteudo'))).toBeVisible()
   await controlePositivo(page, 'aviso')
 })
 
@@ -39,7 +40,7 @@ test('reenviar pede um link novo e confirma o envio', async ({ page }) => {
   )
   await aviso(page).getByRole('button', { name: 'Reenviar e-mail' }).click()
   expect((await pedido).headers()['x-requested-with']).toBe('stillon')
-  await expect(aviso(page)).toContainText('Link reenviado. Confira sua caixa de entrada.')
+  await expect(aviso(page).getByRole('status')).toHaveText('Link reenviado. Confira sua caixa de entrada.')
   await expect(aviso(page).getByRole('button', { name: 'Reenviar e-mail' })).toHaveCount(0)
   // O foco não cai no <body> quando o botão dá lugar ao texto.
   await expect(page.locator('body')).not.toBeFocused()

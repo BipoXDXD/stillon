@@ -1,5 +1,5 @@
 import { Eye, EyeOff } from 'lucide-react'
-import { useCallback, useEffect, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode, type SubmitEventHandler } from 'react'
 import type { FieldValues, Path, UseFormRegisterReturn, UseFormReturn } from 'react-hook-form'
 import { Link, useLocation, useNavigate } from 'react-router'
 import { z } from 'zod'
@@ -135,19 +135,64 @@ export function CampoDeSenhaNova({
   )
 }
 
-// Os erros de campo do 400 validation_failed no formulário. mapa: o nome no
-// servidor → o campo da tela. true quando marcou algum campo.
+// O primeiro erro de campo recebe foco depois que os controles são reabilitados.
+export function useEnvioDoFormulario<T extends FieldValues>(form: UseFormReturn<T>, campoInicial: Path<T>) {
+  type Falha = { campo?: Path<T> }
+  type Estado = 'pronto' | 'enviando' | (Falha & { formulario: HTMLFormElement; origem: HTMLElement | null })
+  const [estado, setEstado] = useState<Estado>('pronto')
+  const emAndamento = useRef(false)
+  const { handleSubmit, setFocus } = form
+
+  useLayoutEffect(() => {
+    if (typeof estado === 'string' || !estado.formulario.isConnected) return
+    const { campo, origem } = estado
+    const ativo = document.activeElement
+    // Se a pessoa saiu do formulário durante o pedido, respeite o novo foco.
+    if (ativo !== document.body && ativo !== origem) return
+    if (campo) setFocus(campo)
+    else if (origem && !origem.matches(':disabled')) origem.focus()
+    else setFocus(campoInicial)
+  }, [campoInicial, estado, setFocus])
+
+  function enviar(acao: (dados: T) => Promise<Falha | void>): SubmitEventHandler<HTMLFormElement> {
+    return (evento) => {
+      evento.preventDefault()
+      if (emAndamento.current) return
+      emAndamento.current = true
+      const formulario = evento.currentTarget
+      const ativo = document.activeElement
+      const origem = ativo instanceof HTMLElement && formulario.contains(ativo) ? ativo : null
+
+      void handleSubmit(async (dados) => {
+        setEstado('enviando')
+        let falha: Falha | void = undefined
+        try {
+          falha = await acao(dados)
+        } finally {
+          setEstado(falha ? { ...falha, formulario, origem } : 'pronto')
+        }
+      })(evento).finally(() => {
+        emAndamento.current = false
+      })
+    }
+  }
+
+  return { enviando: estado === 'enviando', enviar }
+}
+
+// Os erros de campo do 400 validation_failed. O mapa traduz o nome no servidor
+// para o campo da tela, e o retorno identifica o primeiro campo recusado.
 export function marcarCamposDoServidor<T extends FieldValues>(
   e: unknown,
   form: UseFormReturn<T>,
   mapa: Record<string, Path<T>>,
-): boolean {
+): Path<T> | undefined {
   const erros = errosDosCampos(e, (fe) => {
     const campo = mapa[fe.field]
     return campo ? { campo, mensagem: mensagemDoCampo(fe.field, fe.reason) } : undefined
   })
-  erros.forEach(({ campo, mensagem }, i) => form.setError(campo, { message: mensagem }, { shouldFocus: i === 0 }))
-  return erros.length > 0
+  erros.forEach(({ campo, mensagem }) => form.setError(campo, { message: mensagem }))
+  return erros[0]?.campo
 }
 
 // O desafio do Turnstile de um formulário: o token (null até resolver) e o

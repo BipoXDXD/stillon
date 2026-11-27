@@ -15,6 +15,7 @@ import {
   marcarCamposDoServidor,
   MolduraPublica,
   TextoDeApoio,
+  useEnvioDoFormulario,
   useTokenDoFragmento,
 } from './comum'
 
@@ -29,7 +30,7 @@ export function PaginaRedefinirSenha() {
   const [invalido, setInvalido] = useState(token === null)
   const [erro, setErro] = useState<string | null>(null)
   const form = useForm({ resolver: zodResolver(esquema), defaultValues: { senha: '' } })
-  const enviando = form.formState.isSubmitting
+  const { enviando, enviar } = useEnvioDoFormulario(form, 'senha')
 
   if (invalido || token === null) {
     return (
@@ -55,8 +56,9 @@ export function PaginaRedefinirSenha() {
         setInvalido(true)
         return
       }
-      if (marcarCamposDoServidor(e, form, { new_password: 'senha' })) return
-      setErro(mensagemDe(e))
+      const campo = marcarCamposDoServidor(e, form, { new_password: 'senha' })
+      if (!campo) setErro(mensagemDe(e))
+      return { campo }
     }
   }
 
@@ -67,11 +69,13 @@ export function PaginaRedefinirSenha() {
       </Titulo>
       <TextoDeApoio>Ao salvar, todas as sessões abertas da sua conta são encerradas.</TextoDeApoio>
       <ErroDoFormulario>{erro}</ErroDoFormulario>
-      <form noValidate className="space-y-4" onSubmit={form.handleSubmit((v) => salvar(v, token))}>
-        <CampoDeSenhaNova rotulo="Senha nova" erro={form.formState.errors.senha?.message} registro={form.register('senha')} />
-        <Botao type="submit" className="w-full" disabled={enviando}>
-          {enviando ? 'Salvando…' : 'Salvar senha'}
-        </Botao>
+      <form noValidate onSubmit={enviar((v) => salvar(v, token))}>
+        <fieldset disabled={enviando} className="min-w-0 space-y-4">
+          <CampoDeSenhaNova rotulo="Senha nova" erro={form.formState.errors.senha?.message} registro={form.register('senha')} />
+          <Botao type="submit" className="w-full">
+            {enviando ? 'Salvando…' : 'Salvar senha'}
+          </Botao>
+        </fieldset>
       </form>
     </MolduraPublica>
   )
