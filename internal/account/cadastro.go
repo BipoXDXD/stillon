@@ -21,6 +21,7 @@ import (
 // tinha conta: os dois ramos derivam a senha uma vez e mandam um e-mail.
 type Cadastro struct {
 	pool   *pgxpool.Pool
+	users  auth.UserStore
 	clk    clock.Clock
 	mailer AccountMailer
 	links  Links
@@ -30,7 +31,7 @@ type Cadastro struct {
 
 // NewCadastro monta o serviço do cadastro público.
 func NewCadastro(pool *pgxpool.Pool, clk clock.Clock, mailer AccountMailer, links Links) *Cadastro {
-	return &Cadastro{pool: pool, clk: clk, mailer: mailer, links: links, hash: auth.HashPassword}
+	return &Cadastro{pool: pool, users: auth.NewPGStore(pool), clk: clk, mailer: mailer, links: links, hash: auth.HashPassword}
 }
 
 // ValidarCadastro confere a entrada do cadastro sem tocar no banco e devolve o
@@ -130,16 +131,49 @@ func (c *Cadastro) Cadastrar(ctx context.Context, email, senha string) error {
 	return nil
 }
 
-// ConfirmarEmail consome o link, confirma o e-mail e revoga os outros links
-// do propósito na mesma transação. Token inexistente, usado ou vencido é
-// ErrTokenInvalido. De dois cliques simultâneos, exatamente um vence.
-func (c *Cadastro) ConfirmarEmail(ctx context.Context, token string) error {
+// ConfirmarEmail exige o link E a senha escolhida no cadastro: o link sozinho
+// habilitaria a conta para quem só tem acesso ao e-mail (inclusive o dono do
+// endereço que alguém cadastrou), sem provar que foi ele quem a criou.
+//
+// A ordem:
+//
+//  1. o dono do token, numa leitura sem trava. Token inexistente, usado ou
+//     vencido é ErrTokenInvalido, antes de olhar a senha;
+//  2. senha vazia é ErrInvalidCredentials, sem Argon2id e sem contar
+//     tentativa: não adivinha nada;
+//  3. a senha, fora de transação, pelo mecanismo do login
+//     (auth.CheckPasswordOrLocked): a vaga do Argon2id, a reserva no bloqueio
+//     da CONTA (o mesmo contador do login, então a confirmação não é um
+//     oráculo de senha à parte) e o Argon2id. Errada é ErrInvalidCredentials,
+//     e a reserva fica contada; a conta travada é auth.ErrLocked. Certa, a
+//     reserva volta ainda com a vaga: só a errada conta;
+//  4. a transação de antes: trava do usuário, o token consumido, o hash
+//     conferido de novo (a senha trocada depois da verificação recusa), o
+//     e-mail confirmado, os outros links revogados, a auditoria.
+//
+// Só o passo 4 consome o link: nos erros de senha ele continua valendo. De
+// dois cliques simultâneos, exatamente um vence. Com o teto do Argon2id
+// cheio, auth.ErrArgon2Busy, sem contar tentativa.
+func (c *Cadastro) ConfirmarEmail(ctx context.Context, token, senha string) error {
 	tokenHash := crypto.HashToken(token)
+	var dono uuid.UUID
+	err := storage.InAccountTokenTx(ctx, c.pool, tokenHash, func(q *db.Queries) error {
+		var err error
+		dono, err = donoDoToken(ctx, q, tokenHash, propositoConfirmacao, c.clk.Now())
+		return err
+	})
+	if err != nil {
+		return err
+	}
+	if senha == "" {
+		return ErrInvalidCredentials
+	}
+	verificado, err := c.conferirSenha(ctx, dono, senha)
+	if err != nil {
+		return err
+	}
+
 	return storage.InAccountTokenTx(ctx, c.pool, tokenHash, func(q *db.Queries) error {
-		dono, err := donoDoToken(ctx, q, tokenHash, propositoConfirmacao, c.clk.Now())
-		if err != nil {
-			return err
-		}
 		if err := q.LockUserSessions(ctx, dono); err != nil {
 			return fmt.Errorf("travar o usuário: %w", err)
 		}
@@ -151,6 +185,15 @@ func (c *Cadastro) ConfirmarEmail(ctx context.Context, token string) error {
 		if err := q.ScopeToUser(ctx, userID); err != nil {
 			return fmt.Errorf("escopo do usuário: %w", err)
 		}
+		// O token é o mesmo, então o dono também; o hash pode ter mudado
+		// (redefinição, troca de senha) entre a verificação e a trava.
+		atual, err := q.GetUserHash(ctx, userID)
+		if err != nil {
+			return fmt.Errorf("ler a senha do usuário: %w", err)
+		}
+		if userID != dono || atual != verificado {
+			return ErrInvalidCredentials
+		}
 		if err := q.MarkEmailVerified(ctx, db.MarkEmailVerifiedParams{Now: now, ID: userID}); err != nil {
 			return fmt.Errorf("marcar e-mail confirmado: %w", err)
 		}
@@ -161,6 +204,30 @@ func (c *Cadastro) ConfirmarEmail(ctx context.Context, token string) error {
 		}
 		return audit(ctx, q, userID, "user.email_verified", nil, nil, nil, now)
 	})
+}
+
+// conferirSenha é o passo 3 de ConfirmarEmail e devolve o hash que conferiu.
+// O ip_hash da auditoria do bloqueio fica vazio: o cadastro não tem a chave
+// de IP.
+func (c *Cadastro) conferirSenha(ctx context.Context, dono uuid.UUID, senha string) (string, error) {
+	u, err := c.users.ByID(ctx, dono)
+	if err != nil {
+		// O dono do token tem conta (a FK apaga os tokens com ela): ausente
+		// aqui é corrida com a exclusão, e o link já não vale.
+		if errors.Is(err, auth.ErrNotFound) {
+			return "", ErrTokenInvalido
+		}
+		return "", err
+	}
+	tentativas := auth.AccountAttempts(c.users, dono, nil, c.clk.Now())
+	ok, err := auth.CheckPasswordOrLocked(ctx, tentativas, u, senha)
+	if err != nil {
+		return "", err
+	}
+	if !ok {
+		return "", ErrInvalidCredentials
+	}
+	return u.PasswordHash, nil
 }
 
 // ReenviarConfirmacao enfileira um link para o usuário da sessão. O novo

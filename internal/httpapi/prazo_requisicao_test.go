@@ -62,7 +62,7 @@ func (conferidorQueConfirma) EmailConfirmado(context.Context, uuid.UUID) (bool, 
 type contaPublicaFalsa struct{}
 
 func (contaPublicaFalsa) Cadastrar(context.Context, string, string) error { return errRepoFalso }
-func (contaPublicaFalsa) ConfirmarEmail(context.Context, string) error {
+func (contaPublicaFalsa) ConfirmarEmail(context.Context, string, string) error {
 	return account.ErrTokenInvalido
 }
 func (contaPublicaFalsa) ReenviarConfirmacao(context.Context, uuid.UUID) error {

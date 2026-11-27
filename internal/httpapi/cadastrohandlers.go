@@ -5,6 +5,8 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"strconv"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -19,7 +21,7 @@ import (
 // Cadastrador é o cadastro público (account.Cadastro).
 type Cadastrador interface {
 	Cadastrar(ctx context.Context, email, senha string) error
-	ConfirmarEmail(ctx context.Context, token string) error
+	ConfirmarEmail(ctx context.Context, token, senha string) error
 	ReenviarConfirmacao(ctx context.Context, userID uuid.UUID) error
 }
 
@@ -129,11 +131,23 @@ func (h *CadastroHandlers) Signup(w http.ResponseWriter, r *http.Request) {
 }
 
 type confirmarEmailRequest struct {
-	Token string `json:"token"`
+	Token    string `json:"token"`
+	Password string `json:"password"`
 }
 
-// ConfirmarEmail é POST /auth/email/confirm: 204, ou 400 token_invalid para
-// token inexistente, usado ou vencido, sem distinção.
+// ConfirmarEmail é POST /auth/email/confirm, com o token do link e a senha
+// escolhida no cadastro:
+//
+//   - 204: confirmado;
+//   - 400 token_invalid: token inexistente, usado ou vencido, sem distinção, e
+//     antes de olhar a senha;
+//   - 401 invalid_credentials: token válido e senha errada ou vazia. O link
+//     NÃO é gasto: dá para tentar de novo;
+//   - 429 rate_limited: o balde por IP, o teto do Argon2id ou a conta
+//     travada pelo bloqueio do login (cinco senhas erradas, no login ou aqui).
+//     A trava se anuncia aqui, ao contrário do login: quem chega à senha já
+//     tem o token, que prova que a conta existe. O Retry-After da trava é a
+//     duração inteira dela (auth.LockDuration), um teto.
 func (h *CadastroHandlers) ConfirmarEmail(w http.ResponseWriter, r *http.Request) {
 	var req confirmarEmailRequest
 	if !decodeJSON(w, r, &req) {
@@ -143,10 +157,15 @@ func (h *CadastroHandlers) ConfirmarEmail(w http.ResponseWriter, r *http.Request
 		apierr.WriteError(w, r, apierr.CodeTokenInvalid)
 		return
 	}
-	err := h.cadastro.ConfirmarEmail(r.Context(), req.Token)
+	err := h.cadastro.ConfirmarEmail(r.Context(), req.Token, req.Password)
 	switch {
 	case errors.Is(err, account.ErrTokenInvalido):
 		apierr.WriteError(w, r, apierr.CodeTokenInvalid)
+	case errors.Is(err, account.ErrInvalidCredentials):
+		apierr.WriteError(w, r, apierr.CodeInvalidCredentials)
+	case errors.Is(err, auth.ErrLocked):
+		w.Header().Set("Retry-After", strconv.Itoa(int(auth.LockDuration/time.Second)))
+		apierr.WriteError(w, r, apierr.CodeRateLimited)
 	case err != nil:
 		h.internal(w, r, "confirmar e-mail", err)
 	default:
