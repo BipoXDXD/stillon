@@ -6,6 +6,8 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
+	"io"
 	"maps"
 	"slices"
 	"strings"
@@ -202,10 +204,15 @@ func montar(t *testing.T) cenario {
 func exportar(t *testing.T, c cenario) []byte {
 	t.Helper()
 	var buf bytes.Buffer
-	if err := exportacao.Novo(c.pool, c.box, clock.NewFake(agora)).Escrever(context.Background(), c.dona, &buf); err != nil {
+	exportarEm(t, c, &buf)
+	return buf.Bytes()
+}
+
+func exportarEm(t *testing.T, c cenario, w io.Writer) {
+	t.Helper()
+	if err := exportacao.Novo(c.pool, c.box, clock.NewFake(agora)).Escrever(context.Background(), c.dona, w); err != nil {
 		t.Fatalf("exportar: %v", err)
 	}
-	return buf.Bytes()
 }
 
 func decodificar(t *testing.T, b []byte) map[string]json.RawMessage {
@@ -380,5 +387,135 @@ func TestExportacaoRegistraNaAuditoria(t *testing.T) {
 	}
 	if n != 1 || !em.Equal(agora) {
 		t.Errorf("account.exported = %d em %v, queria 1 em %v", n, em, agora)
+	}
+}
+
+// semearRollups põe n horas de rollup no alvo, terminando antes de agora.
+func semearRollups(t *testing.T, alvo uuid.UUID, n int) {
+	t.Helper()
+	inicio := agora.Truncate(time.Hour).Add(-time.Duration(n) * time.Hour)
+	for i := range n {
+		if _, err := testdb.Admin(t).Exec(context.Background(), `INSERT INTO check_rollup_1h
+			(target_id, bucket, total, ok, p50, p95, p99, max) VALUES ($1, $2, 60, 59, 100, 200, 300, 400)`,
+			alvo, inicio.Add(time.Duration(i)*time.Hour)); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// escritaVigiada chama vigia antes de cada escrita, com o que já saiu.
+type escritaVigiada struct {
+	buf   bytes.Buffer
+	vigia func(saiu []byte)
+}
+
+func (e *escritaVigiada) Write(p []byte) (int, error) {
+	e.vigia(e.buf.Bytes())
+	return e.buf.Write(p)
+}
+
+// Os rollups saem alvo a alvo: os de um alvo são lidos só depois que os do
+// anterior já foram escritos, cada leitura numa transação curta. A prova: no
+// instante em que o primeiro rollup sai, os rollups do outro alvo são
+// apagados por fora; quem lê alvo a alvo não os leva, e quem carregasse o
+// projeto inteiro antes de escrever os levaria. Durante toda a escrita,
+// nenhuma conexão deste banco fica "idle in transaction".
+func TestExportacaoLeRollupsAlvoAAlvoSemTransacaoAberta(t *testing.T) {
+	c := montar(t)
+	ctx := context.Background()
+	admin := testdb.Admin(t)
+	alvos := []uuid.UUID{novoID(t), novoID(t)}
+	err := storage.InProjectTx(ctx, c.pool, c.dona, c.padrao, func(q *db.Queries, _ tenancy.ProjectScope) error {
+		for i, id := range alvos {
+			if err := q.InsertTarget(ctx, db.InsertTargetParams{
+				ID: id, UserID: c.dona, Name: fmt.Sprintf("Alvo-%d", i), URL: "https://exemplo.com", Method: "GET",
+				IntervalSec: 60, TimeoutMS: 5000, ExpectedStatus: 200, Enabled: true,
+				NextRunAt: agora, CreatedAt: agora.Add(-time.Hour), ProjectID: c.padrao,
+			}); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("semear os alvos: %v", err)
+	}
+	for _, id := range alvos {
+		semearRollups(t, id, 3)
+	}
+
+	var primeiro, apagado uuid.UUID
+	escritas, abertas := 0, 0
+	w := &escritaVigiada{}
+	w.vigia = func(saiu []byte) {
+		escritas++
+		var n int
+		if err := admin.QueryRow(ctx, `SELECT count(*) FROM pg_stat_activity
+			WHERE datname = current_database() AND pid <> pg_backend_pid()
+			  AND state LIKE 'idle in transaction%'`).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		abertas += n
+		if primeiro != uuid.Nil {
+			return
+		}
+		i := bytes.Index(saiu, []byte(`"rollups":[{`))
+		if i < 0 {
+			return
+		}
+		const chave = `"target_id":"`
+		j := bytes.Index(saiu[i:], []byte(chave))
+		if j < 0 || len(saiu) < i+j+len(chave)+36 {
+			return // o primeiro rollup ainda não saiu inteiro
+		}
+		id, err := uuid.ParseBytes(saiu[i+j+len(chave) : i+j+len(chave)+36])
+		if err != nil {
+			t.Fatal(err)
+		}
+		primeiro = id
+		apagado = alvos[0]
+		if id == alvos[0] {
+			apagado = alvos[1]
+		}
+		if _, err := admin.Exec(ctx, `DELETE FROM check_rollup_1h WHERE target_id = $1`, apagado); err != nil {
+			t.Fatal(err)
+		}
+	}
+	exportarEm(t, c, w)
+
+	topo := decodificar(t, w.buf.Bytes())
+	var projetos []struct {
+		ID      uuid.UUID `json:"id"`
+		Rollups []struct {
+			TargetID uuid.UUID `json:"target_id"`
+			Bucket   time.Time `json:"bucket"`
+			Total    int       `json:"total"`
+			OK       int       `json:"ok"`
+			P99      *int      `json:"p99"`
+		} `json:"rollups"`
+	}
+	if err := json.Unmarshal(topo["projects"], &projetos); err != nil {
+		t.Fatal(err)
+	}
+	porAlvo := map[uuid.UUID]int{}
+	for _, p := range projetos {
+		for _, r := range p.Rollups {
+			if r.Total != 60 || r.OK != 59 || r.P99 == nil || *r.P99 != 300 || r.Bucket.IsZero() {
+				t.Errorf("rollup fora do formato: %+v", r)
+			}
+			porAlvo[r.TargetID]++
+		}
+	}
+	if primeiro == uuid.Nil {
+		t.Fatalf("nenhum rollup saiu: %s", w.buf.Bytes())
+	}
+	if porAlvo[primeiro] != 3 {
+		t.Errorf("rollups do alvo %s = %d, queria 3", primeiro, porAlvo[primeiro])
+	}
+	if porAlvo[apagado] != 0 {
+		t.Errorf("rollups do alvo %s = %d, queria 0: os rollups foram lidos antes de o primeiro alvo sair", apagado, porAlvo[apagado])
+	}
+	if escritas == 0 || abertas != 0 {
+		t.Errorf("%d transações abertas vistas em %d escritas, queria 0", abertas, escritas)
 	}
 }

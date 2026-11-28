@@ -49,6 +49,11 @@ const (
 // ErrUsuarioInexistente: o usuário pedido não existe mais.
 var ErrUsuarioInexistente = errors.New("usuário inexistente")
 
+// errDeixouDeSerOwner: a pessoa perdeu o papel de owner (ou a pertença) no
+// meio da escrita de um projeto. O começo dele já saiu, então a exportação
+// falha em vez de terminar sem o resto.
+var errDeixouDeSerOwner = errors.New("deixou de ser owner do projeto durante a exportação")
+
 // Servico lê e escreve a exportação. box abre os headers dos alvos (só os
 // nomes saem) e o destino dos canais (sai o hint e, do e-mail, o endereço).
 type Servico struct {
@@ -104,7 +109,8 @@ type projeto struct {
 	Channels    []canal          `json:"channels"`
 	StatusPages []paginaDeStatus `json:"status_pages"`
 	Incidents   []incidente      `json:"incidents"`
-	Rollups     []rollup         `json:"rollups"`
+	// "rollups" fecha o objeto e não mora aqui: escreverProjeto o emite alvo
+	// a alvo, sem guardar o histórico do projeto inteiro na memória.
 }
 
 type membro struct {
@@ -209,10 +215,13 @@ type pessoal struct {
 //
 // Os dados da pessoa são lidos numa transação de usuário antes do primeiro
 // byte; cada projeto em que ela é owner é lido depois, no seu próprio
-// storage.InProjectTx, e escrito só quando a leitura dele termina. Não há
-// snapshot único: um projeto pode refletir um instante um pouco posterior ao
-// da conta. O papel vale pelo que a transação do projeto lê: quem deixou de
-// ser owner no meio não leva o projeto.
+// storage.InProjectTx, e escrito só quando a leitura dele termina. Os rollups
+// saem alvo a alvo, cada alvo numa transação curta que reconfere o papel:
+// nenhuma transação fica aberta enquanto os bytes vão para a rede, e o
+// histórico de um projeto nunca está inteiro na memória. Não há snapshot
+// único: um projeto pode refletir um instante um pouco posterior ao da conta.
+// O papel vale pelo que cada transação lê: quem deixou de ser owner antes do
+// projeto não o leva; quem deixou no meio dele derruba a exportação.
 //
 // Um erro depois do primeiro byte volta para quem chamou com o JSON
 // incompleto em w: o handler aborta a resposta (panic(http.ErrAbortHandler))
@@ -254,7 +263,9 @@ func (s *Servico) Escrever(ctx context.Context, userID uuid.UUID, w io.Writer) e
 			e.bruto(",")
 		}
 		primeiro = false
-		e.valor(proj)
+		if err := s.escreverProjeto(ctx, e, userID, proj, p.geradoEm); err != nil {
+			return err
+		}
 	}
 	e.bruto("]}\n")
 	return e.err
@@ -334,7 +345,62 @@ func (s *Servico) lerPessoal(ctx context.Context, userID uuid.UUID) (pessoal, er
 	return p, err
 }
 
-// lerProjeto lê o projeto inteiro numa transação dele. ok é falso quando a
+// escreverProjeto escreve proj e, no fim do objeto, os rollups de cada alvo,
+// lidos um alvo por vez (lerRollups) e escritos antes do próximo.
+func (s *Servico) escreverProjeto(ctx context.Context, e *escritor, userID uuid.UUID, proj projeto, agora time.Time) error {
+	e.objetoAberto(proj)
+	e.bruto(`,"rollups":[`)
+	primeiro := true
+	for _, a := range proj.Targets {
+		if e.err != nil {
+			return e.err
+		}
+		rs, err := s.lerRollups(ctx, userID, proj.ID, a.ID, agora)
+		if err != nil {
+			return fmt.Errorf("exportar o projeto %s: %w", proj.ID, err)
+		}
+		for _, r := range rs {
+			if !primeiro {
+				e.bruto(",")
+			}
+			primeiro = false
+			e.valor(r)
+		}
+	}
+	e.bruto("]}")
+	return e.err
+}
+
+// lerRollups lê os rollups horários de um alvo numa transação curta do
+// projeto, que reconfere o papel de owner. Os checks brutos não entram
+// (D5-A): o rollup é o histórico que a exportação leva.
+func (s *Servico) lerRollups(ctx context.Context, userID, projectID, targetID uuid.UUID, agora time.Time) ([]rollup, error) {
+	var out []rollup
+	err := storage.InProjectTx(ctx, s.pool, userID, projectID, func(q *db.Queries, esc tenancy.ProjectScope) error {
+		if esc.Role != tenancy.RoleOwner {
+			return errDeixouDeSerOwner
+		}
+		hs, err := q.ListRollups(ctx, db.ListRollupsParams{
+			ProjectID: projectID, TargetID: targetID, FromAt: time.Unix(0, 0).UTC(), ToAt: agora.Add(time.Hour),
+		})
+		if err != nil {
+			return fmt.Errorf("listar rollups do alvo %s: %w", targetID, err)
+		}
+		out = make([]rollup, 0, len(hs))
+		for _, h := range hs {
+			out = append(out, rollup{
+				TargetID: targetID, Bucket: h.Bucket, Total: h.Total, OK: h.Ok, P50: h.P50, P95: h.P95, P99: h.P99, Max: h.Max,
+			})
+		}
+		return nil
+	})
+	if errors.Is(err, tenancy.ErrProjectNotFound) {
+		return nil, errDeixouDeSerOwner
+	}
+	return out, err
+}
+
+// lerProjeto lê o projeto numa transação dele, sem os rollups. ok é falso quando a
 // pessoa já não é owner (ou já não é membro) quando a transação abre.
 func (s *Servico) lerProjeto(ctx context.Context, userID, projectID uuid.UUID, agora time.Time) (projeto, bool, error) {
 	var out projeto
@@ -383,7 +449,7 @@ func (s *Servico) lerRecursos(ctx context.Context, q *db.Queries, esc tenancy.Pr
 		p.Invitations = append(p.Invitations, convite{Email: c.Email, Role: c.Role, ExpiresAt: c.ExpiresAt})
 	}
 
-	if p.Targets, p.Rollups, err = s.lerAlvos(ctx, q, id, agora); err != nil {
+	if p.Targets, err = s.lerAlvos(ctx, q, id); err != nil {
 		return p, err
 	}
 	if p.Heartbeats, err = lerHeartbeats(ctx, q, id); err != nil {
@@ -401,25 +467,23 @@ func (s *Servico) lerRecursos(ctx context.Context, q *db.Queries, esc tenancy.Pr
 	return p, nil
 }
 
-// lerAlvos lê os alvos e os rollups horários deles. Os checks brutos não
-// entram (D5-A): o rollup é o histórico que a exportação leva.
-func (s *Servico) lerAlvos(ctx context.Context, q *db.Queries, projectID uuid.UUID, agora time.Time) ([]alvo, []rollup, error) {
+// lerAlvos lê os alvos; os rollups deles saem depois, em lerRollups.
+func (s *Servico) lerAlvos(ctx context.Context, q *db.Queries, projectID uuid.UUID) ([]alvo, error) {
 	tags := map[uuid.UUID][]string{}
 	linhasDeTag, err := q.ListProjectTargetTags(ctx, projectID)
 	if err != nil {
-		return nil, nil, fmt.Errorf("listar tags dos alvos: %w", err)
+		return nil, fmt.Errorf("listar tags dos alvos: %w", err)
 	}
 	for _, t := range linhasDeTag {
 		tags[t.TargetID] = append(tags[t.TargetID], t.Tag)
 	}
 
 	alvos := []alvo{}
-	rollups := []rollup{}
 	var antes *uuid.UUID
 	for {
 		linhas, err := q.ListTargets(ctx, db.ListTargetsParams{ProjectID: projectID, Before: antes, MaxRows: pagina})
 		if err != nil {
-			return nil, nil, fmt.Errorf("listar alvos: %w", err)
+			return nil, fmt.Errorf("listar alvos: %w", err)
 		}
 		for _, t := range linhas {
 			// Headers que não decifram (chave trocada, linha adulterada) saem
@@ -445,21 +509,9 @@ func (s *Servico) lerAlvos(ctx context.Context, q *db.Queries, projectID uuid.UU
 				a.Tags = []string{}
 			}
 			alvos = append(alvos, a)
-
-			hs, err := q.ListRollups(ctx, db.ListRollupsParams{
-				ProjectID: projectID, TargetID: t.ID, FromAt: time.Unix(0, 0).UTC(), ToAt: agora.Add(time.Hour),
-			})
-			if err != nil {
-				return nil, nil, fmt.Errorf("listar rollups do alvo %s: %w", t.ID, err)
-			}
-			for _, h := range hs {
-				rollups = append(rollups, rollup{
-					TargetID: t.ID, Bucket: h.Bucket, Total: h.Total, OK: h.Ok, P50: h.P50, P95: h.P95, P99: h.P99, Max: h.Max,
-				})
-			}
 		}
 		if len(linhas) < int(pagina) {
-			return alvos, rollups, nil
+			return alvos, nil
 		}
 		antes = &linhas[len(linhas)-1].ID
 	}
@@ -604,6 +656,25 @@ func (e *escritor) bruto(s string) {
 	if e.err == nil {
 		_, e.err = io.WriteString(e.w, s)
 	}
+}
+
+// objetoAberto escreve o objeto JSON de v sem o "}" final, para quem chama
+// acrescentar chaves depois. v tem de ser uma struct: o Marshal dela sempre
+// termina em "}".
+func (e *escritor) objetoAberto(v any) {
+	if e.err != nil {
+		return
+	}
+	b, err := json.Marshal(v)
+	if err != nil {
+		e.err = err
+		return
+	}
+	if len(b) < 2 || b[len(b)-1] != '}' {
+		e.err = fmt.Errorf("objetoAberto: %T não é um objeto JSON", v)
+		return
+	}
+	_, e.err = e.w.Write(b[:len(b)-1])
 }
 
 // valor escreve v com um json.Encoder (um por seção, com o objeto externo
