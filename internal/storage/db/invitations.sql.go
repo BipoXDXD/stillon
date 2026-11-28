@@ -14,15 +14,15 @@ import (
 
 const acceptInvitation = `-- name: AcceptInvitation :one
 UPDATE project_invitations
-   SET accepted_at = $1::timestamptz,
+   SET accepted_at = now(),
        accepted_by = NULLIF(current_setting('app.user_id', true), '')::uuid
- WHERE token_hash = $2 AND accepted_at IS NULL AND expires_at > $1::timestamptz
+ WHERE token_hash = $1 AND accepted_at IS NULL AND expires_at > $2::timestamptz
 RETURNING project_id, role
 `
 
 type AcceptInvitationParams struct {
-	Now       time.Time
 	TokenHash []byte
+	Now       time.Time
 }
 
 type AcceptInvitationRow struct {
@@ -33,8 +33,9 @@ type AcceptInvitationRow struct {
 // O aceite é um comando só: o UPDATE trava a linha, e o segundo aceite
 // simultâneo reavalia o WHERE na versão nova (accepted_at preenchido) e não
 // devolve nada. A política por_token_update recusa a conta de outro e-mail.
+// accepted_at é o now() do banco: o gatilho da 00049 não aceita outra data.
 func (q *Queries) AcceptInvitation(ctx context.Context, arg AcceptInvitationParams) (AcceptInvitationRow, error) {
-	row := q.db.QueryRow(ctx, acceptInvitation, arg.Now, arg.TokenHash)
+	row := q.db.QueryRow(ctx, acceptInvitation, arg.TokenHash, arg.Now)
 	var i AcceptInvitationRow
 	err := row.Scan(&i.ProjectID, &i.Role)
 	return i, err

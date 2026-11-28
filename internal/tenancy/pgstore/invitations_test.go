@@ -504,7 +504,7 @@ func TestRemovingInviterDropsTheirPendingInvitations(t *testing.T) {
 	testdb.Membro(t, e.pa, o, "owner")
 	st := pgstore.NewInvitations(pool)
 	cumplice := usuarioComEmail(t, pool, "cumplice@y.com")
-	_, doRemovido := aceitarConviteDe(t, pool, o, e.pa, "cumplice@y.com", tenancy.RoleOwner)
+	_, doRemovido := criarConviteDe(t, pool, o, e.pa, "cumplice@y.com", tenancy.RoleOwner)
 	doTitular, err := convidar(t, st, e.a, e.pa, "outro@y.com", tenancy.RoleMember, t0)
 	if err != nil {
 		t.Fatal(err)
@@ -533,7 +533,7 @@ func TestDemotingInviterDropsInvitationsTheyCouldNoLongerSend(t *testing.T) {
 	testdb.Membro(t, e.pa, o, "owner")
 	links := map[tenancy.Role][]byte{}
 	for _, papel := range []tenancy.Role{tenancy.RoleOwner, tenancy.RoleManager, tenancy.RoleMember, tenancy.RoleViewer} {
-		_, links[papel] = aceitarConviteDe(t, pool, o, e.pa, string(papel)+"@y.com", papel)
+		_, links[papel] = criarConviteDe(t, pool, o, e.pa, string(papel)+"@y.com", papel)
 	}
 	vivos := func() map[tenancy.Role]bool {
 		out := map[tenancy.Role]bool{}
@@ -560,9 +560,9 @@ func TestDemotingInviterDropsInvitationsTheyCouldNoLongerSend(t *testing.T) {
 	}
 }
 
-// aceitarConviteDe grava um convite de quem, para email com o papel dado, e
+// criarConviteDe grava um convite de quem, para email com o papel dado, e
 // devolve o token e o hash do link.
-func aceitarConviteDe(t *testing.T, pool *pgxpool.Pool, quem, projeto uuid.UUID, email string, papel tenancy.Role) (token string, hash []byte) {
+func criarConviteDe(t *testing.T, pool *pgxpool.Pool, quem, projeto uuid.UUID, email string, papel tenancy.Role) (token string, hash []byte) {
 	t.Helper()
 	token, hash = novoTokenDeConvite(t)
 	if _, _, err := pgstore.NewInvitations(pool).Create(context.Background(), quem, projeto, tenancy.NewInvitation{

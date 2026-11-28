@@ -16,6 +16,9 @@ SET LOCAL lock_timeout = '5s';
 
 -- token_hash é o SHA-256 do token de 256 bits que vai no link; o token não é
 -- gravado. Uso único (accepted_at), 7 dias de prazo escolhidos por quem grava.
+-- As duas FKs para users apagam a linha (CASCADE): um SET NULL seria um
+-- UPDATE, que o gatilho de imutabilidade recusa, e o convite de quem teve a
+-- conta apagada não sobrevive a ela.
 -- O e-mail é o normalizado (minúsculas); a comparação com a conta de quem
 -- aceita usa lower() do citext de users.
 CREATE TABLE project_invitations (
@@ -24,7 +27,7 @@ CREATE TABLE project_invitations (
     email       text        NOT NULL CHECK (email = lower(email) AND char_length(email) BETWEEN 3 AND 254),
     role        text        NOT NULL CHECK (role IN ('owner', 'manager', 'member', 'viewer')),
     token_hash  bytea       NOT NULL UNIQUE CHECK (octet_length(token_hash) = 32),
-    invited_by  uuid        REFERENCES users(id) ON DELETE SET NULL,
+    invited_by  uuid        REFERENCES users(id) ON DELETE CASCADE,
     created_at  timestamptz NOT NULL,
     expires_at  timestamptz NOT NULL CHECK (expires_at > created_at),
     accepted_at timestamptz,
@@ -76,7 +79,7 @@ CREATE POLICY project_invitations_por_token_update ON project_invitations FOR UP
                 AND accepted_by = NULLIF(current_setting('app.user_id', true), '')::uuid);
 
 -- O aceite é o único UPDATE de project_invitations e só preenche accepted_at
--- e accepted_by: trocar o papel ou o projeto na mesma UPDATE faria a política
+-- (com o now() do banco, sem data forjada) e accepted_by: trocar o papel ou o projeto na mesma UPDATE faria a política
 -- de INSERT abaixo admitir um owner forjado ou outro projeto.
 -- +goose StatementBegin
 CREATE FUNCTION guard_project_invitations_imutavel() RETURNS trigger
@@ -91,7 +94,8 @@ BEGIN
        OR NEW.token_hash IS DISTINCT FROM OLD.token_hash
        OR NEW.invited_by IS DISTINCT FROM OLD.invited_by
        OR NEW.created_at IS DISTINCT FROM OLD.created_at
-       OR NEW.expires_at IS DISTINCT FROM OLD.expires_at THEN
+       OR NEW.expires_at IS DISTINCT FROM OLD.expires_at
+       OR (NEW.accepted_at IS DISTINCT FROM OLD.accepted_at AND NEW.accepted_at IS DISTINCT FROM now()) THEN
         RAISE EXCEPTION 'em project_invitations, só o aceite muda' USING ERRCODE = '42501';
     END IF;
     RETURN NEW;

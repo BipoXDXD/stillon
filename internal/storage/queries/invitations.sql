@@ -79,9 +79,10 @@ SELECT project_id, email, role
 -- O aceite é um comando só: o UPDATE trava a linha, e o segundo aceite
 -- simultâneo reavalia o WHERE na versão nova (accepted_at preenchido) e não
 -- devolve nada. A política por_token_update recusa a conta de outro e-mail.
+-- accepted_at é o now() do banco: o gatilho da 00049 não aceita outra data.
 -- name: AcceptInvitation :one
 UPDATE project_invitations
-   SET accepted_at = sqlc.arg(now)::timestamptz,
+   SET accepted_at = now(),
        accepted_by = NULLIF(current_setting('app.user_id', true), '')::uuid
  WHERE token_hash = sqlc.arg(token_hash) AND accepted_at IS NULL AND expires_at > sqlc.arg(now)::timestamptz
 RETURNING project_id, role;

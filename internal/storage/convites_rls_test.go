@@ -196,11 +196,11 @@ func TestAcceptInsertsOnlyInvitedRoleAndProject(t *testing.T) {
 	}
 }
 
-// Aceitar só preenche accepted_at e accepted_by. Um UPDATE cru no escopo do
-// aceite que troque o papel ou o projeto do convite é recusado (gatilho), e
-// a política de INSERT por convite nunca vê um owner forjado nem outro
-// projeto.
-func TestAcceptCannotRewriteInvitationRoleOrProject(t *testing.T) {
+// Aceitar só preenche accepted_at, com o relógio do banco, e accepted_by. Um
+// UPDATE cru no escopo do aceite que troque o papel ou o projeto do convite,
+// ou date o aceite, é recusado (gatilho), e a política de INSERT por convite
+// nunca vê um owner forjado nem outro projeto.
+func TestAcceptCannotForgeInvitationColumns(t *testing.T) {
 	pool := testdb.New(t)
 	ctx := context.Background()
 	_, b, _, _, pc, hash := equipeDoConvite(t, pool, "member")
@@ -212,6 +212,8 @@ func TestAcceptCannotRewriteInvitationRoleOrProject(t *testing.T) {
 		            WHERE token_hash = $2`, []any{b, hash}},
 		{"projeto", `UPDATE project_invitations SET project_id = $3, accepted_at = now(), accepted_by = $1
 		              WHERE token_hash = $2`, []any{b, hash, pc}},
+		{"aceite", `UPDATE project_invitations SET accepted_at = now() - interval '1 day', accepted_by = $1
+		             WHERE token_hash = $2`, []any{b, hash}},
 	} {
 		t.Run(caso.nome, func(t *testing.T) {
 			g := &guardaTx{Beginner: pool}
@@ -220,12 +222,39 @@ func TestAcceptCannotRewriteInvitationRoleOrProject(t *testing.T) {
 				return err
 			})
 			if codigoPG(err) != "42501" {
-				t.Errorf("aceite trocando o %s do convite: %v; queria 42501", caso.nome, err)
+				t.Errorf("aceite forjando %s: %v; queria 42501", caso.nome, err)
 			}
 			if !pendente(t, hash) {
 				t.Error("o convite deixou de estar pendente")
 			}
 		})
+	}
+}
+
+// Apagar a conta de quem convidou apaga os pendentes dele: o DELETE da conta
+// não esbarra no gatilho (a FK não faz UPDATE) e o link não sobrevive a quem o
+// assinou.
+func TestDeletingInviterDeletesTheirInvitations(t *testing.T) {
+	pool := testdb.New(t)
+	ctx := context.Background()
+	a := novoUsuario(t, pool)
+	x := novoUsuario(t, pool)
+	pa := testdb.NovoProjeto(t, a, "Projeto A")
+	testdb.Membro(t, pa, x, "owner")
+	hash := hashDoConvite("convite-de-x")
+	if _, err := testdb.Admin(t).Exec(ctx, `INSERT INTO project_invitations
+		(id, project_id, email, role, token_hash, invited_by, created_at, expires_at)
+		VALUES ($1, $2, 'cumplice@x.com', 'owner', $3, $4, now(), now() + interval '7 days')`,
+		novoID(), pa, hash, x); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `DELETE FROM users WHERE id = $1`, x); err != nil {
+		t.Fatalf("apagar a conta de quem convidou: %v", err)
+	}
+	var n int
+	if err := testdb.Admin(t).QueryRow(ctx,
+		`SELECT count(*) FROM project_invitations WHERE token_hash = $1`, hash).Scan(&n); err != nil || n != 0 {
+		t.Errorf("convites de quem foi apagado: %d, erro %v; queria 0", n, err)
 	}
 }
 
