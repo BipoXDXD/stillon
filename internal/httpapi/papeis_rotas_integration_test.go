@@ -12,10 +12,11 @@ import (
 )
 
 // recursosDeGestao são os recursos cujas escritas pedem mais que member:
-// canais, status page e convites (manager) e membros (owner). O {userID} das
-// rotas de membros é o titular, e não o próprio member: sair do projeto é
-// dele.
-var recursosDeGestao = []string{"channels", "status-pages", "members", "invitations"}
+// canais, status page e convites (manager), membros (owner) e a
+// transferência de titularidade (só o titular propõe, e só quem recebe
+// aceita). O {userID} das rotas de membros é o titular, e não o próprio
+// member: sair do projeto é dele.
+var recursosDeGestao = []string{"channels", "status-pages", "members", "invitations", "titular-transfer"}
 
 // leiturasDeGestao são os recursos que nem a leitura é de qualquer papel: a
 // lista de convites mostra e-mails de quem ainda não entrou, e é de manager

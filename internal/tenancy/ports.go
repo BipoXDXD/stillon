@@ -16,6 +16,9 @@ type ProjectSummary struct {
 	CreatedAt time.Time
 	// Limites são os do titular do projeto, não os de quem pede a lista.
 	Limites Limites
+	// PendingTitular: a titularidade foi proposta a quem pede a lista, que
+	// pode aceitar ou recusar. Só quem recebe vê a proposta aqui.
+	PendingTitular bool
 }
 
 // NewProject é o projeto a criar pela API: nunca o padrão.
@@ -57,4 +60,18 @@ type ProjectRepository interface {
 	RemoveMember(ctx context.Context, actorID, projectID, targetID uuid.UUID) error
 	// Rename troca o nome do projeto (name já normalizado).
 	Rename(ctx context.Context, actorID, projectID uuid.UUID, name string) (ProjectSummary, error)
+
+	// A transferência de titularidade (decisão D2), sob a trava dos membros.
+
+	// ProposeTransfer propõe a titularidade a targetID (só o titular; o alvo
+	// tem de ser outro owner, e o Projeto padrão não vai: ErrTransferTarget).
+	// Uma proposta nova substitui a anterior.
+	ProposeTransfer(ctx context.Context, actorID, projectID, targetID uuid.UUID) error
+	// AcceptTransfer faz de userID, o pendente, o titular, se a cota dele
+	// comporta o projeto: ErrProjectLimit, ErrMemberLimit ou o erro de teto de
+	// alvos, heartbeats ou canais. Sem proposta para ele, ErrForbidden.
+	AcceptTransfer(ctx context.Context, userID, projectID uuid.UUID, now time.Time) (ProjectSummary, error)
+	// CancelTransfer desfaz a proposta: o titular cancela, o pendente recusa;
+	// outro membro recebe ErrForbidden.
+	CancelTransfer(ctx context.Context, userID, projectID uuid.UUID) error
 }

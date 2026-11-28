@@ -51,6 +51,7 @@ const (
 	CodeMemberLimit         ErrorCode = "member_limit_reached"
 	CodeAlreadyMember       ErrorCode = "already_member"
 	CodeInvitationOther     ErrorCode = "invitation_other_account"
+	CodeTransferTarget      ErrorCode = "titular_transfer_target"
 	// #nosec G101 -- o regex do gosec bate no NOME da constante ("Token"); o valor é um código de erro da API, não um segredo.
 	CodeTokenInvalid ErrorCode = "token_invalid"
 )
@@ -119,6 +120,9 @@ var errorTable = map[ErrorCode]struct {
 	// O link é válido, mas o convite é de outro e-mail. Só sai depois de o
 	// token se provar válido, e o texto não mostra o e-mail do convite.
 	CodeInvitationOther: {http.StatusForbidden, "Este convite é de outra conta. Entre com o e-mail que recebeu o convite."},
+	// A titularidade só vai para outro owner do projeto, e o Projeto padrão
+	// não é transferido (PR 4.3).
+	CodeTransferTarget: {http.StatusConflict, "A titularidade só pode ser transferida para outro owner, e o Projeto padrão não é transferido."},
 }
 
 // FieldError aponta o campo culpado de um 400. Field e Reason vêm de

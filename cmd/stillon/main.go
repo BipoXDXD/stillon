@@ -244,7 +244,7 @@ func run(ctx context.Context, cfg *config.Config) error {
 			StatusPages:     statuspage.NewService(pool, clk),
 			Pings:           heartbeat.NewPingService(pool, clk),
 			Heartbeats:      heartbeat.NewService(pool, clk),
-			Projects:        tenancy.NewService(pgstore.New(pool), clk),
+			Projects:        tenancy.NewService(pgstore.New(pool, pgstore.ComTetoDeRegrasPorHost(cfg.ContentRulesPerHost)), clk),
 			// O e-mail do convite sai pelo mesmo enviador dos e-mails de conta
 			// (balde do destinatário e teto diário); sem envio, SemEnvio.
 			Invitations: tenancy.NewInvitations(pgstore.NewInvitations(pool),
