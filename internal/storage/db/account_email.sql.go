@@ -8,7 +8,27 @@ package db
 import (
 	"context"
 	"time"
+
+	"github.com/google/uuid"
 )
+
+const accountEmailsSentByUserOn = `-- name: AccountEmailsSentByUserOn :one
+SELECT COALESCE((SELECT sent FROM account_email_daily_by_user
+                  WHERE user_id = $1::uuid AND day = $2::date), 0)::int AS sent
+`
+
+type AccountEmailsSentByUserOnParams struct {
+	UserID uuid.UUID
+	Day    time.Time
+}
+
+// Quantos e-mails de conta a conta causou no dia; zero se nenhum.
+func (q *Queries) AccountEmailsSentByUserOn(ctx context.Context, arg AccountEmailsSentByUserOnParams) (int32, error) {
+	row := q.db.QueryRow(ctx, accountEmailsSentByUserOn, arg.UserID, arg.Day)
+	var sent int32
+	err := row.Scan(&sent)
+	return sent, err
+}
 
 const accountEmailsSentOn = `-- name: AccountEmailsSentOn :one
 SELECT COALESCE((SELECT sent FROM account_email_daily WHERE day = $1::date), 0)::int AS sent
@@ -44,6 +64,32 @@ type ReserveAccountEmailParams struct {
 // limpeza sai da própria reserva, sem job.
 func (q *Queries) ReserveAccountEmail(ctx context.Context, arg ReserveAccountEmailParams) (int32, error) {
 	row := q.db.QueryRow(ctx, reserveAccountEmail, arg.Day, arg.Teto)
+	var sent int32
+	err := row.Scan(&sent)
+	return sent, err
+}
+
+const reserveAccountEmailForUser = `-- name: ReserveAccountEmailForUser :one
+WITH velhos AS (DELETE FROM account_email_daily_by_user WHERE day < $2::date - 7)
+INSERT INTO account_email_daily_by_user AS d (user_id, day, sent)
+VALUES ($1::uuid, $2::date, 1)
+ON CONFLICT (user_id, day) DO UPDATE SET sent = d.sent + 1 WHERE d.sent < $3::int
+RETURNING d.sent
+`
+
+type ReserveAccountEmailForUserParams struct {
+	UserID uuid.UUID
+	Day    time.Time
+	Teto   int32
+}
+
+// Teto diário por conta (migration 00051), no molde de ReserveAccountEmail e
+// na mesma transação dele: a linha (conta, dia) travada pelo ON CONFLICT faz
+// N reservas simultâneas da mesma conta pararem no teto. Nenhuma linha
+// devolvida (pgx.ErrNoRows) é teto da conta atingido. O CTE apaga as linhas
+// com mais de 7 dias de todas as contas.
+func (q *Queries) ReserveAccountEmailForUser(ctx context.Context, arg ReserveAccountEmailForUserParams) (int32, error) {
+	row := q.db.QueryRow(ctx, reserveAccountEmailForUser, arg.UserID, arg.Day, arg.Teto)
 	var sent int32
 	err := row.Scan(&sent)
 	return sent, err

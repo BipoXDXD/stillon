@@ -187,7 +187,7 @@ func InInvitationAcceptTx(ctx context.Context, b Beginner, userID uuid.UUID, tok
 
 // InAccountEmailTx roda fn no escopo do teto diário de e-mails de conta: a
 // RLS abre só account_email_daily, a contagem sem dono que todas as réplicas
-// dividem. É o único lugar do código que liga esse escopo.
+// dividem, e account_email_daily_by_user, a contagem por conta. É o único lugar do código que liga esse escopo.
 func InAccountEmailTx(ctx context.Context, b Beginner, fn func(*db.Queries) error) error {
 	return inTx(ctx, b, `SELECT set_config('app.scope', $1, true)`, "account_email", fn)
 }

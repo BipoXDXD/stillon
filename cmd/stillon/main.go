@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/google/uuid"
 	"golang.org/x/sync/errgroup"
 
 	"github.com/BipoXDXD/stillon/internal/account"
@@ -228,7 +229,10 @@ func run(ctx context.Context, cfg *config.Config) error {
 		// Os e-mails de conta (confirmação, redefinição, verificação de
 		// canal) passam pelo balde do destinatário e pelo teto diário; os
 		// avisos (notificadores) e o do 2FA bloqueado, nunca.
-		enviador := enviadorDeConta(cfg, storage.NewTetoDeEmailsDeConta(pool, clk, contaemail.TetoDiario), limitesIP)
+		// O enviador ainda não diz qual conta causou o e-mail: só o teto
+		// global vale por enquanto (tetoSemConta).
+		teto := storage.NewTetoDeEmailsDeConta(pool, clk, contaemail.TetoDiario, 10)
+		enviador := enviadorDeConta(cfg, tetoSemConta{teto}, limitesIP)
 		links := account.Links{Base: cfg.PublicBaseURL}
 		deps := httpapi.Deps{
 			Store:    store,
@@ -305,6 +309,15 @@ func enviadorDeConta(cfg *config.Config, teto contaemail.Teto, orcamentos contae
 	}
 	transporte := novoResend(crypto.Secret(cfg.ResendAPIKey), cfg.RemetenteDeConta())
 	return contaemail.New(transporte, teto, orcamentos, cfg.IPHashKey, slog.Default())
+}
+
+// tetoSemConta liga o teto de e-mails de conta ao enviador sem a conta que
+// causou o envio (uuid.Nil): só o teto global é reservado.
+type tetoSemConta struct{ teto *storage.TetoDeEmailsDeConta }
+
+func (t tetoSemConta) Reservar(ctx context.Context) (bool, error) {
+	recusa, err := t.teto.Reservar(ctx, uuid.Nil)
+	return recusa == "", err
 }
 
 // mailerDeConta é a porta dos e-mails de conta dos serviços: o enviador ou,

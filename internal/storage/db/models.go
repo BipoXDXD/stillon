@@ -15,6 +15,12 @@ type AccountEmailDaily struct {
 	Sent int32
 }
 
+type AccountEmailDailyByUser struct {
+	UserID uuid.UUID
+	Day    time.Time
+	Sent   int32
+}
+
 type AccountToken struct {
 	TokenHash []byte
 	UserID    uuid.UUID

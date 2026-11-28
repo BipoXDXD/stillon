@@ -312,6 +312,15 @@ func TestChannelErrorsMapToCodes(t *testing.T) {
 	resp.Body.Close()
 }
 
+// tetoGlobalSemConta reserva só o teto global (uuid.Nil), como o main.go
+// enquanto o enviador não passa a conta.
+type tetoGlobalSemConta struct{ teto *storage.TetoDeEmailsDeConta }
+
+func (t tetoGlobalSemConta) Reservar(ctx context.Context) (bool, error) {
+	recusa, err := t.teto.Reservar(ctx, uuid.Nil)
+	return recusa == "", err
+}
+
 func apiComTetoDeVerificacao(t *testing.T, limite int) *api {
 	t.Helper()
 	a := newAPI(t)
@@ -319,7 +328,7 @@ func apiComTetoDeVerificacao(t *testing.T, limite int) *api {
 	if err != nil {
 		t.Fatal(err)
 	}
-	teto := storage.NewTetoDeEmailsDeConta(a.pool, a.clk, limite)
+	teto := tetoGlobalSemConta{storage.NewTetoDeEmailsDeConta(a.pool, a.clk, limite, 10)}
 	enviador := contaemail.New(&transporteContado{}, teto, a.deps.LimitesIP, testIPHashKey, slog.New(slog.DiscardHandler))
 	a.deps.Channels = notify.NewChannelService(a.pool, box, a.clk, a.discord,
 		contaemail.NovaVerificacaoComTeto(enviador, a.email), a.cfg.PublicBaseURL)
