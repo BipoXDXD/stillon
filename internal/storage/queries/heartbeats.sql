@@ -107,6 +107,7 @@ SELECT h.id, h.project_id, h.deadline_at, h.failing_since
             AND (h.period_sec IS NOT NULL OR h.cron_expr IS NOT NULL)))
    AND (h.last_incident_at IS NULL OR h.last_incident_at <= sqlc.arg(cooldown_cut)::timestamptz)
    AND NOT EXISTS (SELECT 1 FROM incidents x WHERE x.heartbeat_id = h.id AND x.resolved_at IS NULL)
+   AND NOT projeto_suspenso(h.project_id)
  ORDER BY h.deadline_at
  LIMIT sqlc.arg(max_rows)::int
    FOR UPDATE OF h SKIP LOCKED;
@@ -125,6 +126,7 @@ SELECT h.id, h.project_id, h.last_success_at, x.id AS incident_id, x.started_at
    AND h.failing_since IS NULL
    AND (h.deadline_at > sqlc.arg(now)::timestamptz OR (h.period_sec IS NULL AND h.cron_expr IS NULL))
    AND (h.last_success_at >= x.started_at OR h.resumed_at >= x.started_at)
+   AND NOT projeto_suspenso(h.project_id)
  ORDER BY x.id
  LIMIT sqlc.arg(max_rows)::int
    FOR UPDATE OF h SKIP LOCKED;

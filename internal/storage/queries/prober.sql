@@ -38,6 +38,7 @@ WITH vencidos AS (
            row_number() OVER (PARTITION BY project_id ORDER BY next_run_at, id) AS vez
       FROM targets
      WHERE enabled AND next_run_at <= sqlc.arg(now)::timestamptz
+       AND NOT projeto_suspenso(project_id)
 ), escolhidos AS (
     SELECT id FROM vencidos ORDER BY vez, next_run_at, id LIMIT sqlc.arg(max_rows)::int
 ), lote AS MATERIALIZED (
@@ -64,7 +65,8 @@ UPDATE targets SET next_run_at = LEAST(next_run_at, sqlc.arg(next_run_at)::times
 
 -- name: CountDueTargets :one
 SELECT count(*) FROM targets
- WHERE enabled AND next_run_at <= sqlc.arg(now)::timestamptz;
+ WHERE enabled AND next_run_at <= sqlc.arg(now)::timestamptz
+   AND NOT projeto_suspenso(project_id);
 
 -- name: InsertCheck :exec
 INSERT INTO checks (id, target_id, checked_at, status, latency_ms, status_code, error_kind)

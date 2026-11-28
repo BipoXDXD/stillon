@@ -19,6 +19,7 @@ WITH vencidos AS (
            row_number() OVER (PARTITION BY project_id ORDER BY next_run_at, id) AS vez
       FROM targets
      WHERE enabled AND next_run_at <= $1::timestamptz
+       AND NOT projeto_suspenso(project_id)
 ), escolhidos AS (
     SELECT id FROM vencidos ORDER BY vez, next_run_at, id LIMIT $2::int
 ), lote AS MATERIALIZED (
@@ -125,6 +126,7 @@ func (q *Queries) ClaimDueTargets(ctx context.Context, arg ClaimDueTargetsParams
 const countDueTargets = `-- name: CountDueTargets :one
 SELECT count(*) FROM targets
  WHERE enabled AND next_run_at <= $1::timestamptz
+   AND NOT projeto_suspenso(project_id)
 `
 
 func (q *Queries) CountDueTargets(ctx context.Context, now time.Time) (int64, error) {

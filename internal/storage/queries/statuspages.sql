@@ -59,7 +59,8 @@ FOR KEY SHARE;
 -- publicada do slug; o JOIN com status_pages repete a regra no SQL, para que
 -- ela não dependa só da política (defesa em profundidade).
 -- name: GetPublicPage :one
-SELECT id, title FROM status_pages WHERE slug = sqlc.arg(slug) AND published;
+SELECT id, title FROM status_pages
+ WHERE slug = sqlc.arg(slug) AND published AND NOT projeto_suspenso(project_id);
 
 -- O estado atual é o do check mais recente. interval_sec e enabled servem só
 -- para decidir se esse check ainda é recente; não saem na página. Alvo sem
