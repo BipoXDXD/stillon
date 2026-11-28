@@ -11,8 +11,11 @@ INSERT INTO users (id, email, password_hash, created_at) VALUES ($1, $2, $3, $4)
 -- O cadastro público (PR 3). E-mail repetido (citext: a caixa não importa) não
 -- grava nada e não devolve linha (pgx.ErrNoRows), sem erro de UNIQUE que
 -- abortaria a transação do cadastro.
+-- O aceite dos termos (versão e instante) entra só na conta nova.
 -- name: InsertSignupUser :one
-INSERT INTO users (id, email, password_hash, created_at) VALUES ($1, $2, $3, $4)
+INSERT INTO users (id, email, password_hash, created_at, terms_version, terms_accepted_at)
+VALUES (sqlc.arg(id), sqlc.arg(email), sqlc.arg(password_hash), sqlc.arg(created_at),
+        sqlc.arg(terms_version)::text, sqlc.arg(created_at))
 ON CONFLICT (email) DO NOTHING
 RETURNING id;
 

@@ -112,7 +112,9 @@ func (q *Queries) InsertAuditEntry(ctx context.Context, arg InsertAuditEntryPara
 }
 
 const insertSignupUser = `-- name: InsertSignupUser :one
-INSERT INTO users (id, email, password_hash, created_at) VALUES ($1, $2, $3, $4)
+INSERT INTO users (id, email, password_hash, created_at, terms_version, terms_accepted_at)
+VALUES ($1, $2, $3, $4,
+        $5::text, $4)
 ON CONFLICT (email) DO NOTHING
 RETURNING id
 `
@@ -122,17 +124,20 @@ type InsertSignupUserParams struct {
 	Email        string
 	PasswordHash string
 	CreatedAt    time.Time
+	TermsVersion string
 }
 
 // O cadastro público (PR 3). E-mail repetido (citext: a caixa não importa) não
 // grava nada e não devolve linha (pgx.ErrNoRows), sem erro de UNIQUE que
 // abortaria a transação do cadastro.
+// O aceite dos termos (versão e instante) entra só na conta nova.
 func (q *Queries) InsertSignupUser(ctx context.Context, arg InsertSignupUserParams) (uuid.UUID, error) {
 	row := q.db.QueryRow(ctx, insertSignupUser,
 		arg.ID,
 		arg.Email,
 		arg.PasswordHash,
 		arg.CreatedAt,
+		arg.TermsVersion,
 	)
 	var id uuid.UUID
 	err := row.Scan(&id)

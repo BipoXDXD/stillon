@@ -21,6 +21,7 @@ import (
 	"github.com/BipoXDXD/stillon/internal/auth"
 	"github.com/BipoXDXD/stillon/internal/clock"
 	"github.com/BipoXDXD/stillon/internal/crypto"
+	"github.com/BipoXDXD/stillon/internal/legal"
 	"github.com/BipoXDXD/stillon/internal/storage/testdb"
 )
 
@@ -154,7 +155,7 @@ func emailConfirmado(t *testing.T, id uuid.UUID) bool {
 // confirmação, com o mailer limpo de novo.
 func cadastrarEPegarToken(t *testing.T, a ambienteCadastro, email string) string {
 	t.Helper()
-	if err := a.cad.Cadastrar(context.Background(), email, senha); err != nil {
+	if err := a.cad.Cadastrar(context.Background(), email, senha, legal.VersaoAtual); err != nil {
 		t.Fatal(err)
 	}
 	enviados := a.mailer.todos()
@@ -168,7 +169,7 @@ func cadastrarEPegarToken(t *testing.T, a ambienteCadastro, email string) string
 func TestCadastrarContaNovaCriaUsuarioProjetoEToken(t *testing.T) {
 	a := novoCadastro(t)
 	ctx := context.Background()
-	if err := a.cad.Cadastrar(ctx, "  fulano@exemplo.com ", senha); err != nil {
+	if err := a.cad.Cadastrar(ctx, "  fulano@exemplo.com ", senha, legal.VersaoAtual); err != nil {
 		t.Fatal(err)
 	}
 
@@ -230,7 +231,7 @@ func TestCadastrarContaExistenteMandaJaTemConta(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			if err := a.cad.Cadastrar(context.Background(), email, "outra-senha-bem-comprida"); err != nil {
+			if err := a.cad.Cadastrar(context.Background(), email, "outra-senha-bem-comprida", legal.VersaoAtual); err != nil {
 				t.Fatalf("Cadastrar com conta existente: %v; queria nil", err)
 			}
 
@@ -262,7 +263,7 @@ func TestCadastrarComCaixaDiferenteContaComoExistente(t *testing.T) {
 	const emailCadastrado = "FuLaNo@x.com"
 	cadastrarEPegarToken(t, a, emailCadastrado)
 
-	if err := a.cad.Cadastrar(context.Background(), "Fulano@X.com", senha); err != nil {
+	if err := a.cad.Cadastrar(context.Background(), "Fulano@X.com", senha, legal.VersaoAtual); err != nil {
 		t.Fatal(err)
 	}
 	if n := contar(t, `SELECT count(*) FROM users`); n != 1 {
@@ -297,7 +298,7 @@ func TestCadastrarSimultaneoUsaGrafiaDaContaCriada(t *testing.T) {
 	}
 	fim := make(chan error, 2)
 	for _, email := range []string{"FuLaNo@exemplo.com", "fulano@exemplo.com"} {
-		cadastros.Go(func() { fim <- a.cad.Cadastrar(ctx, email, senha) })
+		cadastros.Go(func() { fim <- a.cad.Cadastrar(ctx, email, senha, legal.VersaoAtual) })
 	}
 	if !testdb.EsperarBloqueados(t, admin, 2, fim) {
 		t.Fatal("um cadastro terminou antes de os dois alcançarem as travas")
@@ -400,7 +401,7 @@ func TestCadastrarFazOMesmoTrabalhoNosDoisRamos(t *testing.T) {
 			return hashBarato(ctx, plain)
 		})
 
-		if err := cad.Cadastrar(ctx, email, caso.senha); err != nil {
+		if err := cad.Cadastrar(ctx, email, caso.senha, legal.VersaoAtual); err != nil {
 			t.Fatal(err)
 		}
 		if hashes != 1 || envios != 1 {
@@ -426,20 +427,20 @@ func TestCadastrarLevaTempoParecidoNosDoisRamos(t *testing.T) {
 	fila := make(mailerAdiado, 1+2*rodadas)
 	cad := account.NewCadastro(a.pool, a.clk, fila, linksDeTeste)
 	cad.SetHash(a.hasher.hash)
-	if err := cad.Cadastrar(ctx, existente, senha); err != nil {
+	if err := cad.Cadastrar(ctx, existente, senha, legal.VersaoAtual); err != nil {
 		t.Fatal(err)
 	}
 
 	var novos, existentes []time.Duration
 	for i := range rodadas {
 		inicio := time.Now()
-		if err := cad.Cadastrar(ctx, fmt.Sprintf("novo%d@exemplo.com", i), senha); err != nil {
+		if err := cad.Cadastrar(ctx, fmt.Sprintf("novo%d@exemplo.com", i), senha, legal.VersaoAtual); err != nil {
 			t.Fatal(err)
 		}
 		novos = append(novos, time.Since(inicio))
 
 		inicio = time.Now()
-		if err := cad.Cadastrar(ctx, existente, senha); err != nil {
+		if err := cad.Cadastrar(ctx, existente, senha, legal.VersaoAtual); err != nil {
 			t.Fatal(err)
 		}
 		existentes = append(existentes, time.Since(inicio))
@@ -463,10 +464,10 @@ func TestCadastrarValidaAntesDeTudo(t *testing.T) {
 	a := novoCadastro(t)
 	ctx := context.Background()
 
-	if err := a.cad.Cadastrar(ctx, "Nome <a@b.com>", senha); !errors.Is(err, account.ErrInvalidEmail) {
+	if err := a.cad.Cadastrar(ctx, "Nome <a@b.com>", senha, legal.VersaoAtual); !errors.Is(err, account.ErrInvalidEmail) {
 		t.Fatalf("e-mail inválido: %v; queria ErrInvalidEmail", err)
 	}
-	err := a.cad.Cadastrar(ctx, "fulano@exemplo.com", strings.Repeat("a", 14))
+	err := a.cad.Cadastrar(ctx, "fulano@exemplo.com", strings.Repeat("a", 14), legal.VersaoAtual)
 	var pe account.PolicyError
 	if !errors.As(err, &pe) || pe.Reason != auth.ReasonTooShort {
 		t.Fatalf("senha de 14: %v; queria PolicyError too_short", err)
@@ -813,10 +814,10 @@ func TestCadastrarComMailerForaDoArDevolveNilNosDoisRamos(t *testing.T) {
 	log := capturarLog(t)
 	ctx := context.Background()
 
-	if err := cad.Cadastrar(ctx, "fulano@exemplo.com", senha); err != nil {
+	if err := cad.Cadastrar(ctx, "fulano@exemplo.com", senha, legal.VersaoAtual); err != nil {
 		t.Fatalf("conta nova com o mailer fora do ar: %v; queria nil", err)
 	}
-	if err := cad.Cadastrar(ctx, "fulano@exemplo.com", senha); err != nil {
+	if err := cad.Cadastrar(ctx, "fulano@exemplo.com", senha, legal.VersaoAtual); err != nil {
 		t.Fatalf("conta existente com o mailer fora do ar: %v; queria nil", err)
 	}
 	if n := mailer.chamadas.Load(); n != 2 {
@@ -831,5 +832,56 @@ func TestCadastrarComMailerForaDoArDevolveNilNosDoisRamos(t *testing.T) {
 	}
 	if strings.Contains(saida, "fulano") || strings.Contains(saida, "token") {
 		t.Errorf("o log traz o endereço ou o token: %s", saida)
+	}
+}
+
+// aceiteDe lê a versão dos termos aceita e o instante do aceite da conta;
+// sem aceite, "" e o instante zero.
+func aceiteDe(t *testing.T, email string) (string, time.Time) {
+	t.Helper()
+	var versao string
+	var em time.Time
+	if err := testdb.Admin(t).QueryRow(context.Background(),
+		`SELECT coalesce(terms_version, ''), coalesce(terms_accepted_at, 'epoch') FROM users WHERE email = $1`,
+		email).Scan(&versao, &em); err != nil {
+		t.Fatal(err)
+	}
+	return versao, em
+}
+
+func TestCadastroGravaVersaoAceita(t *testing.T) {
+	a := novoCadastro(t)
+	const email = "fulano@exemplo.com"
+	cadastrarEPegarToken(t, a, email)
+
+	versao, em := aceiteDe(t, email)
+	if versao != legal.VersaoAtual {
+		t.Fatalf("terms_version = %q; queria %q", versao, legal.VersaoAtual)
+	}
+	if !em.Equal(a.clk.Now()) {
+		t.Fatalf("terms_accepted_at = %v; queria %v", em, a.clk.Now())
+	}
+}
+
+// O ramo do e-mail já cadastrado não grava nada: nem o aceite da conta antiga
+// muda, mesmo com outra versão e outro instante.
+func TestCadastroDeEmailExistenteNaoTrocaAceite(t *testing.T) {
+	a := novoCadastro(t)
+	const email = "fulano@exemplo.com"
+	cadastrarEPegarToken(t, a, email)
+	antigo := time.Date(2020, 1, 1, 9, 0, 0, 0, time.UTC)
+	if _, err := testdb.Admin(t).Exec(context.Background(),
+		`UPDATE users SET terms_version = '2020-01-01', terms_accepted_at = $1 WHERE email = $2`, antigo, email); err != nil {
+		t.Fatal(err)
+	}
+	a.clk.Advance(time.Hour)
+
+	if err := a.cad.Cadastrar(context.Background(), email, senha, legal.VersaoAtual); err != nil {
+		t.Fatal(err)
+	}
+
+	versao, em := aceiteDe(t, email)
+	if versao != "2020-01-01" || !em.Equal(antigo) {
+		t.Fatalf("aceite da conta antiga = %q, %v; queria 2020-01-01, %v", versao, em, antigo)
 	}
 }

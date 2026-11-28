@@ -1,5 +1,5 @@
 import type { Page } from '@playwright/test'
-import { imitarApi } from './api-imitada'
+import { imitarApi, VERSAO_DOS_TERMOS } from './api-imitada'
 import { controlePositivo, expect, test } from './fixtures'
 
 // As telas públicas do cadastro sob a CSP de produção, com a API e o api.js
@@ -34,6 +34,7 @@ test('cadastro até o confira seu e-mail', async ({ page }) => {
     email: 'nova@exemplo.com',
     password: SENHA_NOVA,
     turnstile_token: 'XXXX.DUMMY.TOKEN.XXXX',
+    accepted_terms_version: VERSAO_DOS_TERMOS,
   })
   await expect(page.getByRole('heading', { name: 'Confira seu e-mail', level: 1 })).toBeVisible()
   await expect(page.getByText('Abra o link em até 24 horas para concluir o cadastro.')).toBeVisible()

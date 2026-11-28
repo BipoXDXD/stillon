@@ -1,6 +1,7 @@
 import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { http, HttpResponse } from 'msw'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import versaoDosTermos from '@/features/legal/versao.json'
 import { chaves } from '@/lib/api/consultas'
 import { EMAIL, SENHA, SITE_KEY_DO_TURNSTILE, TOKEN_DO_TURNSTILE } from '@/test/api-falsa'
 import { renderizarPainel } from '@/test/renderizar'
@@ -92,7 +93,12 @@ describe('cadastro', () => {
     const titulo = await screen.findByRole('heading', { name: 'Confira seu e-mail' })
     expect(titulo).toHaveFocus()
     expect(falsa.corpos('POST /auth/signup')).toEqual([
-      { email: NOVO, password: SENHA_NOVA, turnstile_token: TOKEN_DO_TURNSTILE },
+      {
+        email: NOVO,
+        password: SENHA_NOVA,
+        turnstile_token: TOKEN_DO_TURNSTILE,
+        accepted_terms_version: versaoDosTermos.versao,
+      },
     ])
     const main = screen.getByRole('main')
     expect(main).toHaveTextContent(`Enviamos um link para ${NOVO}, se ele puder receber mensagens do StillOn.`)

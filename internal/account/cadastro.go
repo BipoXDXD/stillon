@@ -49,10 +49,12 @@ func ValidarCadastro(email, senha string) (string, error) {
 	return e, nil
 }
 
-// Cadastrar cria a conta não confirmada, com o Projeto padrão e o token de
-// confirmação, e manda o link por e-mail. Com o e-mail já cadastrado
-// (confirmado ou não, em qualquer caixa), não grava nada e manda o "você já
-// tem conta; esqueceu a senha?" para o endereço gravado. Nos dois casos
+// Cadastrar cria a conta não confirmada, com o Projeto padrão, o token de
+// confirmação e o aceite dos termos (versaoDosTermos, que o handler já
+// conferiu, e o instante do cadastro), e manda o link por e-mail. Com o
+// e-mail já cadastrado (confirmado ou não, em qualquer caixa), não grava nada,
+// nem o aceite, e manda o "você já tem conta; esqueceu a senha?" para o
+// endereço gravado. Nos dois casos
 // devolve nil. Os erros possíveis são de validação ou de infraestrutura,
 // inclusive auth.ErrArgon2Busy. A falha do mailer vai para o log e a
 // resposta continua igual.
@@ -61,7 +63,7 @@ func ValidarCadastro(email, senha string) (string, error) {
 // roda SEMPRE, antes de qualquer consulta, e sai exatamente um e-mail, depois
 // do commit (o AccountMailer só enfileira). Sobram alguns ms de banco no ramo
 // novo (projeto, token, auditoria), risco aceito no plano.
-func (c *Cadastro) Cadastrar(ctx context.Context, email, senha string) error {
+func (c *Cadastro) Cadastrar(ctx context.Context, email, senha, versaoDosTermos string) error {
 	e, err := ValidarCadastro(email, senha)
 	if err != nil {
 		return err
@@ -84,7 +86,7 @@ func (c *Cadastro) Cadastrar(ctx context.Context, email, senha string) error {
 	destino := e
 	err = emTx(ctx, c.pool, func(q *db.Queries) error {
 		_, err := q.InsertSignupUser(ctx, db.InsertSignupUserParams{
-			ID: id, Email: e, PasswordHash: hash, CreatedAt: now,
+			ID: id, Email: e, PasswordHash: hash, CreatedAt: now, TermsVersion: versaoDosTermos,
 		})
 		if errors.Is(err, pgx.ErrNoRows) {
 			// Depois do conflito, a leitura em READ COMMITTED enxerga a conta

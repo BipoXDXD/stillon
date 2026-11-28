@@ -7,6 +7,7 @@ import { useApi } from '@/app/contexto'
 import { Titulo } from '@/components/Titulo'
 import { Botao } from '@/components/ui/botao'
 import { Campo, Entrada, ErroDoFormulario } from '@/components/ui/campo'
+import versaoDosTermos from '@/features/legal/versao.json'
 import { useConfigDoCadastro } from '@/lib/api/consultas'
 import { mensagemDe } from '@/lib/api/mensagens'
 import {
@@ -73,7 +74,12 @@ export function PaginaCadastro() {
     if (!desafio.token) return
     setErro(null)
     try {
-      await api.cadastrar({ email: v.email, password: v.senha, turnstile_token: desafio.token })
+      await api.cadastrar({
+        email: v.email,
+        password: v.senha,
+        turnstile_token: desafio.token,
+        accepted_terms_version: versaoDosTermos.versao,
+      })
       setEnviadoPara(v.email)
     } catch (e) {
       // O formato é conferido antes do Turnstile: o token não foi gasto.
