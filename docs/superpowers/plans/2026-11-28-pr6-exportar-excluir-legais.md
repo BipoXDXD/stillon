@@ -94,6 +94,14 @@
 
 ## Decisões do dono
 
+**Decidido pelo dono em 2026-11-28:**
+- **D2:** o builder escreve os textos inteiros (não só esqueleto), revisa e passa um resumo ao dono. O operador continua como "[operador]" e "[contato do operador]": nada de nome nem CNPJ.
+- **D3 = A:** auditoria anônima (`user_id` NULL) até a retenção de 12 meses; `ip_hash` fica; a política informa os backups.
+- **D4 = B:** apaga os canais criados por ela cujo endereço é o e-mail da conta; desliga os outros.
+- **D5 = A, D7 = A, D8 = A:** recomendação seguida (checks fora da exportação; sem novo aceite por ora; aviso de exclusão por e-mail).
+- **D6 (novo valor):** remetente `StillOn <avisos@stillon.tech>`, no domínio raiz. A caixa `avisos@stillon.tech` é criada no Zoho Mail (MX do domínio raiz) pelo builder, no 6.6. O envio continua pelo Resend, que precisa do domínio `stillon.tech` verificado (DKIM `resend._domainkey` e SPF/MX do subdomínio de retorno `send`), sem conflitar com o MX do Zoho. O passo 3 do runbook do T12 segue esta opção, não a A nem a B abaixo.
+- **D1:** continua pendente; o T10 para com as maquetes.
+
 Não decido estas. Cada uma traz opções, prós e contras, e uma recomendação.
 
 **D1 — Telas de exportar, excluir conta, excluir projeto, aceite e páginas legais**
@@ -380,6 +388,8 @@ CREATE POLICY projects_do_projeto_delete ON projects FOR DELETE
 - [ ] **Passo 3:** implementar a migration, rodar `make sqlc` (ou o alvo de geração que já existir), corrigir os leitores e criar o helper.
 - [ ] **Passo 4:** `go build ./... && go vet ./... && make test`.
 - [ ] **Passo 5:** commit `feat(storage): exclusão de conta preserva recursos em projetos alheios`.
+
+**Correção levada do plano do PR 7 (risco R1):** a guarda `guardar_notificacao_no_projeto` (00043) trata `recurso_dono IS NULL` como recurso escondido e descarta o aviso. Com `user_id` anulável, o aviso de um recurso cujo criador excluiu a conta sumiria. A migration M+1 do T3 troca a função para resolver o projeto pelo `project_id` do recurso, e não pelo dono. Teste a mais no T3: `TestNotificacaoComCriadorApagadoPassa` (alvo e canal no projeto de A, criado por B, que excluiu a conta: o INSERT em `notifications` sob `InProberTx` entra). Sabotagem: manter o `IF recurso_dono IS NULL`.
 
 #### T4: `DELETE /api/v1/projects/{projectID}` (esforço M)
 
