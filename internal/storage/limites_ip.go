@@ -15,8 +15,10 @@ const OciosoMinimoPorIP = 10 * time.Minute
 
 // OrcamentosPorIP guarda os baldes do limite por IP no Postgres
 // (ip_rate_limits, migration 00036), e é isso que faz réplicas da API somarem
-// as tentativas de uma origem no mesmo orçamento. O valor zero não serve: use
-// NewOrcamentosPorIP.
+// as tentativas de uma origem no mesmo orçamento. Os baldes por usuário
+// compartilhados (middleware.RateLimitUserCompartilhado) usam a mesma tabela,
+// com nomes de balde próprios e o HMAC de "usuario:<uuid>" como chave. O valor
+// zero não serve: use NewOrcamentosPorIP.
 type OrcamentosPorIP struct {
 	banco Beginner
 	clk   clock.Clock
@@ -30,7 +32,8 @@ func NewOrcamentosPorIP(banco Beginner, clk clock.Clock) *OrcamentosPorIP {
 
 // Gastar tira uma ficha do balde (balde, chave), que recebe uma ficha a cada
 // aCada até rajada. Sem ficha inteira, devolve false e quanto falta para a
-// próxima, e nada é gasto. chave é o HMAC da origem: o IP não chega aqui.
+// próxima, e nada é gasto. chave é um HMAC (da origem ou do usuário): nem o IP
+// nem o UUID chegam aqui.
 func (o *OrcamentosPorIP) Gastar(ctx context.Context, balde string, chave []byte, aCada time.Duration, rajada int) (time.Duration, bool, error) {
 	agora := o.clk.Now()
 	// Apagar uma linha é devolver o balde cheio, o que só é inofensivo depois

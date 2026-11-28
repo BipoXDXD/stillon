@@ -26,6 +26,7 @@ var tabelasDoProjeto = []string{
 	"heartbeats", "heartbeat_events", "heartbeat_tags",
 	"notif_channels", "notifications", "channel_health",
 	"status_pages", "status_page_items",
+	"project_invitations",
 }
 
 // tabelasForaDoProjeto são as tabelas com RLS que não pertencem a projeto, cada
@@ -111,6 +112,9 @@ func semearProjeto(t *testing.T, dono, projeto uuid.UUID, nome, slug string) rec
 		{`INSERT INTO notifications (id, incident_id, channel_id, event, next_attempt_at, created_at)
 		  VALUES ($1, $2, $3, 'opened', $4, $4)`, []any{novoID(), r.incAlvo, r.canal, agora}},
 		{`INSERT INTO channel_health (channel_id) VALUES ($1)`, []any{r.canal}},
+		{`INSERT INTO project_invitations (id, project_id, email, role, token_hash, created_at, expires_at)
+		  VALUES ($1, $2, $3, 'viewer', $4, $5, $5::timestamptz + interval '7 days')`,
+			[]any{novoID(), projeto, "convite-" + nome + "@exemplo.com", hashDe("convite-" + nome), agora}},
 	}
 	if slug != "" {
 		pagina := novoID()

@@ -78,7 +78,7 @@ var diretoriosForaDaVarredura = map[string]bool{
 type usoDeEscopo struct {
 	arquivo string // relativo à raiz do módulo, com "/"
 	linha   int
-	oque    string // ScopeToProject, ScopeToUser, InUserTx, InProjectPgxTx ou "app.project_id"
+	oque    string // ScopeToProject, ScopeToUser, InUserTx, InProjectPgxTx, "app.project_id" ou gucDoConvite
 }
 
 // usosDeEscopo varre os .go de produção sob raiz (sem _test.go, sem o código
@@ -123,8 +123,14 @@ func usosDeEscopo(t *testing.T, raiz string) []usoDeEscopo {
 				if no.Kind != token.STRING {
 					return true
 				}
-				if texto, err := strconv.Unquote(no.Value); err == nil && strings.Contains(texto, "app.project_id") {
-					usos = append(usos, usoDeEscopo{rel, fset.Position(no.Pos()).Line, "app.project_id"})
+				texto, err := strconv.Unquote(no.Value)
+				if err != nil {
+					return true
+				}
+				for _, guc := range []string{"app.project_id", gucDoConvite} {
+					if strings.Contains(texto, guc) {
+						usos = append(usos, usoDeEscopo{rel, fset.Position(no.Pos()).Line, guc})
+					}
 				}
 			}
 			return true
@@ -543,5 +549,66 @@ func TestQuotaURLsNeverLeaveTargetsQuota(t *testing.T) {
 			t.Errorf("%s usa %s: a linha traz URLs de projetos que quem pede pode não enxergar, "+
 				"e não pode chegar a uma resposta da API", arquivo, linha)
 		}
+	}
+}
+
+// gucDoConvite é o escopo do link de convite (00049). Ele CONCEDE: abre a
+// linha do convite do hash e, com app.user_id, deixa entrar no projeto. Só
+// InInvitationTokenTx e InInvitationAcceptTx (scope.go) o ligam.
+const gucDoConvite = "app.invitation_token_hash"
+
+// escritaDoGUCDoConvite casa as escritas em app.invitation_token_hash no SQL.
+// Ler (current_setting, nas políticas) não casa.
+var escritaDoGUCDoConvite = regexp.MustCompile(
+	`(?i)set_config\s*\(\s*'app\.invitation_token_hash'|\bSET\s+(?:LOCAL\s+|SESSION\s+)?app\.invitation_token_hash\b`)
+
+// O escopo do convite só nasce em scope.go: nenhum outro .go de produção cita
+// o GUC, e nenhuma query, função ou gatilho o escreve. Ligar em outro lugar
+// abriria o convite (e a entrada no projeto) sem o hash do link de quem clica.
+func TestOnlyScopeGoSetsInvitationScope(t *testing.T) {
+	raiz, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	viuEmScopeGo := false
+	for _, u := range usosDeEscopo(t, raiz) {
+		if u.oque != gucDoConvite {
+			continue
+		}
+		if u.arquivo != donoDoEscopoDeProjeto {
+			t.Errorf("%s:%d cita %s; só %s liga o escopo do convite (InInvitationTokenTx e "+
+				"InInvitationAcceptTx).", u.arquivo, u.linha, gucDoConvite, donoDoEscopoDeProjeto)
+			continue
+		}
+		viuEmScopeGo = true
+	}
+	if !viuEmScopeGo {
+		t.Errorf("a varredura não achou %s em %s; ela deixou de enxergar o código", gucDoConvite, donoDoEscopoDeProjeto)
+	}
+
+	if !escritaDoGUCDoConvite.MatchString("SELECT set_config('app.invitation_token_hash', $1, true)") {
+		t.Fatal("a regex não enxerga set_config do GUC do convite")
+	}
+	vistos := 0
+	for _, padrao := range []string{"queries/*.sql", "migrations/*.sql"} {
+		caminhos, err := filepath.Glob(padrao)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, c := range caminhos {
+			conteudo, err := os.ReadFile(c)
+			if err != nil {
+				t.Fatal(err)
+			}
+			vistos++
+			sql := apagarPreservandoLinhas(comentarioDeBloco, string(conteudo))
+			sql = apagarPreservandoLinhas(comentarioDeLinha, sql)
+			if escritaDoGUCDoConvite.MatchString(sql) {
+				t.Errorf("%s escreve em %s: só scope.go liga o escopo do convite", c, gucDoConvite)
+			}
+		}
+	}
+	if vistos == 0 {
+		t.Error("a varredura não achou SQL nenhum: o caminho do teste está errado")
 	}
 }

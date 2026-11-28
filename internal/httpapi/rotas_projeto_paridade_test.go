@@ -15,8 +15,9 @@ const prefixoDaGemea = "/api/v1/projects/{projectID}/"
 var recursosDeProjeto = []string{"targets", "incidents", "heartbeats", "channels", "status-pages"}
 
 // recursosSoDoProjeto nasceram com o projeto e não têm rota antiga: a equipe
-// é de um projeto, e o Projeto padrão não tem por que ser exceção.
-var recursosSoDoProjeto = []string{"members"}
+// e os convites são de um projeto, e o Projeto padrão não tem por que ser
+// exceção.
+var recursosSoDoProjeto = []string{"members", "invitations"}
 
 // TestEveryLegacyResourceRouteHasAProjectTwin lê as rotas registradas nos
 // fontes e exige o par: METODO /api/v1/<recurso>/resto e METODO

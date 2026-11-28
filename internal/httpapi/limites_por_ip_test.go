@@ -123,6 +123,7 @@ func novaBancada(t *testing.T, ajustar func(*config.Config)) *bancada {
 		Channels:        notify.NewChannelService(nil, nil, clk, nil, nil, cfg.PublicBaseURL),
 		StatusPages:     statuspage.NewService(nil, clk),
 		Projects:        tenancy.NewService(repoFalso{}, clk),
+		Invitations:     convitesSemBanco(clk),
 		EmailConfirmado: conferidorQueConfirma{},
 		Cadastro:        contaPublicaFalsa{}, Recuperacao: contaPublicaFalsa{}, Turnstile: turnstileQueRecusa{},
 		Clock:     clk,
