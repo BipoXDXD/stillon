@@ -70,6 +70,9 @@ type Deps struct {
 	// Obrigatório; os testes sem banco passam um tenancy.Service sobre um
 	// repositório falso.
 	Projects *tenancy.Service
+	// Invitations serve os convites de projeto e o aceite. Obrigatório; os
+	// testes sem banco passam um tenancy.Invitations sobre falsos.
+	Invitations *tenancy.Invitations
 	// EmailConfirmado é a trava "sem e-mail confirmado não cria" de toda rota
 	// de criação: o account.Service em produção. Obrigatório; os testes sem
 	// banco passam um conferidor falso.
@@ -120,6 +123,9 @@ func Routes(ctx context.Context, cfg *config.Config, d Deps) http.Handler {
 	if d.Projects == nil {
 		panic("httpapi: Deps sem Projects; passe tenancy.NewService(pgstore.New(pool), clk)")
 	}
+	if d.Invitations == nil {
+		panic("httpapi: Deps sem Invitations; passe tenancy.NewInvitations(pgstore.NewInvitations(pool), convitemail.New(…), clk)")
+	}
 	// Sem conferidor, a trava de criação não teria como recusar a conta não
 	// confirmada: defeito de montagem, e não "deixa criar".
 	if d.EmailConfirmado == nil {
@@ -160,6 +166,7 @@ func Routes(ctx context.Context, cfg *config.Config, d Deps) http.Handler {
 	ah := NewAccountHandlers(d.Accounts, proxiesDe(cfg), secureCookie, provas)
 	ph := NewProjectHandlers(d.Projects)
 	mh := NewMemberHandlers(d.Projects)
+	cvh := NewInvitationHandlers(d.Invitations)
 	cad := NewCadastroHandlers(d.Cadastro, d.Recuperacao, d.Turnstile, d.CadastroPublico, proxiesDe(cfg), cfg.IPHashKey, d.Clock)
 	authn := middleware.Authn(cfg.JWTSecret, d.Clock)
 	// criacao é a trava "sem e-mail confirmado não cria" (403
@@ -308,6 +315,18 @@ func Routes(ctx context.Context, cfg *config.Config, d Deps) http.Handler {
 	mux.Handle("GET /api/v1/projects/{projectID}/members", noProjeto(mh.List))
 	mux.Handle("PATCH /api/v1/projects/{projectID}/members/{userID}", noProjeto(mh.ChangeRole))
 	mux.Handle("DELETE /api/v1/projects/{projectID}/members/{userID}", noProjeto(mh.Remove))
+	// Convites: listar e revogar em noProjeto. Convidar manda um e-mail:
+	// balde próprio por usuário (3 de uma vez, depois 1 a cada 30 min), antes
+	// da consulta de sessão, e a trava de e-mail confirmado (criacao). O
+	// aceite é da conta (o projeto vem do convite), com balde próprio e sem a
+	// trava de e-mail: o token prova a caixa de entrada.
+	porConvite := middleware.RateLimitUserEvery(ctx, d.Clock, 30*time.Minute, 3)
+	mux.Handle("GET /api/v1/projects/{projectID}/invitations", noProjeto(cvh.List))
+	mux.Handle("POST /api/v1/projects/{projectID}/invitations",
+		authn(porUsuario(porConvite(viva(doCaminho(criacao(cvh.Create)))))))
+	mux.Handle("DELETE /api/v1/projects/{projectID}/invitations/{invitationID}", noProjeto(cvh.Revoke))
+	porAceite := middleware.RateLimitUserEvery(ctx, d.Clock, time.Minute, 5)
+	mux.Handle("POST /api/v1/invitations/accept", authn(porUsuario(porAceite(viva(http.HandlerFunc(cvh.Accept))))))
 	// O reenvio da confirmação é da conta, com sessão, e manda um e-mail: balde
 	// próprio por usuário (3 de uma vez, depois 1 a cada 10 min), antes da
 	// consulta de sessão. Sem a trava de e-mail, claro: é para quem não

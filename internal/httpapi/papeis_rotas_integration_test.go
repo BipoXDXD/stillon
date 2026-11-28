@@ -12,9 +12,21 @@ import (
 )
 
 // recursosDeGestao são os recursos cujas escritas pedem mais que member:
-// canais e status page (manager) e membros (owner). O {userID} das rotas de
-// membros é o titular, e não o próprio member: sair do projeto é dele.
-var recursosDeGestao = []string{"channels", "status-pages", "members"}
+// canais, status page e convites (manager) e membros (owner). O {userID} das
+// rotas de membros é o titular, e não o próprio member: sair do projeto é
+// dele.
+var recursosDeGestao = []string{"channels", "status-pages", "members", "invitations"}
+
+// leiturasDeGestao são os recursos que nem a leitura é de qualquer papel: a
+// lista de convites mostra e-mails de quem ainda não entrou, e é de manager
+// para cima.
+var leiturasDeGestao = []string{"invitations"}
+
+func leituraDeGestao(rota string) bool {
+	_, molde, _ := strings.Cut(rota, " ")
+	recurso, _, _ := strings.Cut(strings.TrimPrefix(molde, prefixoDaGemea), "/")
+	return slices.Contains(leiturasDeGestao, recurso)
+}
 
 // O member escreve em alvos, heartbeats e incidentes
 // (TestMemberReadsTitularResourcesOnProjectRoutes), mas toda gêmea de escrita
@@ -46,8 +58,8 @@ func TestMemberGetsForbiddenOnManagementRoutes(t *testing.T) {
 			t.Errorf("%s do member deu %d, queria 403 forbidden: %s", rota, status, corpo)
 		}
 	}
-	// Canais (4), status page (2) e membros (2) hoje.
-	if len(testadas) < 8 {
+	// Canais (4), status page (2), membros (2) e convites (2) hoje.
+	if len(testadas) < 10 {
 		t.Errorf("só %d rotas de gestão testadas (%v): a enumeração deixou rotas de fora", len(testadas), testadas)
 	}
 

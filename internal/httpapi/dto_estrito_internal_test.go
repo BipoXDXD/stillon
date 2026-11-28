@@ -34,7 +34,7 @@ const webhookValidoDoTeste = "https://discord.com/api/webhooks/12345678901234567
 func corposEstritos() map[string]corpoEstrito {
 	alvos, batidas, canais := &TargetHandlers{}, &HeartbeatHandlers{}, &ChannelHandlers{}
 	paginas, conta, sessao := &StatusPageHandlers{}, &AccountHandlers{}, &AuthHandlers{}
-	projetos, membros := &ProjectHandlers{}, &MemberHandlers{}
+	projetos, membros, convites := &ProjectHandlers{}, &MemberHandlers{}, &InvitationHandlers{}
 	// Ligado, para que o signup e o forgot passem do 404 e cheguem ao
 	// decoder; sem serviço nem Turnstile, chegar a eles é panic.
 	cadastro := &CadastroHandlers{config: ConfigCadastro{Habilitado: true}}
@@ -58,6 +58,8 @@ func corposEstritos() map[string]corpoEstrito {
 		"ProjectHandlers.Create":         {handler: projetos.Create, valido: `{"name":"Projeto"}`},
 		"ProjectHandlers.Rename":         {handler: noProjetoPadrao(projetos.Rename), valido: `{"name":"Projeto"}`},
 		"MemberHandlers.ChangeRole":      {handler: noProjetoPadrao(membros.ChangeRole), valido: `{"role":"viewer"}`},
+		"InvitationHandlers.Create":      {handler: noProjetoPadrao(convites.Create), valido: `{"email":"a@exemplo.com","role":"viewer"}`},
+		"InvitationHandlers.Accept":      {handler: convites.Accept, valido: `{"token":"` + strings.Repeat("A", 43) + `"}`},
 		"AccountHandlers.ChangePassword": {handler: conta.ChangePassword, valido: `{"current_password":"a","new_password":"b"}`},
 		"AuthHandlers.Login":             {handler: sessao.Login, valido: `{"email":"a@exemplo.com","password":"x"}`},
 		"AuthHandlers.TOTPEnroll":        {handler: sessao.TOTPEnroll, valido: `{"password":"x"}`},
