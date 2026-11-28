@@ -26,6 +26,7 @@ test('cadastro até o confira seu e-mail', async ({ page }) => {
   await expect(page.getByRole('heading', { name: 'Criar conta no StillOn', level: 1 })).toBeVisible()
   await page.getByLabel('E-mail').fill('nova@exemplo.com')
   await page.getByLabel('Senha', { exact: true }).fill(SENHA_NOVA)
+  await page.getByRole('checkbox', { name: /^Li e aceito os Termos de Uso/ }).check()
   // O api.js imitado resolveu o desafio: o botão habilita.
   await expect(page.locator('[data-turnstile-imitado]')).toBeAttached()
   const pedido = page.waitForRequest('**/api/v1/auth/signup')

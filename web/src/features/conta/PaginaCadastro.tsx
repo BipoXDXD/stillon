@@ -1,15 +1,15 @@
 import { zodResolver } from '@hookform/resolvers/zod'
-import { useState } from 'react'
-import { useForm } from 'react-hook-form'
+import { useId, useState } from 'react'
+import { useForm, type UseFormRegisterReturn } from 'react-hook-form'
 import { Link } from 'react-router'
 import { z } from 'zod'
 import { useApi } from '@/app/contexto'
 import { Titulo } from '@/components/Titulo'
 import { Botao } from '@/components/ui/botao'
-import { Campo, Entrada, ErroDoFormulario } from '@/components/ui/campo'
+import { CaixaDeMarcar, Campo, Entrada, ErroDoFormulario } from '@/components/ui/campo'
 import versaoDosTermos from '@/features/legal/versao.json'
 import { useConfigDoCadastro } from '@/lib/api/consultas'
-import { mensagemDe } from '@/lib/api/mensagens'
+import { MARQUE_O_ACEITE, mensagemDe } from '@/lib/api/mensagens'
 import {
   campoEmail,
   CarregandoConfig,
@@ -27,7 +27,11 @@ import {
 } from './comum'
 import { Turnstile } from './Turnstile'
 
-const esquema = z.object({ email: campoEmail, senha: campoSenhaNova('Informe a senha.') })
+const esquema = z.object({
+  email: campoEmail,
+  senha: campoSenhaNova('Informe a senha.'),
+  aceite: z.boolean().refine((v) => v, MARQUE_O_ACEITE),
+})
 
 const TITULO = 'Criar conta no StillOn'
 
@@ -37,7 +41,7 @@ export function PaginaCadastro() {
   const desafio = useDesafio()
   const [erro, setErro] = useState<string | null>(null)
   const [enviadoPara, setEnviadoPara] = useState<string | null>(null)
-  const form = useForm({ resolver: zodResolver(esquema), defaultValues: { email: '', senha: '' } })
+  const form = useForm({ resolver: zodResolver(esquema), defaultValues: { email: '', senha: '', aceite: false } })
   const { enviando, enviar } = useEnvioDoFormulario(form, 'email')
 
   if (config.data && !config.data.enabled) {
@@ -83,7 +87,11 @@ export function PaginaCadastro() {
       setEnviadoPara(v.email)
     } catch (e) {
       // O formato é conferido antes do Turnstile: o token não foi gasto.
-      const campo = marcarCamposDoServidor(e, form, { email: 'email', password: 'senha' })
+      const campo = marcarCamposDoServidor(e, form, {
+        email: 'email',
+        password: 'senha',
+        accepted_terms_version: 'aceite',
+      })
       if (!campo) {
         setErro(mensagemDe(e))
         desafio.recomecar()
@@ -126,6 +134,7 @@ export function PaginaCadastro() {
                 )}
               </Campo>
               <CampoDeSenhaNova rotulo="Senha" erro={form.formState.errors.senha?.message} registro={form.register('senha')} />
+              <CaixaDoAceite erro={form.formState.errors.aceite?.message} registro={form.register('aceite')} />
               <Turnstile
                 siteKey={config.data.turnstile_site_key}
                 acao="signup"
@@ -148,5 +157,35 @@ export function PaginaCadastro() {
         </>
       )}
     </MolduraPublica>
+  )
+}
+
+// Os textos abrem em aba nova: o formulário já preenchido fica onde está.
+function LinkDoTexto({ para, children }: { para: string; children: string }) {
+  return (
+    <a href={para} target="_blank" rel="noopener" className="font-semibold text-primaria underline underline-offset-4">
+      {children}
+      <span className="sr-only"> (abre em nova aba)</span>
+    </a>
+  )
+}
+
+// A caixa do aceite, com o erro ligado a ela como o Campo faz com as entradas.
+function CaixaDoAceite({ erro, registro }: { erro?: string; registro: UseFormRegisterReturn }) {
+  const idErro = useId()
+  return (
+    <div className="space-y-2">
+      <CaixaDeMarcar aria-invalid={erro ? true : undefined} aria-describedby={erro ? idErro : undefined} {...registro}>
+        <span>
+          Li e aceito os <LinkDoTexto para="/termos">Termos de Uso</LinkDoTexto> e a{' '}
+          <LinkDoTexto para="/privacidade">Política de Privacidade</LinkDoTexto>.
+        </span>
+      </CaixaDeMarcar>
+      {erro && (
+        <p id={idErro} className="text-sm text-perigo">
+          {erro}
+        </p>
+      )}
+    </div>
   )
 }

@@ -7,6 +7,8 @@ import { PaginaRedefinirSenha } from '@/features/conta/PaginaRedefinirSenha'
 import { PaginaHeartbeat } from '@/features/heartbeats/PaginaHeartbeat'
 import { PaginaEditarHeartbeat, PaginaNovoHeartbeat } from '@/features/heartbeats/PaginasDoFormulario'
 import { PaginaIncidentes } from '@/features/incidentes/PaginaIncidentes'
+import { PaginaPrivacidade } from '@/features/legal/PaginaPrivacidade'
+import { PaginaTermos } from '@/features/legal/PaginaTermos'
 import { PaginaLogin } from '@/features/login/PaginaLogin'
 import { PaginaPainel } from '@/features/painel/PaginaPainel'
 import { PaginaEditarAlvo, PaginaNovoAlvo } from '@/features/alvos/PaginasDoFormulario'
@@ -29,6 +31,9 @@ export const rotas: RouteObject[] = [
   { path: '/confirm-email', Component: PaginaConfirmarEmail, ErrorBoundary: ErroDeRota },
   { path: '/forgot-password', Component: PaginaEsqueciSenha, ErrorBoundary: ErroDeRota },
   { path: '/reset-password', Component: PaginaRedefinirSenha, ErrorBoundary: ErroDeRota },
+  // Os textos legais: públicos, abertos pela caixa de aceite do cadastro.
+  { path: '/termos', Component: PaginaTermos, ErrorBoundary: ErroDeRota },
+  { path: '/privacidade', Component: PaginaPrivacidade, ErrorBoundary: ErroDeRota },
   {
     Component: ExigirSessao,
     ErrorBoundary: ErroDeRota,

@@ -55,6 +55,8 @@ export const Me = z.object({
 export type Me = z.infer<typeof Me>
 
 // GET /auth/signup-config: a site key vem vazia com o cadastro desligado.
+// terms_version fica para detectar divergência entre o painel (versao.json) e
+// o servidor; o cadastro envia a versão do painel.
 export const ConfigDoCadastro = z.object({ enabled: z.boolean(), turnstile_site_key: z.string(), terms_version: z.string() })
 export type ConfigDoCadastro = z.infer<typeof ConfigDoCadastro>
 

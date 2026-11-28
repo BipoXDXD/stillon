@@ -11,6 +11,7 @@ import { Campo, Entrada, ErroDoFormulario } from '@/components/ui/campo'
 import { errosDosCampos } from '@/lib/api/erros-de-campo'
 import { mensagemDe, mensagemDoCampo } from '@/lib/api/mensagens'
 import { useTema } from '@/lib/tema'
+import { cn } from '@/lib/utils'
 import { ID_DA_FALHA_DO_TURNSTILE, temaDoTurnstile, type ResultadoDoTurnstile } from './Turnstile'
 
 // O que as quatro telas públicas do cadastro dividem: a moldura do login, os
@@ -19,12 +20,21 @@ import { ID_DA_FALHA_DO_TURNSTILE, temaDoTurnstile, type ResultadoDoTurnstile } 
 // A mesma frase de tom do login (spec do redesign, Telas 5).
 const FRASE = 'Seus serviços, vigiados de perto.'
 
-// O cartão do login. rodape: o link de volta, abaixo do cartão.
-export function MolduraPublica({ children, rodape }: { children: ReactNode; rodape?: ReactNode }) {
+// O cartão do login. rodape: o link de volta, abaixo do cartão. larga: para
+// texto longo (os textos legais), com a mesma moldura.
+export function MolduraPublica({
+  children,
+  rodape,
+  larga = false,
+}: {
+  children: ReactNode
+  rodape?: ReactNode
+  larga?: boolean
+}) {
   return (
     <>
       <AvisoDeContexto />
-      <main className="mx-auto max-w-md space-y-8 px-4 py-12 sm:py-16">
+      <main className={cn('mx-auto space-y-8 px-4 py-12 sm:py-16', larga ? 'max-w-2xl' : 'max-w-md')}>
         <div className="space-y-2">
           <Marca tamanho="grande" />
           <p className="font-display text-xl text-suave">{FRASE}</p>
