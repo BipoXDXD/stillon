@@ -1,4 +1,4 @@
-import { LinkTerciario } from '@/features/conta/comum'
+import { LinkEmProsa } from '@/features/conta/comum'
 import { Lista, MolduraLegal, Secao } from './MolduraLegal'
 
 // Os Termos de Uso. Mudar o texto é mudar a versão (versao.json e
@@ -9,7 +9,7 @@ export function PaginaTermos() {
       <p>
         Estes termos são o acordo entre você e [operador], que opera o StillOn. Ao criar a conta e marcar que aceita,
         você concorda com eles e com a{' '}
-        <LinkTerciario para="/privacidade">Política de Privacidade</LinkTerciario>. Se não concordar, não crie a conta.
+        <LinkEmProsa para="/privacidade">Política de Privacidade</LinkEmProsa>. Se não concordar, não crie a conta.
       </p>
 
       <Secao titulo="O serviço">

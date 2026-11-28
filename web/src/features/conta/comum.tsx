@@ -48,10 +48,23 @@ export function MolduraPublica({
   )
 }
 
+// O visual dos links destas telas, sem a área de toque.
+export const ESTILO_DO_LINK = 'font-semibold text-primaria underline underline-offset-4'
+
 // Um link terciário: o "Entrar" do rodapé e as ações que só navegam.
 export function LinkTerciario({ para, children }: { para: string; children: ReactNode }) {
   return (
-    <Link to={para} className="alvo-de-toque font-semibold text-primaria underline underline-offset-4">
+    <Link to={para} className={cn('alvo-de-toque', ESTILO_DO_LINK)}>
+      {children}
+    </Link>
+  )
+}
+
+// O link no meio de um parágrafo: inline, sem o alvo-de-toque, cujo ::after
+// de 44 px cobriria as linhas vizinhas do texto.
+export function LinkEmProsa({ para, children }: { para: string; children: ReactNode }) {
+  return (
+    <Link to={para} className={ESTILO_DO_LINK}>
       {children}
     </Link>
   )

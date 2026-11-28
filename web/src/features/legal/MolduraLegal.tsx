@@ -1,12 +1,35 @@
 import type { ReactNode } from 'react'
+import { NaoEncontrada } from '@/app/NaoEncontrada'
 import { Titulo } from '@/components/Titulo'
-import { LinkTerciario, MolduraPublica } from '@/features/conta/comum'
+import { CarregandoConfig, LinkTerciario, MolduraPublica } from '@/features/conta/comum'
+import { useConfigDoCadastro } from '@/lib/api/consultas'
 import versaoDosTermos from './versao.json'
 
 // A moldura dos textos legais: a do login e do cadastro, na versão larga,
 // porque o texto é longo. A versão vem do versao.json, a mesma que o
 // cadastro envia como aceita.
+//
+// Os textos só aparecem com o cadastro aberto: eles prometem exportar e
+// excluir a conta pelo painel (que chegam no 6.3 e no 6.4) e ainda têm os
+// marcadores do operador (preenchidos no 6.6, que abre o cadastro). Fechado,
+// ou sem a config, a rota é a página não encontrada; enquanto ela carrega,
+// nada do texto aparece.
 export function MolduraLegal({ titulo, children }: { titulo: string; children: ReactNode }) {
+  const config = useConfigDoCadastro()
+  if (config.isPending) {
+    return (
+      <MolduraPublica larga>
+        <CarregandoConfig />
+      </MolduraPublica>
+    )
+  }
+  if (config.data?.enabled !== true) {
+    return (
+      <MolduraPublica larga>
+        <NaoEncontrada />
+      </MolduraPublica>
+    )
+  }
   return (
     <MolduraPublica
       larga
