@@ -81,6 +81,45 @@ func (q *Queries) GetDefaultProjectID(ctx context.Context, titularID uuid.UUID) 
 	return id, err
 }
 
+const getMyProject = `-- name: GetMyProject :one
+SELECT p.id, p.name, p.is_default, m.role, p.created_at, t.is_operator AS titular_is_operator
+  FROM project_members m
+  JOIN projects p ON p.id = m.project_id
+  JOIN users t ON t.id = p.titular_id
+ WHERE m.user_id = $1 AND p.id = $2
+`
+
+type GetMyProjectParams struct {
+	UserID    uuid.UUID
+	ProjectID uuid.UUID
+}
+
+type GetMyProjectRow struct {
+	ID                uuid.UUID
+	Name              string
+	IsDefault         bool
+	Role              string
+	CreatedAt         time.Time
+	TitularIsOperator bool
+}
+
+// O projeto em que user_id acabou de entrar por convite, como na lista: roda
+// no escopo do aceite (app.user_id), em que project_members_own_select e
+// projects_member_select já mostram o vínculo novo da própria transação.
+func (q *Queries) GetMyProject(ctx context.Context, arg GetMyProjectParams) (GetMyProjectRow, error) {
+	row := q.db.QueryRow(ctx, getMyProject, arg.UserID, arg.ProjectID)
+	var i GetMyProjectRow
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.IsDefault,
+		&i.Role,
+		&i.CreatedAt,
+		&i.TitularIsOperator,
+	)
+	return i, err
+}
+
 const insertProject = `-- name: InsertProject :one
 INSERT INTO projects (id, name, titular_id, is_default, created_at)
 VALUES ($1, $2, $3, false, $4)
