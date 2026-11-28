@@ -369,7 +369,7 @@ func TestQuotaPoliciesAndFunctionsAreContained(t *testing.T) {
 			}
 		}
 	}
-	// cota_do_receptor e cota_urls_com_regra_do_receptor (00050): a cota de
+	// cota_do_receptor e cota_urls_com_regra_do_receptor (00051): a cota de
 	// quem recebe a titularidade.
 	quer = []string{"cota_alvos_do_titular", "cota_canais_do_titular", "cota_do_receptor", "cota_heartbeats_do_titular",
 		"cota_urls_com_regra_do_receptor", "cota_urls_com_regra_do_titular"}

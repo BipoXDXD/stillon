@@ -20,7 +20,7 @@ var ErrTransferTarget = errors.New("a titularidade só vai para outro owner, e o
 // titular propõe; o alvo tem de ser outro membro com papel owner. O Projeto
 // padrão não é transferido: quem recebe já tem o dele (índice único
 // projects_um_padrao_por_titular), e as rotas antigas dependem do padrão de
-// cada um. A CHECK projects_padrao_nao_transfere (00050) é a segunda barreira.
+// cada um. A CHECK projects_padrao_nao_transfere (00051) é a segunda barreira.
 // Isso pode ser revisto pela D4 do PR 7.
 func AuthorizeTransferProposal(actor ProjectScope, titularID uuid.UUID, isDefault bool, target MemberView) error {
 	if actor.UserID != titularID {

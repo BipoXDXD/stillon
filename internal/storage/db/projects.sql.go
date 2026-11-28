@@ -84,7 +84,7 @@ type CotaDoReceptorRow struct {
 	Canais     int64
 }
 
-// A cota de quem recebe com o projeto somado (00050). Roda no escopo do
+// A cota de quem recebe com o projeto somado (00051). Roda no escopo do
 // receptor, que tem de ser o pendente.
 func (q *Queries) CotaDoReceptor(ctx context.Context, projectID uuid.UUID) (CotaDoReceptorRow, error) {
 	row := q.db.QueryRow(ctx, cotaDoReceptor, projectID)
@@ -397,7 +397,7 @@ type ProjectTransferStateRow struct {
 // Transferência de titularidade (PR 4.3). Todas rodam sob InProjectTx, depois
 // da trava stillon.members (LockProjectMembers); quem pode o quê é conferido
 // no Go (tenancy.AuthorizeTransfer*), e o gatilho guard_projects_imutavel
-// (00050) é a barreira do banco.
+// (00051) é a barreira do banco.
 // O estado da titularidade, com a linha travada até o commit: serializa a
 // proposta, o cancelamento e o aceite com as criações em voo no projeto
 // (ProjectTitular, FOR KEY SHARE).

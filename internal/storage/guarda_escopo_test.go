@@ -260,11 +260,11 @@ func achadosDeGUCDeProjeto(arquivo, sql string) []string {
 // migrationsDaCota são as das funções de cota: as únicas, fora de
 // ScopeToProject, que escrevem em app.project_id, e só para zerá-lo durante a
 // contagem e devolvê-lo ao valor que guardaram (nenhuma liga projeto novo). A
-// 00045 tem as do titular; a 00050, cota_do_receptor, a cota de quem recebe a
+// 00045 tem as do titular; a 00051, cota_do_receptor, a cota de quem recebe a
 // titularidade, que só o pendente da proposta chama (PR 4.3).
 var migrationsDaCota = []string{
 	filepath.Join("migrations", "00045_contagem_de_cota_do_titular.sql"),
-	filepath.Join("migrations", "00050_transferencia_de_titular.sql"),
+	filepath.Join("migrations", "00051_transferencia_de_titular.sql"),
 }
 
 var (
@@ -389,7 +389,7 @@ func TestOnlyScopeSQLSetsProjectGUC(t *testing.T) {
 }
 
 // gucsDaCota são os GUCs que abrem os projetos do titular às políticas
-// <t>_cota_select. Só as funções de cota (00045 e 00050) os ligam, e elas os zeram de novo
+// <t>_cota_select. Só as funções de cota (00045 e 00051) os ligam, e elas os zeram de novo
 // antes de sair.
 var gucsDaCota = []string{"app.cota_titular_id", "app.cota_projetos"}
 

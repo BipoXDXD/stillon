@@ -18,7 +18,7 @@ import (
 	"github.com/BipoXDXD/stillon/internal/tenancy"
 )
 
-// checkPadraoNaoTransfere é a CHECK da 00050 que recusa proposta no Projeto
+// checkPadraoNaoTransfere é a CHECK da 00051 que recusa proposta no Projeto
 // padrão: a segunda barreira atrás de tenancy.AuthorizeTransferProposal.
 const checkPadraoNaoTransfere = "projects_padrao_nao_transfere"
 
@@ -96,7 +96,7 @@ func (s *Store) CancelTransfer(ctx context.Context, userID, projectID uuid.UUID)
 //  3. as travas de cota do receptor, na ordem projetos, alvos, heartbeats e
 //     canais (com a linha de users antes da de canais, como em
 //     notify.ChannelService): as criações dele em outros projetos esperam;
-//  4. cota_do_receptor e cota_urls_com_regra_do_receptor (00050), com o
+//  4. cota_do_receptor e cota_urls_com_regra_do_receptor (00051), com o
 //     projeto somado, contra os tetos de hoje (o de regras por host
 //     inclusive), e o teto de membros do receptor, que pode ser menor que o
 //     do titular;

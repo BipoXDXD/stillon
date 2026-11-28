@@ -86,7 +86,7 @@ SELECT p.id, p.name, p.is_default, m.role, p.created_at, t.is_operator AS titula
 -- Transferência de titularidade (PR 4.3). Todas rodam sob InProjectTx, depois
 -- da trava stillon.members (LockProjectMembers); quem pode o quê é conferido
 -- no Go (tenancy.AuthorizeTransfer*), e o gatilho guard_projects_imutavel
--- (00050) é a barreira do banco.
+-- (00051) é a barreira do banco.
 
 -- O estado da titularidade, com a linha travada até o commit: serializa a
 -- proposta, o cancelamento e o aceite com as criações em voo no projeto
@@ -110,7 +110,7 @@ UPDATE projects SET pending_titular_id = NULL
 UPDATE projects SET pending_titular_id = NULL
  WHERE id = sqlc.arg(project_id) AND pending_titular_id = sqlc.arg(user_id)::uuid;
 
--- A cota de quem recebe com o projeto somado (00050). Roda no escopo do
+-- A cota de quem recebe com o projeto somado (00051). Roda no escopo do
 -- receptor, que tem de ser o pendente.
 -- name: CotaDoReceptor :one
 SELECT n_projetos::bigint AS projetos, n_alvos::bigint AS alvos,
