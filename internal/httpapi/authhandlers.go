@@ -262,7 +262,8 @@ func (h *AuthHandlers) Logout(w http.ResponseWriter, r *http.Request) {
 // o código ainda for o ativo; se uma troca de autenticador ou
 // um disable comitou no meio, o mesmo 401 invalid_credentials. A conta
 // suspensa no meio (auth.ErrSuspended, inclusive a do desafio de 2FA emitido
-// antes da suspensão) também.
+// antes da suspensão) recebe o mesmo 401, mas a tentativa volta (ver
+// tentativas abaixo), ao contrário da suspensão já vista no login, que conta.
 // Um fator ativado entre a consulta do login sem prova e a emissão também
 // exige repetir o login, sem entregar credenciais só com a senha.
 //
@@ -271,7 +272,8 @@ func (h *AuthHandlers) Logout(w http.ResponseWriter, r *http.Request) {
 //
 // tentativas é a reserva do contador que a prova deste login fez. Ele só zera
 // quando a sessão nasce, porque só então o login terminou. Recusada a emissão
-// (a senha ou o fator mudaram no meio) ou falhando o banco, a reserva volta
+// (a senha ou o fator mudaram no meio, ou a conta foi suspensa) ou falhando o
+// banco, a reserva volta
 // (Refund), como na senha certa com 2FA: zerar ali daria a quem tem a senha um
 // jeito de destravar o contador sem completar o login.
 func (h *AuthHandlers) issue(w http.ResponseWriter, r *http.Request, userID uuid.UUID, stamp string, prova *auth.SecondFactorProof, dispositivo auth.DeviceStamp, tentativas auth.Attempts) {

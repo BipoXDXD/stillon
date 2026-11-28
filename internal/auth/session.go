@@ -49,7 +49,10 @@ var (
 	// código errado: invalid_credentials.
 	ErrStaleSecondFactor = errors.New("o segundo fator mudou depois de verificado")
 	// ErrSuspended: a conta foi suspensa entre a senha conferida e a sessão.
-	// Quem chama responde como a senha errada: invalid_credentials.
+	// Quem chama responde com o 401 invalid_credentials da senha errada, mas,
+	// como nos Stale*, devolve a reserva da tentativa (Refund): a senha
+	// conferiu. Só a suspensão vista antes, no próprio login, conta a
+	// tentativa como senha errada.
 	ErrSuspended = errors.New("conta suspensa")
 )
 
