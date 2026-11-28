@@ -39,7 +39,7 @@ var tabelasForaDoProjeto = map[string]string{
 	"account_tokens":        "link de confirmação de e-mail e de redefinição de senha: da conta, não de projeto",
 	"account_email_daily":   "teto diário de e-mails de conta, sem dono, dividido entre réplicas",
 	"projects":              "é o próprio projeto; a pertença sai de project_members",
-	"project_members":       "vínculo pessoa–projeto; a pessoa vê os próprios vínculos",
+	"project_members":       "vínculo pessoa–projeto; a pessoa vê os próprios e, no escopo do projeto, os colegas",
 }
 
 // emEscopoDeProjeto roda fn com app.user_id e app.project_id ligados por SQL

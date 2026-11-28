@@ -26,9 +26,12 @@ var arquivosDeRecursoDeProjeto = []string{
 }
 
 // queriesQueFiltramPorUsuario são as queries de recurso de projeto que podem
-// filtrar por user_id, cada uma com o motivo. Vazia: as cotas contam pelo
-// titular do projeto (funções cota_* da 00045).
-var queriesQueFiltramPorUsuario = map[string]string{}
+// filtrar por user_id, cada uma com o motivo. As cotas contam pelo titular do
+// projeto (funções cota_* da 00045), e não estão aqui.
+var queriesQueFiltramPorUsuario = map[string]string{
+	"DisableEmailChannelsCreatedBy": "membro removido: os canais de e-mail que ele criou no projeto do escopo " +
+		"param, porque o endereço é dele (user_id é quem criou); o project_id também filtra",
+}
 
 // blocoDeQuery é um bloco "-- name:" de um arquivo de queries.
 type blocoDeQuery struct {

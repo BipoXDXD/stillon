@@ -88,3 +88,11 @@ UPDATE notif_channels
 -- InProberTx: os selos mais recentes de qualquer dono, só para tentar abrir.
 -- name: LatestChannelSeals :many
 SELECT id, config_enc FROM notif_channels ORDER BY created_at DESC, id DESC LIMIT $1;
+
+-- Membro removido (ou que sai) do projeto: os canais de e-mail que ele criou
+-- ali param de avisar, porque o endereço é dele (decisão 5 do 2b). Os de
+-- outros tipos e os de outros projetos ficam como estão.
+-- name: DisableEmailChannelsCreatedBy :execrows
+UPDATE notif_channels SET enabled = false
+ WHERE project_id = sqlc.arg(project_id) AND user_id = sqlc.arg(user_id)
+   AND kind = 'email' AND enabled;

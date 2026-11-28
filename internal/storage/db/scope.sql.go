@@ -28,8 +28,9 @@ type ActiveMembershipRoleParams struct {
 
 // O papel de user_id no projeto, se for membro, a conta dele não estiver
 // suspensa e a do titular também não. Sem linha: não membro, projeto
-// inexistente ou suspensão, que a aplicação trata igual (404). Sem FOR SHARE:
-// travar a linha exigiria política de UPDATE em project_members.
+// inexistente ou suspensão, que a aplicação trata igual (404). Sem FOR SHARE,
+// de propósito: o pedido em voo de um membro removido conclui, e o seguinte
+// dá 404, como na revogação de sessão (TestRemovalLetsInFlightRequestFinish).
 func (q *Queries) ActiveMembershipRole(ctx context.Context, arg ActiveMembershipRoleParams) (string, error) {
 	row := q.db.QueryRow(ctx, activeMembershipRole, arg.ProjectID, arg.UserID)
 	var role string

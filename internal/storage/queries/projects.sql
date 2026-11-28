@@ -54,3 +54,11 @@ VALUES (sqlc.arg(project_id), sqlc.arg(user_id), 'owner', sqlc.arg(now));
 -- InProjectTx: projects_member_select deixa o membro ver o projeto.
 -- name: ProjectTitular :one
 SELECT titular_id FROM projects WHERE id = sqlc.arg(project_id);
+
+-- Renomear (PR 4.1): sob InProjectTx, projects_do_projeto_update (00048) só
+-- alcança o projeto do escopo, e o gatilho guard_projects_imutavel recusa
+-- mudar qualquer coluna além do nome.
+-- name: RenameProject :one
+UPDATE projects SET name = sqlc.arg(name)
+ WHERE id = sqlc.arg(project_id)
+RETURNING id, name, is_default, created_at;
