@@ -26,7 +26,7 @@ export function PaginaPrivacidade() {
         <Lista>
           <li>
             <strong>Conta:</strong> o seu e-mail e a sua senha. A senha nunca é guardada como você a digitou: guardamos
-            só um hash (Argon2id), de onde não dá para recuperá-la.
+            só um hash (Argon2id), do qual não é possível obtê-la de volta na prática.
           </li>
           <li>
             <strong>Verificação em duas etapas</strong>, se você ligar: o segredo do aplicativo autenticador, guardado
@@ -50,8 +50,9 @@ export function PaginaPrivacidade() {
           </li>
         </Lista>
         <p>
-          Usamos só os cookies necessários para manter a sua sessão. Não usamos cookies de publicidade nem ferramentas
-          de análise de navegação.
+          Usamos só os cookies necessários para manter a sua sessão. O armazenamento local do navegador guarda apenas
+          preferências suas (o último projeto aberto e o tema claro ou escuro). Não há rastreamento: nada de cookies de
+          publicidade nem de ferramentas de análise de navegação.
         </p>
       </Secao>
 
@@ -125,8 +126,9 @@ export function PaginaPrivacidade() {
       <Secao titulo="Quando você exclui a conta">
         <Lista>
           <li>
-            A conta e os projetos só seus são apagados, com tudo o que eles contêm. Se você é titular de um projeto que
-            tem outros membros, transfira a titularidade antes de excluir a conta.
+            A conta e os projetos só seus são apagados, com tudo o que eles contêm. Enquanto você for titular de um
+            projeto com outros membros, a exclusão da conta é recusada: remova os outros membros antes ou fale com o
+            [contato do operador].
           </li>
           <li>
             O que você criou em projetos de outras pessoas continua com elas, sem ligação com você. Os canais de aviso
@@ -162,7 +164,7 @@ export function PaginaPrivacidade() {
 
       <Secao titulo="Segurança">
         <p>
-          A conexão é cifrada (HTTPS), a senha e os códigos de recuperação ficam só como hash, o IP só como hash, e você
+          A conexão é cifrada (HTTPS), a senha e os códigos de recuperação ficam só como hash, guardamos o IP só como hash, e você
           pode ligar a verificação em duas etapas. Nenhum sistema é infalível: se um incidente de segurança puder trazer
           risco relevante a você, avisaremos você e a ANPD, como a LGPD manda.
         </p>
