@@ -4,12 +4,15 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"strings"
 	"sync"
 	"testing"
 	"testing/synctest"
 	"time"
+
+	"github.com/google/uuid"
 
 	"github.com/BipoXDXD/stillon/internal/account"
 	"github.com/BipoXDXD/stillon/internal/contaemail"
@@ -42,24 +45,51 @@ func (t *transporteFalso) SendAccount(ctx context.Context, to crypto.Secret, sub
 	return t.erro
 }
 
-func (t *transporteFalso) SendVerification(ctx context.Context, dest crypto.Secret, link string) error {
+func (t *transporteFalso) SendVerification(ctx context.Context, _ uuid.UUID, dest crypto.Secret, link string) error {
 	return t.SendAccount(ctx, dest, "verificação", link)
 }
 
 func (t *transporteFalso) total() int { return len(t.chegou) }
 
+// tetoFalso imita o storage.TetoDeEmailsDeConta: com porConta > 0, cada
+// conta (menos uuid.Nil) tem o próprio teto, conferido antes do global.
 type tetoFalso struct {
 	mu       sync.Mutex
 	reservas int
 	libera   bool
 	erro     error
+	porConta int
+	usadas   map[uuid.UUID]int
+	contas   []uuid.UUID
 }
 
-func (t *tetoFalso) Reservar(context.Context) (bool, error) {
+func (t *tetoFalso) Reservar(_ context.Context, conta uuid.UUID) (string, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.reservas++
-	return t.libera, t.erro
+	t.contas = append(t.contas, conta)
+	if t.erro != nil {
+		return "", t.erro
+	}
+	if t.porConta > 0 && conta != uuid.Nil && t.usadas[conta] >= t.porConta {
+		return "conta", nil
+	}
+	if !t.libera {
+		return "teto", nil
+	}
+	if conta != uuid.Nil {
+		if t.usadas == nil {
+			t.usadas = map[uuid.UUID]int{}
+		}
+		t.usadas[conta]++
+	}
+	return "", nil
+}
+
+func (t *tetoFalso) contasRecebidas() []uuid.UUID {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return append([]uuid.UUID(nil), t.contas...)
 }
 
 func (t *tetoFalso) total() int {
@@ -293,7 +323,7 @@ func TestVerificacaoComTetoPassaPeloTeto(t *testing.T) {
 		m := novoTransporte()
 		v := contaemail.NovaVerificacaoComTeto(c.enviador, m)
 
-		if err := v.SendVerification(context.Background(), crypto.Secret("p@x.com"), "https://v.dev/l"); !errors.Is(err, notify.ErrVerificationSuppressed) {
+		if err := v.SendVerification(context.Background(), uuid.Nil, crypto.Secret("p@x.com"), "https://v.dev/l"); !errors.Is(err, notify.ErrVerificationSuppressed) {
 			t.Errorf("SendVerification com teto esgotado = %v, queria ErrVerificationSuppressed", err)
 		}
 		if n := m.total(); n != 0 {
@@ -305,7 +335,7 @@ func TestVerificacaoComTetoPassaPeloTeto(t *testing.T) {
 		m := novoTransporte()
 		v := contaemail.NovaVerificacaoComTeto(c.enviador, m)
 
-		if err := v.SendVerification(context.Background(), crypto.Secret("p@x.com"), "https://v.dev/l"); !errors.Is(err, notify.ErrVerificationSuppressed) {
+		if err := v.SendVerification(context.Background(), uuid.Nil, crypto.Secret("p@x.com"), "https://v.dev/l"); !errors.Is(err, notify.ErrVerificationSuppressed) {
 			t.Errorf("SendVerification sem ficha no balde = %v, queria ErrVerificationSuppressed", err)
 		}
 		if m.total() != 0 || c.teto.total() != 0 {
@@ -319,7 +349,7 @@ func TestVerificacaoComTetoPassaPeloTeto(t *testing.T) {
 		m.erro = boom
 		v := contaemail.NovaVerificacaoComTeto(c.enviador, m)
 
-		err := v.SendVerification(context.Background(), crypto.Secret("p@x.com"), "https://v.dev/l")
+		err := v.SendVerification(context.Background(), uuid.Nil, crypto.Secret("p@x.com"), "https://v.dev/l")
 		if !errors.Is(err, boom) {
 			t.Errorf("SendVerification = %v, queria o erro do transporte", err)
 		}
@@ -420,7 +450,7 @@ func TestVerificacaoComBaldeOuTetoComErroDevolveOErro(t *testing.T) {
 			m := novoTransporte()
 			v := contaemail.NovaVerificacaoComTeto(c.enviador, m)
 
-			if err := v.SendVerification(context.Background(), crypto.Secret("p@x.com"), "https://v.dev/l"); !errors.Is(err, boom) {
+			if err := v.SendVerification(context.Background(), uuid.Nil, crypto.Secret("p@x.com"), "https://v.dev/l"); !errors.Is(err, boom) {
 				t.Errorf("SendVerification = %v, queria o erro de %s", err, nome)
 			}
 			if n := m.total(); n != 0 {
@@ -522,5 +552,67 @@ func TestFilaCheiaDelegaConclusaoAoTrabalhador(t *testing.T) {
 	}
 	if n := c.transporte.total(); n != 100 {
 		t.Errorf("transporte recebeu %d mensagens, queria as 100 aceitas pela fila", n)
+	}
+}
+
+// O teto por conta vale também com destinatários diferentes: a 11ª mensagem
+// da mesma conta no dia é suprimida, com motivo=conta e sem o endereço.
+func TestAccountCapSuppressesAfterTenResends(t *testing.T) {
+	if contaemail.TetoDiarioPorConta != 10 {
+		t.Fatalf("TetoDiarioPorConta = %d, queria 10", contaemail.TetoDiarioPorConta)
+	}
+	c := novoCenario(true, true)
+	c.teto.porConta = contaemail.TetoDiarioPorConta
+	parar := c.rodar(t)
+	u := uuid.New()
+
+	for i := range contaemail.TetoDiarioPorConta + 1 {
+		para := fmt.Sprintf("pessoa%d@exemplo.com", i)
+		if err := c.enviador.SendAccountEmail(context.Background(), para, "a", "b", account.EntregaDeEmail{Conta: u}); err != nil {
+			t.Fatalf("SendAccountEmail %d = %v", i, err)
+		}
+	}
+	parar()
+
+	if n := c.transporte.total(); n != contaemail.TetoDiarioPorConta {
+		t.Errorf("o transporte recebeu %d e-mails, queria %d", n, contaemail.TetoDiarioPorConta)
+	}
+	for i, conta := range c.teto.contasRecebidas() {
+		if conta != u {
+			t.Fatalf("reserva %d com a conta %v, queria %v", i, conta, u)
+		}
+	}
+	log := c.log.String()
+	if !strings.Contains(log, "motivo=conta") {
+		t.Errorf("log sem motivo=conta: %s", log)
+	}
+	if strings.Contains(log, "pessoa10@exemplo.com") {
+		t.Errorf("o log traz o endereço: %s", log)
+	}
+}
+
+// A verificação de canal reserva pela conta de quem pediu; recusa da conta
+// é supressão, como a do teto global.
+func TestVerificationCapUsesRequesterAccount(t *testing.T) {
+	c := novoCenario(true, true)
+	c.teto.porConta = 1
+	m := novoTransporte()
+	v := contaemail.NovaVerificacaoComTeto(c.enviador, m)
+	u := uuid.New()
+
+	if err := v.SendVerification(context.Background(), u, crypto.Secret("p@x.com"), "https://v.dev/1"); err != nil {
+		t.Fatalf("primeira verificação = %v", err)
+	}
+	if err := v.SendVerification(context.Background(), u, crypto.Secret("q@x.com"), "https://v.dev/2"); !errors.Is(err, notify.ErrVerificationSuppressed) {
+		t.Errorf("verificação além do teto da conta = %v, queria ErrVerificationSuppressed", err)
+	}
+	if n := m.total(); n != 1 {
+		t.Errorf("o mailer recebeu %d envios, queria 1", n)
+	}
+	if got := c.teto.contasRecebidas(); len(got) != 2 || got[0] != u || got[1] != u {
+		t.Errorf("contas reservadas = %v, queria [%v %v]", got, u, u)
+	}
+	if !strings.Contains(c.log.String(), "motivo=conta") {
+		t.Errorf("log sem motivo=conta: %s", c.log.String())
 	}
 }

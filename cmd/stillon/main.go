@@ -229,7 +229,9 @@ func run(ctx context.Context, cfg *config.Config) error {
 		// Os e-mails de conta (confirmação, redefinição, verificação de
 		// canal) passam pelo balde do destinatário e pelo teto diário; os
 		// avisos (notificadores) e o do 2FA bloqueado, nunca.
-		enviador := enviadorDeConta(cfg, storage.NewTetoDeEmailsDeConta(pool, clk, contaemail.TetoDiario), limitesIP)
+		// O teto da conta que causou o e-mail vale junto com o global.
+		teto := storage.NewTetoDeEmailsDeConta(pool, clk, contaemail.TetoDiario, contaemail.TetoDiarioPorConta)
+		enviador := enviadorDeConta(cfg, teto, limitesIP)
 		links := account.Links{Base: cfg.PublicBaseURL}
 		deps := httpapi.Deps{
 			Store:    store,

@@ -41,7 +41,7 @@ type carteiroFalso struct {
 	err   error
 }
 
-func (f *carteiroFalso) SendVerification(_ context.Context, _ crypto.Secret, link string) error {
+func (f *carteiroFalso) SendVerification(_ context.Context, _ uuid.UUID, _ crypto.Secret, link string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.err != nil {
@@ -319,7 +319,7 @@ func apiComTetoDeVerificacao(t *testing.T, limite int) *api {
 	if err != nil {
 		t.Fatal(err)
 	}
-	teto := storage.NewTetoDeEmailsDeConta(a.pool, a.clk, limite)
+	teto := storage.NewTetoDeEmailsDeConta(a.pool, a.clk, limite, contaemail.TetoDiarioPorConta)
 	enviador := contaemail.New(&transporteContado{}, teto, a.deps.LimitesIP, testIPHashKey, slog.New(slog.DiscardHandler))
 	a.deps.Channels = notify.NewChannelService(a.pool, box, a.clk, a.discord,
 		contaemail.NovaVerificacaoComTeto(enviador, a.email), a.cfg.PublicBaseURL)

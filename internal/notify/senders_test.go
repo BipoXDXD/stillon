@@ -330,7 +330,7 @@ func TestResendVerificationCarriesTheLinkAndNoIdempotencyKey(t *testing.T) {
 	srv, client, pedidos := provedor(t, status(http.StatusOK))
 	r := &Resend{client: client, endpoint: srv.URL, apiKey: crypto.Secret("k"), from: "a@b.dev"}
 
-	if err := r.SendVerification(context.Background(), crypto.Secret("p@x.com"), "https://v.dev/verify/abc"); err != nil {
+	if err := r.SendVerification(context.Background(), uuid.New(), crypto.Secret("p@x.com"), "https://v.dev/verify/abc"); err != nil {
 		t.Fatal(err)
 	}
 	p := receber(t, pedidos)
