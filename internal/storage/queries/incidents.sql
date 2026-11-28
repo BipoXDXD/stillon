@@ -53,6 +53,7 @@ SELECT c.id
     OR ((c.project_id IS NULL OR COALESCE(t.project_id, h.project_id) IS NULL)
         AND c.user_id = COALESCE(t.user_id, h.user_id))
  WHERE i.id = sqlc.arg(incident_id) AND c.enabled AND c.verified_at IS NOT NULL
+   AND NOT projeto_suspenso(COALESCE(t.project_id, h.project_id))
  ORDER BY c.id;
 
 -- name: EnqueueNotification :exec

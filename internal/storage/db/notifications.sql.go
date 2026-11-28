@@ -17,6 +17,9 @@ const claimDueNotifications = `-- name: ClaimDueNotifications :many
 WITH lote AS MATERIALIZED (
     SELECT n.id FROM notifications n
       JOIN notif_channels c ON c.id = n.channel_id
+      JOIN incidents i ON i.id = n.incident_id
+      LEFT JOIN targets t ON t.id = i.target_id
+      LEFT JOIN heartbeats h ON h.id = i.heartbeat_id
      WHERE n.status = 'pending' AND n.next_attempt_at <= $1::timestamptz
        -- Piso de rollback: uma versão futura grava aviso de
        -- certificado sem incidente. Contá-lo aqui o faria sumir no JOIN com
@@ -28,6 +31,9 @@ WITH lote AS MATERIALIZED (
        -- listas vêm de notify.kindsConhecidos e notify.eventosConhecidos.
        AND c.kind = ANY($2::text[])
        AND n.event = ANY($3::text[])
+       -- Titular suspenso: fica pending, sem gastar tentativa, até a
+       -- suspensão sair.
+       AND NOT projeto_suspenso(COALESCE(t.project_id, h.project_id))
      ORDER BY n.next_attempt_at
      LIMIT $4::int
        FOR UPDATE OF n SKIP LOCKED
@@ -233,6 +239,7 @@ SELECT n.incident_id, n.channel_id, c.kind, i.started_at,
  WHERE n.event IN ('opened', 'reminder')
    AND i.resolved_at IS NULL AND i.ack_at IS NULL AND i.open_notified_at IS NOT NULL
    AND COALESCE(t.enabled, h.enabled)
+   AND NOT projeto_suspenso(COALESCE(t.project_id, h.project_id))
    AND c.enabled AND c.verified_at IS NOT NULL
    AND (n.incident_id, n.channel_id) > ($1::uuid, $2::uuid)
  GROUP BY n.incident_id, n.channel_id, c.kind, i.started_at
