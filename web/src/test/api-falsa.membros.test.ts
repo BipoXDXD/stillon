@@ -175,4 +175,54 @@ describe('a equipe na API falsa', () => {
     const lista = (await (await pedir('GET', `${base}/invitations`)).json()) as { items: { email: string }[] }
     expect(lista.items.map((c) => c.email)).toEqual(['d@exemplo.com'])
   })
+  // DeletePendingInvitationsBy: o link não sobrevive a quem o assinou.
+  it('remover quem convidou apaga os convites pendentes dele e devolve as vagas', async () => {
+    const falsa = apiLogada()
+    const { pf, base } = projetoComEquipe(falsa)
+    falsa.adicionarMembro(pf.projeto.id, { user_id: 'u2', email: 'b@exemplo.com', role: 'manager' })
+    const token = falsa.adicionarConvite(pf.projeto.id, { email: 'c@exemplo.com', role: 'member', por: 'u2' })
+    falsa.adicionarConvite(pf.projeto.id, { email: 'd@exemplo.com', role: 'viewer', por: 'u2' })
+    expect((await pedir('DELETE', `${base}/members/u2`)).status).toBe(204)
+    const lista = (await (await pedir('GET', `${base}/invitations`)).json()) as { items: unknown[] }
+    expect(lista.items).toEqual([])
+    expect(await codigo(await pedir('POST', '/invitations/accept', { token }))).toEqual({
+      status: 400,
+      code: 'token_invalid',
+    })
+    // Sem o titular, cabem três: as duas vagas dos convites voltaram.
+    for (const email of ['e@exemplo.com', 'f@exemplo.com', 'g@exemplo.com']) {
+      expect((await pedir('POST', `${base}/invitations`, { email, role: 'viewer' })).status).toBe(201)
+    }
+  })
+
+  // InsertMemberFromInvitation com ON CONFLICT DO NOTHING: quem já é membro
+  // aceita, o convite é gasto e o papel fica como estava.
+  it('quem já é membro aceita o convite com 200, sem mudar de papel', async () => {
+    const falsa = apiLogada()
+    const { pf } = projetoComEquipe(falsa)
+    const token = falsa.adicionarConvite(pf.projeto.id, { email: EMAIL, role: 'viewer' })
+    const r = await pedir('POST', '/invitations/accept', { token })
+    expect(r.status).toBe(200)
+    expect(await r.json()).toMatchObject({ id: pf.projeto.id, role: 'owner' })
+    expect(pf.convites).toEqual([])
+    expect(pf.membros.filter((m) => m.user_id === USUARIO)).toHaveLength(1)
+  })
+
+  // ProjectHandlers.Rename decodifica e valida o nome antes de autorizar.
+  it('renomear com nome vazio é 400 mesmo para quem não pode renomear', async () => {
+    const falsa = apiLogada()
+    falsa.definirPapel(PROJETO_PADRAO, 'viewer')
+    const r = await pedir('PATCH', `/projects/${PROJETO_PADRAO}`, { name: '' })
+    expect(await codigo(r)).toEqual({ status: 400, code: 'validation_failed' })
+  })
+
+  // O teto de projetos conta as titularidades, não o papel owner.
+  it('ser owner de projeto alheio não gasta a cota de criar projetos', async () => {
+    const falsa = apiLogada()
+    falsa.criarProjeto('Loja')
+    const alheio = falsa.criarProjetoAlheio('Outra')
+    const token = falsa.adicionarConvite(alheio.projeto.id, { email: EMAIL, role: 'owner' })
+    expect((await pedir('POST', '/invitations/accept', { token })).status).toBe(200)
+    expect((await pedir('POST', '/projects', { name: 'Nova' })).status).toBe(201)
+  })
 })

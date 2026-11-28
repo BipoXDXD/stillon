@@ -209,11 +209,14 @@ export type RecursosFalsos = ReturnType<typeof novosRecursos>
 // A equipe de cada projeto: os membros (o usuário logado entre eles, com o
 // papel do projeto), os convites pendentes e o id a quem a titularidade foi
 // proposta. O token de cada convite fica em tokensDeConvite, fora da resposta.
+// O convite da falsa só nasce com um dos quatro papéis.
+type ConviteFalso = Entrada<typeof Convite> & { role: PapelConhecido }
+
 export type ProjetoFalso = {
   projeto: Entrada<typeof Projeto>
   recursos: RecursosFalsos
   membros: Entrada<typeof Membro>[]
-  convites: Entrada<typeof Convite>[]
+  convites: ConviteFalso[]
   pendente: string | null
 }
 
@@ -221,7 +224,8 @@ export type ProjetoFalso = {
 const CAMPOS_DO_PAPEL = ['role']
 const CAMPOS_DO_CONVITE = ['email', 'role']
 const CAMPOS_DA_TRANSFERENCIA = ['user_id']
-const PAPEIS_CONHECIDOS: readonly string[] = ['owner', 'manager', 'member', 'viewer']
+const PAPEIS_CONHECIDOS: readonly unknown[] = ['owner', 'manager', 'member', 'viewer']
+const ehPapelConhecido = (x: unknown): x is PapelConhecido => PAPEIS_CONHECIDOS.includes(x)
 // tenancy.LimitesDe(false).MembrosPorProjeto: o teto quando o projeto não traz
 // limits.
 const LIMITE_DE_MEMBROS = 3
@@ -953,7 +957,7 @@ export function criarApiFalsa() {
       // membro, 404; quem não é owner, 403; o titular não deixa de ser owner.
       // Rebaixar o pendente apaga a proposta (ClearTitularTransferTo).
       rotaP('patch', '/members/:userId', estrita(CAMPOS_DO_PAPEL, ({ pf, papel, params, corpo }) => {
-        if (typeof corpo.role !== 'string' || !PAPEIS_CONHECIDOS.includes(corpo.role)) {
+        if (!ehPapelConhecido(corpo.role)) {
           return erro(400, 'validation_failed', [{ field: 'role', reason: 'invalid' }])
         }
         const alvo = pf.membros.find((m) => m.user_id === params.userId)
@@ -963,9 +967,9 @@ export function criarApiFalsa() {
         alvo.role = corpo.role
         // apagarConvitesQueNaoPoderiaMandar: o link de um papel que quem
         // convidou já não pode dar não fica vivo.
-        const novo = Papel.parse(corpo.role)
+        const novo = corpo.role
         pf.convites = pf.convites.filter(
-          (c) => st.autoresDeConvite.get(c.id) !== alvo.user_id || podeConvidarComo(novo, Papel.parse(c.role) as PapelConhecido),
+          (c) => st.autoresDeConvite.get(c.id) !== alvo.user_id || podeConvidarComo(novo, c.role),
         )
         if (alvo.user_id === USUARIO) pf.projeto.role = corpo.role
         if (corpo.role !== 'owner' && pf.pendente === alvo.user_id) pf.pendente = null
@@ -980,17 +984,21 @@ export function criarApiFalsa() {
         if (alvo.user_id !== USUARIO && !pode(papel, 'manage_members')) return erro(403, 'forbidden')
         if (alvo.is_titular) return erro(409, 'titular_protected')
         pf.membros = pf.membros.filter((m) => m !== alvo)
+        // DeletePendingInvitationsBy: o link não sobrevive a quem o assinou.
+        pf.convites = pf.convites.filter((c) => st.autoresDeConvite.get(c.id) !== alvo.user_id)
         if (pf.pendente === alvo.user_id) pf.pendente = null
         if (alvo.user_id === USUARIO) st.projetos = st.projetos.filter((p) => p !== pf)
         return new HttpResponse(null, { status: 204 })
       })),
-      // ProjectHandlers.Rename: de owner; a resposta é o item de GET /projects.
-      rotaP('patch', '', estrita(['name'], exige('manage_project', ({ pf, corpo }) => {
+      // ProjectHandlers.Rename: o nome é validado antes do papel (400 antes
+      // de 403); de owner; a resposta é o item de GET /projects.
+      rotaP('patch', '', estrita(['name'], ({ pf, papel, corpo }) => {
         const { nome, motivo } = motivoDoNome(corpo.name)
         if (motivo) return erro(400, 'validation_failed', [{ field: 'name', reason: motivo }])
+        if (!pode(papel, 'manage_project')) return erro(403, 'forbidden')
         pf.projeto.name = nome
         return HttpResponse.json(respostaDoProjeto(pf))
-      }))),
+      })),
 
       // ListPending: de manager para cima.
       rotaP('get', '/invitations', estrita([], exige('invite_basic', ({ pf }) => HttpResponse.json({ items: pf.convites })))),
@@ -1001,10 +1009,10 @@ export function criarApiFalsa() {
       rotaP('post', '/invitations', exigeEmailConfirmado(estrita(CAMPOS_DO_CONVITE, ({ pf, papel, corpo }) => {
         const email = typeof corpo.email === 'string' ? corpo.email.trim().toLowerCase() : ''
         if (!EMAIL_VALIDO.test(email)) return erro(400, 'validation_failed', [{ field: 'email', reason: 'invalid' }])
-        if (typeof corpo.role !== 'string' || !PAPEIS_CONHECIDOS.includes(corpo.role)) {
+        if (!ehPapelConhecido(corpo.role)) {
           return erro(400, 'validation_failed', [{ field: 'role', reason: 'invalid' }])
         }
-        const role = corpo.role as PapelConhecido
+        const role = corpo.role
         if (!podeConvidarComo(papel, role)) return erro(403, 'forbidden')
         if (pf.membros.some((m) => m.email === email)) return erro(409, 'already_member')
         const outrosConvites = pf.convites.filter((c) => c.email !== email).length
@@ -1016,7 +1024,7 @@ export function criarApiFalsa() {
       rotaP('delete', '/invitations/:invitationId', estrita([], exige('invite_basic', ({ pf, papel, params }) => {
         const c = pf.convites.find((x) => x.id === params.invitationId)
         if (!c) return erro(404, 'not_found')
-        if (!podeConvidarComo(papel, Papel.parse(c.role) as PapelConhecido)) return erro(403, 'forbidden')
+        if (!podeConvidarComo(papel, c.role)) return erro(403, 'forbidden')
         pf.convites = pf.convites.filter((x) => x !== c)
         return new HttpResponse(null, { status: 204 })
       }))),
@@ -1228,23 +1236,26 @@ export function criarApiFalsa() {
     rota('post', '/projects', exigeEmailConfirmado(estrita(['name'], ({ corpo }) => {
       const { nome, motivo } = motivoDoNome(corpo.name)
       if (motivo) return erro(400, 'validation_failed', [{ field: 'name', reason: motivo }])
-      if (st.projetos.filter((p) => p.projeto.role === 'owner').length >= st.limiteDeProjetos) {
+      if (st.projetos.filter((p) => titularDe(p) === USUARIO).length >= st.limiteDeProjetos) {
         return erro(409, 'project_limit_reached')
       }
       return HttpResponse.json(respostaDoProjeto(criarProjeto(nome)), { status: 201 })
     }))),
     // InvitationHandlers.Accept: da conta, sem a trava de e-mail. Token que
     // não existe (ou revogado, trocado, já aceito) é 400; o link de outro
-    // e-mail, 403. Quem aceita entra com o papel do convite.
+    // e-mail, 403. Quem aceita entra com o papel do convite; quem já é
+    // membro recebe 200 e fica como estava.
     rota('post', '/invitations/accept', estrita(['token'], ({ corpo }) => {
       const achado = st.tokensDeConvite.get(String(corpo.token ?? ''))
       const pf = achado?.projeto
       const c = pf?.convites.find((x) => x.id === achado?.id)
       if (!pf || !c) return erro(400, 'token_invalid')
       if (c.email !== EMAIL) return erro(403, 'invitation_other_account')
-      if (pf.membros.some((m) => m.user_id === USUARIO)) return erro(409, 'already_member')
       st.tokensDeConvite.delete(String(corpo.token))
       pf.convites = pf.convites.filter((x) => x !== c)
+      // ON CONFLICT DO NOTHING: quem já é membro gasta o convite e fica
+      // com o papel que tinha.
+      if (pf.membros.some((m) => m.user_id === USUARIO)) return HttpResponse.json(respostaDoProjeto(pf))
       pf.membros.push({ user_id: USUARIO, email: EMAIL, role: c.role, is_titular: false, joined_at: agora().toISOString() })
       pf.projeto.role = c.role
       st.projetosAlheios = st.projetosAlheios.filter((p) => p !== pf)
