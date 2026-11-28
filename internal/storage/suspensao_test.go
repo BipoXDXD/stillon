@@ -162,39 +162,29 @@ func incidenteAvisado(t *testing.T, pool *pgxpool.Pool, titular uuid.UUID) (inci
 	return incidente, canal, notificacao
 }
 
-func TestSuspendedTitularGetsNoFanOutNorReminders(t *testing.T) {
-	pool := testdb.New(t)
+// lembretesDe devolve os incidentes candidatos a lembrete.
+func lembretesDe(t *testing.T, pool *pgxpool.Pool) []uuid.UUID {
+	t.Helper()
 	ctx := context.Background()
-	u, v := novoUsuario(t, pool), novoUsuario(t, pool)
-	incidenteU, _, notificacaoU := incidenteAvisado(t, pool, u)
-	incidenteV, canalV, notificacaoV := incidenteAvisado(t, pool, v)
-	testdb.Suspender(t, u)
-
-	var canaisU, canaisV []uuid.UUID
-	var lembretes []db.ListReminderCandidatesRow
+	var linhas []db.ListReminderCandidatesRow
 	if err := storage.InProberTx(ctx, pool, func(q *db.Queries) error {
 		var err error
-		if canaisU, err = q.ListDeliverableChannelsForIncident(ctx, incidenteU); err != nil {
-			return err
-		}
-		if canaisV, err = q.ListDeliverableChannelsForIncident(ctx, incidenteV); err != nil {
-			return err
-		}
-		lembretes, err = q.ListReminderCandidates(ctx, db.ListReminderCandidatesParams{MaxRows: 10})
+		linhas, err = q.ListReminderCandidates(ctx, db.ListReminderCandidatesParams{MaxRows: 10})
 		return err
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if len(canaisU) != 0 {
-		t.Errorf("o incidente do titular suspenso tem canais entregáveis %v; queria nenhum", canaisU)
+	var ids []uuid.UUID
+	for _, l := range linhas {
+		ids = append(ids, l.IncidentID)
 	}
-	if !slices.Equal(canaisV, []uuid.UUID{canalV}) {
-		t.Errorf("o incidente do titular ativo tem canais %v; queria %v", canaisV, []uuid.UUID{canalV})
-	}
-	if len(lembretes) != 1 || lembretes[0].IncidentID != incidenteV {
-		t.Errorf("candidatos a lembrete %+v; queria só o incidente do titular ativo %v", lembretes, incidenteV)
-	}
+	return ordenados(ids...)
+}
 
+// reivindicarAvisos roda ClaimDueNotifications em agora e devolve os ids do lote.
+func reivindicarAvisos(t *testing.T, pool *pgxpool.Pool) []uuid.UUID {
+	t.Helper()
+	ctx := context.Background()
 	var lote []db.ClaimDueNotificationsRow
 	if err := storage.InProberTx(ctx, pool, func(q *db.Queries) error {
 		var err error
@@ -206,8 +196,54 @@ func TestSuspendedTitularGetsNoFanOutNorReminders(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if len(lote) != 1 || lote[0].ID != notificacaoV {
-		t.Errorf("ClaimDueNotifications trouxe %+v; queria só a do titular ativo %v", lote, notificacaoV)
+	var ids []uuid.UUID
+	for _, n := range lote {
+		ids = append(ids, n.ID)
+	}
+	return ordenados(ids...)
+}
+
+// O fan-out não olha a suspensão: a notificação do titular suspenso é
+// gravada e fica pending, sem gastar tentativa, até a suspensão sair (a
+// barreira é só ClaimDueNotifications). Os lembretes param durante a
+// suspensão e voltam com a reativação.
+func TestSuspendedTitularNotificationWaitsUntilUnsuspend(t *testing.T) {
+	pool := testdb.New(t)
+	ctx := context.Background()
+	u, v := novoUsuario(t, pool), novoUsuario(t, pool)
+	incidenteU := novoIncidente(t, pool, novoAlvo(t, pool, u, agora.Add(time.Hour)))
+	canalU := novoCanal(t, pool, u, nil, time.Time{})
+	marcarAberturaAvisada(t, pool, incidenteU)
+	incidenteV, _, notificacaoV := incidenteAvisado(t, pool, v)
+	testdb.Suspender(t, u)
+
+	notificacaoU := uuid.Must(uuid.NewV7())
+	var canaisU []uuid.UUID
+	if err := storage.InProberTx(ctx, pool, func(q *db.Queries) error {
+		var err error
+		if canaisU, err = q.ListDeliverableChannelsForIncident(ctx, incidenteU); err != nil {
+			return err
+		}
+		for _, c := range canaisU {
+			if err := q.EnqueueNotification(ctx, db.EnqueueNotificationParams{
+				ID: notificacaoU, IncidentID: incidenteU, ChannelID: c, Event: "opened", Now: agora,
+			}); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(canaisU, []uuid.UUID{canalU}) {
+		t.Fatalf("o fan-out do titular suspenso achou os canais %v; queria %v", canaisU, []uuid.UUID{canalU})
+	}
+
+	if l := lembretesDe(t, pool); !slices.Equal(l, []uuid.UUID{incidenteV}) {
+		t.Errorf("candidatos a lembrete com U suspenso: %v; queria só o incidente do titular ativo %v", l, incidenteV)
+	}
+	if lote := reivindicarAvisos(t, pool); !slices.Equal(lote, []uuid.UUID{notificacaoV}) {
+		t.Errorf("ClaimDueNotifications com U suspenso trouxe %v; queria só a do titular ativo %v", lote, notificacaoV)
 	}
 	var status string
 	var tentativas int
@@ -218,6 +254,14 @@ func TestSuspendedTitularGetsNoFanOutNorReminders(t *testing.T) {
 	if status != "pending" || tentativas != 0 {
 		t.Errorf("a notificação do titular suspenso ficou status=%s attempts=%d; queria pending sem gastar tentativa",
 			status, tentativas)
+	}
+
+	testdb.Reativar(t, u)
+	if lote := reivindicarAvisos(t, pool); !slices.Equal(lote, []uuid.UUID{notificacaoU}) {
+		t.Errorf("ClaimDueNotifications depois de reativar trouxe %v; queria a do titular reativado %v", lote, notificacaoU)
+	}
+	if l, queria := lembretesDe(t, pool), ordenados(incidenteU, incidenteV); !slices.Equal(l, queria) {
+		t.Errorf("candidatos a lembrete depois de reativar: %v; queria %v", l, queria)
 	}
 }
 

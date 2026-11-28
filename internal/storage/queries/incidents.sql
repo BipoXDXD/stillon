@@ -43,6 +43,11 @@ UPDATE incidents SET close_notified_at = sqlc.arg(now)::timestamptz
 -- Fan-out (spec §8): canais habilitados E verificados do PROJETO do recurso
 -- do incidente. Fallback legado (sai no PR 7, com o NOT NULL): recurso ou
 -- canal sem project_id casa por user_id, a regra antiga.
+--
+-- Sem filtro de suspensão, de propósito: a marca de abertura/fechamento
+-- avisado já foi gravada antes daqui, e uma suspensão que comitasse entre as
+-- duas apagaria o aviso para sempre. A notificação do titular suspenso é
+-- gravada e espera pending em ClaimDueNotifications até a reativação.
 -- name: ListDeliverableChannelsForIncident :many
 SELECT c.id
   FROM incidents i
@@ -53,7 +58,6 @@ SELECT c.id
     OR ((c.project_id IS NULL OR COALESCE(t.project_id, h.project_id) IS NULL)
         AND c.user_id = COALESCE(t.user_id, h.user_id))
  WHERE i.id = sqlc.arg(incident_id) AND c.enabled AND c.verified_at IS NOT NULL
-   AND NOT projeto_suspenso(COALESCE(t.project_id, h.project_id))
  ORDER BY c.id;
 
 -- name: EnqueueNotification :exec

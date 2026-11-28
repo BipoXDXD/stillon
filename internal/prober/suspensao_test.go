@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/BipoXDXD/stillon/internal/incident"
 	"github.com/BipoXDXD/stillon/internal/storage/db"
 	"github.com/BipoXDXD/stillon/internal/storage/testdb"
 )
@@ -74,4 +75,60 @@ func TestUnsuspendRestoresStateAndKeepsPauses(t *testing.T) {
 		}
 	}
 	t.Errorf("a notificação pendente não saiu depois de tirar a suspensão: lote %+v", lote)
+}
+
+// A corrida da suspensão com o aviso: a suspensão comita depois que a
+// abertura foi marcada como avisada e antes do fan-out, na mesma transação.
+// O fan-out não olha a suspensão, então a notificação é gravada e espera; ao
+// reativar, ela sai. Com o filtro no fan-out, ela sumiria para sempre: a
+// marca já impede outro fan-out, e sem notificação não há lembrete.
+func TestSuspensionBetweenClaimAndFanOutKeepsOpenedNotice(t *testing.T) {
+	b := novaBancada(t, nil, MaxInFlight)
+	ctx := context.Background()
+	canal := b.canal(t, true, true)
+	incidente := b.incidenteAberto(t, b.alvo(t, "https://exemplo.com", nil))
+	suspenderNoMeio := func(ctx context.Context, q *db.Queries, id uuid.UUID, evento string, em time.Time) error {
+		testdb.Suspender(t, b.dono)
+		return enfileirar(ctx, q, id, evento, em)
+	}
+	if err := b.comoQueries(t, func(q *db.Queries) error {
+		return avisarAbertura(ctx, q, suspenderNoMeio, incidente, b.clk.Now())
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// Lida por fora da RLS: o escopo do dono suspenso não acha o projeto.
+	var gravadas int
+	if err := testdb.Admin(t).QueryRow(ctx, `
+		SELECT count(*) FROM notifications
+		 WHERE incident_id = $1 AND channel_id = $2 AND event = $3 AND status = 'pending'`,
+		incidente, canal, incident.EventOpened).Scan(&gravadas); err != nil {
+		t.Fatal(err)
+	}
+	if gravadas != 1 {
+		t.Fatalf("%d notificações de abertura no canal %s; queria 1, gravada apesar da suspensão", gravadas, canal)
+	}
+
+	reivindicar := func() []db.ClaimDueNotificationsRow {
+		t.Helper()
+		var lote []db.ClaimDueNotificationsRow
+		if err := b.comoQueries(t, func(q *db.Queries) error {
+			var err error
+			lote, err = q.ClaimDueNotifications(ctx, db.ClaimDueNotificationsParams{
+				Now: b.clk.Now(), LeaseUntil: b.clk.Now().Add(time.Minute), MaxRows: 10,
+				Kinds: []string{"discord", "email"}, Events: []string{"opened", "resolved", "reminder"},
+			})
+			return err
+		}); err != nil {
+			t.Fatal(err)
+		}
+		return lote
+	}
+	if lote := reivindicar(); len(lote) != 0 {
+		t.Fatalf("ClaimDueNotifications com o titular suspenso trouxe %+v; queria nada", lote)
+	}
+
+	testdb.Reativar(t, b.dono)
+	if lote := reivindicar(); len(lote) != 1 || lote[0].Event != incident.EventOpened || lote[0].IncidentID != incidente {
+		t.Errorf("ClaimDueNotifications depois de reativar trouxe %+v; queria a abertura do incidente %s", lote, incidente)
+	}
 }
