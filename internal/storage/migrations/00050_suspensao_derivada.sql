@@ -1,7 +1,7 @@
 -- +goose Up
 -- Suspensão derivada (spec §Cotas e abuso): o projeto some dos workers e da
 -- página pública enquanto o titular estiver suspenso; nada é apagado.
--- Os workers (sondador, avaliador de heartbeats, fan-out, dispatcher e
+-- Os workers (sondador, avaliador de heartbeats, claim das notificações e
 -- lembretes) rodam no escopo do sondador; a página pública, no do slug. As
 -- duas políticas abaixo só abrem a leitura de projects a esses escopos, para
 -- projeto_suspenso achar o titular. Sem ciclo de RLS (42P17): as políticas de
