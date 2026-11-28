@@ -196,6 +196,71 @@ func TestAcceptInsertsOnlyInvitedRoleAndProject(t *testing.T) {
 	}
 }
 
+// Aceitar só preenche accepted_at e accepted_by. Um UPDATE cru no escopo do
+// aceite que troque o papel ou o projeto do convite é recusado (gatilho), e
+// a política de INSERT por convite nunca vê um owner forjado nem outro
+// projeto.
+func TestAcceptCannotRewriteInvitationRoleOrProject(t *testing.T) {
+	pool := testdb.New(t)
+	ctx := context.Background()
+	_, b, _, _, pc, hash := equipeDoConvite(t, pool, "member")
+	for _, caso := range []struct {
+		nome, sql string
+		args      []any
+	}{
+		{"papel", `UPDATE project_invitations SET role = 'owner', accepted_at = now(), accepted_by = $1
+		            WHERE token_hash = $2`, []any{b, hash}},
+		{"projeto", `UPDATE project_invitations SET project_id = $3, accepted_at = now(), accepted_by = $1
+		              WHERE token_hash = $2`, []any{b, hash, pc}},
+	} {
+		t.Run(caso.nome, func(t *testing.T) {
+			g := &guardaTx{Beginner: pool}
+			err := storage.InInvitationAcceptTx(ctx, g, b, hash, func(*db.Queries) error {
+				_, err := g.tx.Exec(ctx, caso.sql, caso.args...)
+				return err
+			})
+			if codigoPG(err) != "42501" {
+				t.Errorf("aceite trocando o %s do convite: %v; queria 42501", caso.nome, err)
+			}
+			if !pendente(t, hash) {
+				t.Error("o convite deixou de estar pendente")
+			}
+		})
+	}
+}
+
+// O convite vencido não se aceita nem em SQL cru, sem o filtro de prazo da
+// consulta: a política de aceite confere expires_at com o relógio do banco.
+func TestExpiredInvitationNotAcceptableInDB(t *testing.T) {
+	pool := testdb.New(t)
+	ctx := context.Background()
+	a := novoUsuario(t, pool)
+	b := usuarioComEmail(t, pool, "b@x.com")
+	pa := testdb.NovoProjeto(t, a, "Projeto A")
+	hash := hashDoConvite("convite-vencido")
+	// O gatilho não deixa mudar o prazo: o vencido já nasce vencido.
+	if _, err := testdb.Admin(t).Exec(ctx, `INSERT INTO project_invitations
+		(id, project_id, email, role, token_hash, invited_by, created_at, expires_at)
+		VALUES ($1, $2, 'b@x.com', 'member', $3, $4, now() - interval '8 days', now() - interval '1 day')`,
+		novoID(), pa, hash, a); err != nil {
+		t.Fatal(err)
+	}
+	g := &guardaTx{Beginner: pool}
+	var linhas int64
+	err := storage.InInvitationAcceptTx(ctx, g, b, hash, func(*db.Queries) error {
+		tag, err := g.tx.Exec(ctx, `UPDATE project_invitations SET accepted_at = now(), accepted_by = $1
+			WHERE token_hash = $2`, b, hash)
+		linhas = tag.RowsAffected()
+		return err
+	})
+	if err != nil || linhas != 0 {
+		t.Errorf("aceite cru do convite vencido: %d linha(s), erro %v; queria 0 linhas", linhas, err)
+	}
+	if !pendente(t, hash) {
+		t.Error("o convite vencido foi aceito")
+	}
+}
+
 // Sem convite aceito por ela no escopo do hash, a pessoa não entra: nem no
 // escopo de usuário (a política da 00039 é só do titular), nem com o hash de
 // um convite que ainda não aceitou.

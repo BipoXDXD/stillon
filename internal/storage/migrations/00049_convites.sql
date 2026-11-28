@@ -61,16 +61,46 @@ CREATE POLICY project_invitations_do_projeto_delete ON project_invitations FOR D
 CREATE POLICY project_invitations_por_token_select ON project_invitations FOR SELECT
     USING (token_hash = decode(NULLIF(current_setting('app.invitation_token_hash', true), ''), 'hex'));
 
--- Aceitar: só o pendente do hash, e só a conta com o e-mail do convite. O
--- banco recusa outra conta logada com o link, mesmo que o Go fosse pulado. O
--- WITH CHECK prende accepted_by a quem aceita.
+-- Aceitar: só o pendente e não vencido do hash, e só a conta com o e-mail do
+-- convite. O banco recusa outra conta logada com o link, mesmo que o Go fosse
+-- pulado; o prazo é conferido com o relógio do banco, além do da consulta. O
+-- WITH CHECK prende accepted_by a quem aceita; o gatilho abaixo, o resto da
+-- linha.
 CREATE POLICY project_invitations_por_token_update ON project_invitations FOR UPDATE
     USING (token_hash = decode(NULLIF(current_setting('app.invitation_token_hash', true), ''), 'hex')
            AND accepted_at IS NULL
+           AND expires_at > now()
            AND email = (SELECT lower(u.email::text) FROM users u
                          WHERE u.id = NULLIF(current_setting('app.user_id', true), '')::uuid))
     WITH CHECK (token_hash = decode(NULLIF(current_setting('app.invitation_token_hash', true), ''), 'hex')
                 AND accepted_by = NULLIF(current_setting('app.user_id', true), '')::uuid);
+
+-- O aceite é o único UPDATE de project_invitations e só preenche accepted_at
+-- e accepted_by: trocar o papel ou o projeto na mesma UPDATE faria a política
+-- de INSERT abaixo admitir um owner forjado ou outro projeto.
+-- +goose StatementBegin
+CREATE FUNCTION guard_project_invitations_imutavel() RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = public, pg_temp
+AS $$
+BEGIN
+    IF NEW.id IS DISTINCT FROM OLD.id
+       OR NEW.project_id IS DISTINCT FROM OLD.project_id
+       OR NEW.email IS DISTINCT FROM OLD.email
+       OR NEW.role IS DISTINCT FROM OLD.role
+       OR NEW.token_hash IS DISTINCT FROM OLD.token_hash
+       OR NEW.invited_by IS DISTINCT FROM OLD.invited_by
+       OR NEW.created_at IS DISTINCT FROM OLD.created_at
+       OR NEW.expires_at IS DISTINCT FROM OLD.expires_at THEN
+        RAISE EXCEPTION 'em project_invitations, só o aceite muda' USING ERRCODE = '42501';
+    END IF;
+    RETURN NEW;
+END
+$$;
+-- +goose StatementEnd
+
+CREATE TRIGGER guard_project_invitations_imutavel BEFORE UPDATE ON project_invitations
+    FOR EACH ROW EXECUTE FUNCTION guard_project_invitations_imutavel();
 
 -- Entrar no projeto pelo convite: quem aceita entra só no projeto e com o
 -- papel do convite do hash, e só depois de o ter aceitado (accepted_by). Sem
@@ -91,3 +121,4 @@ SET LOCAL lock_timeout = '5s';
 -- antes, o DROP TABLE dá 2BP01.
 DROP POLICY project_members_por_convite_insert ON project_members;
 DROP TABLE project_invitations;
+DROP FUNCTION guard_project_invitations_imutavel();
