@@ -52,6 +52,9 @@ type Tx interface {
 	// depois de LockUserSessions. Um segredo de enrollment ainda não
 	// confirmado não exige segundo fator no login.
 	UserTOTPSecret(ctx context.Context, userID uuid.UUID) ([]byte, bool, error)
+	// UserSuspended diz se a conta está suspensa, depois de LockUserSessions;
+	// ErrNotFound se o usuário não existe.
+	UserSuspended(ctx context.Context, userID uuid.UUID) (bool, error)
 	InsertSession(ctx context.Context, r SessionRow) error
 	MarkSessionUsed(ctx context.Context, id uuid.UUID, at time.Time) error
 	RevokeFamily(ctx context.Context, familyID uuid.UUID, at time.Time) error
@@ -141,6 +144,17 @@ func (t *pgTx) UserPasswordHash(ctx context.Context, userID uuid.UUID) (string, 
 		return "", fmt.Errorf("ler hash de senha: %w", err)
 	}
 	return hash, nil
+}
+
+func (t *pgTx) UserSuspended(ctx context.Context, userID uuid.UUID) (bool, error) {
+	em, err := db.New(t.tx).UserSuspension(ctx, userID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, ErrNotFound
+	}
+	if err != nil {
+		return false, fmt.Errorf("ler suspensão: %w", err)
+	}
+	return em != nil, nil
 }
 
 func (t *pgTx) UserTOTPSecret(ctx context.Context, userID uuid.UUID) ([]byte, bool, error) {

@@ -40,6 +40,9 @@ type User struct {
 	// e ByID a preenchem: entra no carimbo do cookie de dispositivo
 	// (DeviceStamp).
 	TOTPConfirmedAt *time.Time
+	// SuspendedAt é o instante da suspensão, nil se a conta não está
+	// suspensa. Só ByEmail a preenche: é o login quem a lê.
+	SuspendedAt *time.Time
 }
 
 // DeviceStamp é o carimbo das credenciais atuais do usuário para o cookie de
@@ -252,9 +255,9 @@ func (s *PGStore) ByEmail(ctx context.Context, email string) (User, error) {
 	}
 	var u User
 	err := s.pool.QueryRow(ctx, `
-		SELECT id, email, password_hash, failed_attempts, locked_until, totp_confirmed_at
+		SELECT id, email, password_hash, failed_attempts, locked_until, totp_confirmed_at, suspended_at
 		  FROM users WHERE email = $1`, email).
-		Scan(&u.ID, &u.Email, &u.PasswordHash, &u.FailedAttempts, &u.LockedUntil, &u.TOTPConfirmedAt)
+		Scan(&u.ID, &u.Email, &u.PasswordHash, &u.FailedAttempts, &u.LockedUntil, &u.TOTPConfirmedAt, &u.SuspendedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return User{}, ErrNotFound
 	}

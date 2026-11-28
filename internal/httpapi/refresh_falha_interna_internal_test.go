@@ -77,6 +77,9 @@ func (b *bancoDeRotacao) SessionUserByHash(ctx context.Context, hash []byte) (uu
 
 func (b *bancoDeRotacao) LockUserSessions(context.Context, uuid.UUID) error { return nil }
 
+// O cenário não tem conta suspensa.
+func (b *bancoDeRotacao) UserSuspended(context.Context, uuid.UUID) (bool, error) { return false, nil }
+
 func (b *bancoDeRotacao) MarkSessionUsed(_ context.Context, id uuid.UUID, at time.Time) error {
 	b.pendentes = append(b.pendentes, func() {
 		for hash, linha := range b.linhas {

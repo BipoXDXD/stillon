@@ -278,6 +278,26 @@ func (q *Queries) ResetTOTP(ctx context.Context, id uuid.UUID) (int64, error) {
 	return result.RowsAffected(), nil
 }
 
+const suspendUser = `-- name: SuspendUser :execrows
+UPDATE users SET suspended_at = COALESCE(suspended_at, $1::timestamptz)
+ WHERE id = $2 AND NOT is_operator
+`
+
+type SuspendUserParams struct {
+	Now time.Time
+	ID  uuid.UUID
+}
+
+// A suspensão (stillon user suspend). O COALESCE guarda o primeiro instante:
+// suspender de novo não o move. O operador não se suspende: zero linhas.
+func (q *Queries) SuspendUser(ctx context.Context, arg SuspendUserParams) (int64, error) {
+	result, err := q.db.Exec(ctx, suspendUser, arg.Now, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const swapUserHash = `-- name: SwapUserHash :execrows
 UPDATE users SET password_hash = $1, failed_attempts = 0, locked_until = NULL,
        totp_secret_enc = CASE WHEN totp_confirmed_at IS NULL THEN NULL ELSE totp_secret_enc END,
@@ -299,6 +319,20 @@ type SwapUserHashParams struct {
 // motivos do ReplaceUserHash.
 func (q *Queries) SwapUserHash(ctx context.Context, arg SwapUserHashParams) (int64, error) {
 	result, err := q.db.Exec(ctx, swapUserHash, arg.NewHash, arg.ID, arg.OldHash)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const unsuspendUser = `-- name: UnsuspendUser :execrows
+UPDATE users SET suspended_at = NULL WHERE id = $1
+`
+
+// A reativação (stillon user unsuspend). As sessões encerradas pela
+// suspensão não voltam.
+func (q *Queries) UnsuspendUser(ctx context.Context, id uuid.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, unsuspendUser, id)
 	if err != nil {
 		return 0, err
 	}
@@ -327,4 +361,17 @@ func (q *Queries) UserIsOperator(ctx context.Context, id uuid.UUID) (bool, error
 	var is_operator bool
 	err := row.Scan(&is_operator)
 	return is_operator, err
+}
+
+const userSuspension = `-- name: UserSuspension :one
+SELECT suspended_at FROM users WHERE id = $1
+`
+
+// A suspensão relida sob a trava do usuário, na emissão e na rotação de
+// sessão (auth.Manager).
+func (q *Queries) UserSuspension(ctx context.Context, id uuid.UUID) (*time.Time, error) {
+	row := q.db.QueryRow(ctx, userSuspension, id)
+	var suspended_at *time.Time
+	err := row.Scan(&suspended_at)
+	return suspended_at, err
 }
