@@ -35,7 +35,7 @@ const (
 )
 
 // Criar projeto ganha balde próprio por usuário: um a cada minuto, 5 de uma
-// vez. Na memória de cada instância até o PR 5.
+// vez.
 const (
 	projetoNovoACada = time.Minute
 	projetoNovoBurst = 5
@@ -198,8 +198,12 @@ func Routes(ctx context.Context, cfg *config.Config, d Deps) http.Handler {
 	//
 	// Os baldes por IP (login e /totp/verify) ficam em d.LimitesIP, no Postgres em
 	// produção: réplicas somam as tentativas de uma origem no mesmo orçamento. Os
-	// outros limites (por conta, o piso global por IP, o ping, a página pública e
-	// o /verify) continuam na memória de cada instância.
+	// baldes por usuário das rotas que mandam mensagem ou criam projeto (reenvio
+	// da confirmação, envio de verificação de canal, criação de projeto) também.
+	// Continuam na memória de cada instância o porUsuario (60/min), o limiteConta
+	// (senha e 2FA), o piso global por IP, o ping, a página pública e o /verify:
+	// são de alto volume ou do caminho de autenticação, e um INSERT ... ON
+	// CONFLICT por requisição custaria mais que o ganho.
 	limiteLogin := middleware.RateLimitIPCompartilhado(d.LimitesIP,
 		middleware.BaldeIP{Nome: "login", PorMinuto: 10, Rajada: 5}, proxiesDe(cfg), cfg.IPHashKey)
 	mux.Handle("POST /api/v1/auth/login", limiteLogin(http.HandlerFunc(h.Login)))
@@ -274,6 +278,11 @@ func Routes(ctx context.Context, cfg *config.Config, d Deps) http.Handler {
 	// de propósito: um usuário sozinho esgota o seu antes de esgotar o do
 	// IP, e é isso que torna a camada observável (TestPerUserRateLimit).
 	porUsuario := middleware.RateLimitUser(ctx, d.Clock, 60, 20)
+	// Os baldes por usuário das rotas que custam mensagem ou projeto ficam em
+	// d.LimitesIP, somados entre réplicas (nomes próprios, chave por usuário).
+	baldeUsuario := func(b middleware.BaldeUsuario) func(http.Handler) http.Handler {
+		return middleware.RateLimitUserCompartilhado(d.LimitesIP, b, cfg.IPHashKey)
+	}
 	// Revogar bloqueia novas requisições, mesmo com JWT ainda válido. Uma
 	// mutação que já passou pela guarda pode concluir; não há cancelamento
 	// retroativo em voo. O limite continua antes da consulta de sessão.
@@ -298,7 +307,7 @@ func Routes(ctx context.Context, cfg *config.Config, d Deps) http.Handler {
 	mux.Handle("GET /api/v1/projects", protegida(ph.List))
 	// Criar também é da conta (o titular vem do token), com o balde próprio de
 	// criação depois do comum e antes da consulta de sessão.
-	porProjetoNovo := middleware.RateLimitUserEvery(ctx, d.Clock, projetoNovoACada, projetoNovoBurst)
+	porProjetoNovo := baldeUsuario(middleware.BaldeUsuario{Nome: "projeto_novo", ACada: projetoNovoACada, Rajada: projetoNovoBurst})
 	criacaoDeProjeto := func(fn http.HandlerFunc) http.Handler { return authn(porUsuario(porProjetoNovo(viva(fn)))) }
 	mux.Handle("POST /api/v1/projects", criacaoDeProjeto(criacao(ph.Create)))
 	// Renomear e a equipe são de um projeto: noProjeto, para o não membro
@@ -312,7 +321,7 @@ func Routes(ctx context.Context, cfg *config.Config, d Deps) http.Handler {
 	// próprio por usuário (3 de uma vez, depois 1 a cada 10 min), antes da
 	// consulta de sessão. Sem a trava de e-mail, claro: é para quem não
 	// confirmou.
-	porReenvio := middleware.RateLimitUserEvery(ctx, d.Clock, 10*time.Minute, 3)
+	porReenvio := baldeUsuario(middleware.BaldeUsuario{Nome: "conta_reenvio", ACada: 10 * time.Minute, Rajada: 3})
 	mux.Handle("POST /api/v1/auth/email/resend", authn(porUsuario(porReenvio(viva(http.HandlerFunc(cad.ReenviarConfirmacao))))))
 
 	mux.Handle("GET /api/v1/targets", recursoLegado(th.List))
@@ -365,7 +374,7 @@ func Routes(ctx context.Context, cfg *config.Config, d Deps) http.Handler {
 	mux.Handle("GET /api/v1/projects/{projectID}/heartbeats/{id}/incidents", noProjeto(hb.Incidents))
 	mux.Handle("POST /api/v1/projects/{projectID}/heartbeats/{id}/incidents/{incident_id}/ack", noProjeto(hb.AckIncident))
 
-	porEnvio := middleware.RateLimitUserEvery(ctx, d.Clock, envioACada, envioBurst)
+	porEnvio := baldeUsuario(middleware.BaldeUsuario{Nome: "canal_envio", ACada: envioACada, Rajada: envioBurst})
 	comEnvioLegado := func(fn http.HandlerFunc) http.Handler { return authn(porUsuario(porEnvio(viva(padrao(fn))))) }
 	mux.Handle("GET /api/v1/channels", recursoLegado(ch.List))
 	mux.Handle("POST /api/v1/channels", comEnvioLegado(criacao(ch.Create)))
