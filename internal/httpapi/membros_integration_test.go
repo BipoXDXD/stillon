@@ -103,7 +103,7 @@ func TestListMembersRoute(t *testing.T) {
 	}
 	for i, q := range quer {
 		m, _ := itens[i].(map[string]any)
-		if chaves := chavesDe(m); !slices.Equal(chaves, []string{"email", "is_titular", "joined_at", "role", "user_id"}) {
+		if chaves := chavesDe(m); !slices.Equal(chaves, []string{"email", "is_titular", "joined_at", "pending_titular", "role", "user_id"}) {
 			t.Errorf("o item %d tem as chaves %v", i, chaves)
 		}
 		if m["user_id"] != q.id.String() || m["role"] != q.papel || m["is_titular"] != q.titular {
@@ -167,7 +167,7 @@ func TestRenameProjectRoute(t *testing.T) {
 		t.Fatalf("PATCH do projeto pelo owner deu %d, queria 200: %s", status, corpo)
 	}
 	item := decodificar(t, corpo)
-	if chaves := chavesDe(item); !slices.Equal(chaves, []string{"created_at", "id", "is_default", "limits", "name", "role"}) {
+	if chaves := chavesDe(item); !slices.Equal(chaves, []string{"created_at", "id", "is_default", "limits", "name", "pending_titular", "role"}) {
 		t.Errorf("o item tem as chaves %v, queria as de GET /api/v1/projects", chaves)
 	}
 	if item["id"] != e.projeto || item["name"] != "Renomeado" || item["is_default"] != true || item["role"] != "owner" {

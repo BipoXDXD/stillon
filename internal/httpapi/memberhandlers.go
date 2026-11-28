@@ -28,16 +28,20 @@ func NewMemberHandlers(svc *tenancy.Service) *MemberHandlers {
 // memberResponse é um item de GET /members. Campo a campo: nada do vínculo
 // além do que a tela de membros mostra.
 type memberResponse struct {
-	UserID    string    `json:"user_id"`
-	Email     string    `json:"email"`
-	Role      string    `json:"role"`
-	IsTitular bool      `json:"is_titular"`
-	JoinedAt  time.Time `json:"joined_at"`
+	UserID    string `json:"user_id"`
+	Email     string `json:"email"`
+	Role      string `json:"role"`
+	IsTitular bool   `json:"is_titular"`
+	// PendingTitular: a titularidade foi proposta a este membro (sempre
+	// presente, true ou false).
+	PendingTitular bool      `json:"pending_titular"`
+	JoinedAt       time.Time `json:"joined_at"`
 }
 
 func toMemberResponse(m tenancy.MemberView) memberResponse {
 	return memberResponse{
-		UserID: m.UserID.String(), Email: m.Email, Role: string(m.Role), IsTitular: m.IsTitular, JoinedAt: m.JoinedAt,
+		UserID: m.UserID.String(), Email: m.Email, Role: string(m.Role), IsTitular: m.IsTitular,
+		PendingTitular: m.PendingTitular, JoinedAt: m.JoinedAt,
 	}
 }
 

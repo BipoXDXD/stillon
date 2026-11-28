@@ -31,7 +31,7 @@ func (s *Store) ListMembers(ctx context.Context, actorID, projectID uuid.UUID) (
 		}
 		out = make([]tenancy.MemberView, 0, len(linhas))
 		for _, l := range linhas {
-			m, err := membro(l.UserID, l.Email, l.Role, l.IsTitular, l.CreatedAt)
+			m, err := membro(l.UserID, l.Email, l.Role, l.IsTitular, l.PendingTitular, l.CreatedAt)
 			if err != nil {
 				return err
 			}
@@ -175,7 +175,7 @@ func (s *Store) mutarMembro(ctx context.Context, actorID, projectID, targetID uu
 		if err != nil {
 			return fmt.Errorf("ler membro: %w", err)
 		}
-		alvo, err := membro(l.UserID, l.Email, l.Role, l.IsTitular, l.CreatedAt)
+		alvo, err := membro(l.UserID, l.Email, l.Role, l.IsTitular, l.PendingTitular, l.CreatedAt)
 		if err != nil {
 			return err
 		}
@@ -239,11 +239,13 @@ func travarEReler(ctx context.Context, q *db.Queries, sc tenancy.ProjectScope) (
 }
 
 // membro monta o MemberView de uma linha de project_members.
-func membro(id uuid.UUID, email, papel string, titular bool, desde time.Time) (tenancy.MemberView, error) {
+func membro(id uuid.UUID, email, papel string, titular, pendente bool, desde time.Time) (tenancy.MemberView, error) {
 	r, err := tenancy.ParseRole(papel)
 	if err != nil {
 		// O CHECK de project_members só aceita papéis conhecidos.
 		return tenancy.MemberView{}, fmt.Errorf("papel gravado em project_members: %w", err)
 	}
-	return tenancy.MemberView{UserID: id, Email: email, Role: r, IsTitular: titular, JoinedAt: desde}, nil
+	return tenancy.MemberView{
+		UserID: id, Email: email, Role: r, IsTitular: titular, PendingTitular: pendente, JoinedAt: desde,
+	}, nil
 }

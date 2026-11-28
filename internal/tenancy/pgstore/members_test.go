@@ -352,3 +352,46 @@ func TestRenameReturnsTitularLimits(t *testing.T) {
 		t.Errorf("renomear projeto do operador: limites %+v, %v; queria os do operador", p.Limites, err)
 	}
 }
+
+// O pendente da transferência aparece na lista para todo membro (o titular
+// recarrega e ainda sabe a quem propôs), e some quando a proposta cai.
+func TestListMembersShowsPendingTitular(t *testing.T) {
+	pool := testdb.New(t)
+	c := novaCessao(t, pool)
+	st := pgstore.New(pool)
+	ctx := context.Background()
+
+	pendentes := func(quem uuid.UUID) map[uuid.UUID]bool {
+		t.Helper()
+		membros, err := st.ListMembers(ctx, quem, c.pa)
+		if err != nil {
+			t.Fatal(err)
+		}
+		r := map[uuid.UUID]bool{}
+		for _, m := range membros {
+			r[m.UserID] = m.PendingTitular
+		}
+		return r
+	}
+
+	if err := st.ProposeTransfer(ctx, c.a, c.pa, c.b); err != nil {
+		t.Fatal(err)
+	}
+	for _, quem := range []uuid.UUID{c.a, c.d} {
+		got := pendentes(quem)
+		for _, id := range []uuid.UUID{c.a, c.b, c.c, c.d} {
+			if got[id] != (id == c.b) {
+				t.Errorf("lista de %s: pending_titular de %s = %v, queria %v", quem, id, got[id], id == c.b)
+			}
+		}
+	}
+
+	if err := st.CancelTransfer(ctx, c.a, c.pa); err != nil {
+		t.Fatal(err)
+	}
+	for id, p := range pendentes(c.a) {
+		if p {
+			t.Errorf("depois de cancelar, %s ainda pendente", id)
+		}
+	}
+}

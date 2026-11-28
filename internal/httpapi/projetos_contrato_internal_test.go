@@ -22,8 +22,8 @@ import (
 // channels_contrato_internal_test.go: o JSON real, de toProjectResponse e
 // apierr.WriteJSON, tem de continuar igual a testdata/contrato-projetos.json.
 // Mudou o DTO de propósito? Regrave com STILLON_REGRAVAR_CONTRATO=1. O painel
-// ainda não lê este arquivo: o teste dele que o consome chega no 2b.4 (Task
-// 28), e só a partir daí regravar pede rodar também o vitest do painel.
+// lê este arquivo (schemas-contrato.test.ts): regravar pede rodar também o
+// vitest do painel.
 const arquivoDoContratoProjetos = "contrato-projetos.json"
 
 func TestProjectResponseKeepsThePanelContract(t *testing.T) {
@@ -40,7 +40,7 @@ func TestProjectResponseKeepsThePanelContract(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !bytes.Equal(gerado, gravado) {
-		t.Errorf("a resposta de projeto mudou; se foi de propósito, regrave com %s=1, confira o git diff de %s (o vitest do painel passa a ler o arquivo no 2b.4)",
+		t.Errorf("a resposta de projeto mudou; se foi de propósito, regrave com %s=1, confira o git diff de %s e rode o vitest do painel",
 			regravarContrato, caminho)
 	}
 }
@@ -76,7 +76,7 @@ func TestProjectContractListsLimits(t *testing.T) {
 		if err := json.Unmarshal(respostaRealDeProjeto(t, c.projeto), &item); err != nil {
 			t.Fatal(err)
 		}
-		if got, want := chavesOrdenadas(item), []string{"created_at", "id", "is_default", "limits", "name", "role"}; !slices.Equal(got, want) {
+		if got, want := chavesOrdenadas(item), []string{"created_at", "id", "is_default", "limits", "name", "pending_titular", "role"}; !slices.Equal(got, want) {
 			t.Errorf("%s: chaves do item = %v, queria %v", c.nome, got, want)
 		}
 		var limites map[string]json.RawMessage
@@ -119,6 +119,14 @@ func projetosDoContrato() []projetoDoContrato {
 			Role:      tenancy.RoleOwner,
 			CreatedAt: time.Date(2026, 11, 22, 9, 30, 15, 123000000, time.UTC),
 			Limites:   tenancy.LimitesDe(true),
+		}},
+		{nome: "proposto a quem pede", projeto: tenancy.ProjectSummary{
+			ID:             uuid.MustParse("01900000-0000-7000-8000-000000000103"),
+			Name:           "Loja",
+			Role:           tenancy.RoleOwner,
+			CreatedAt:      time.Date(2026, 11, 27, 18, 5, 0, 0, time.UTC),
+			Limites:        tenancy.LimitesDe(false),
+			PendingTitular: true,
 		}},
 	}
 }

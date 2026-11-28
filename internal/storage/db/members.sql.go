@@ -31,7 +31,8 @@ func (q *Queries) DeleteProjectMember(ctx context.Context, arg DeleteProjectMemb
 }
 
 const getProjectMember = `-- name: GetProjectMember :one
-SELECT m.user_id, u.email, m.role, (m.user_id = p.titular_id)::boolean AS is_titular, m.created_at
+SELECT m.user_id, u.email, m.role, (m.user_id = p.titular_id)::boolean AS is_titular,
+       ((m.user_id = p.pending_titular_id) IS TRUE)::boolean AS pending_titular, m.created_at
   FROM project_members m
   JOIN users u ON u.id = m.user_id
   JOIN projects p ON p.id = m.project_id
@@ -44,11 +45,12 @@ type GetProjectMemberParams struct {
 }
 
 type GetProjectMemberRow struct {
-	UserID    uuid.UUID
-	Email     string
-	Role      string
-	IsTitular bool
-	CreatedAt time.Time
+	UserID         uuid.UUID
+	Email          string
+	Role           string
+	IsTitular      bool
+	PendingTitular bool
+	CreatedAt      time.Time
 }
 
 func (q *Queries) GetProjectMember(ctx context.Context, arg GetProjectMemberParams) (GetProjectMemberRow, error) {
@@ -59,13 +61,15 @@ func (q *Queries) GetProjectMember(ctx context.Context, arg GetProjectMemberPara
 		&i.Email,
 		&i.Role,
 		&i.IsTitular,
+		&i.PendingTitular,
 		&i.CreatedAt,
 	)
 	return i, err
 }
 
 const listProjectMembers = `-- name: ListProjectMembers :many
-SELECT m.user_id, u.email, m.role, (m.user_id = p.titular_id)::boolean AS is_titular, m.created_at
+SELECT m.user_id, u.email, m.role, (m.user_id = p.titular_id)::boolean AS is_titular,
+       ((m.user_id = p.pending_titular_id) IS TRUE)::boolean AS pending_titular, m.created_at
   FROM project_members m
   JOIN users u ON u.id = m.user_id
   JOIN projects p ON p.id = m.project_id
@@ -74,11 +78,12 @@ SELECT m.user_id, u.email, m.role, (m.user_id = p.titular_id)::boolean AS is_tit
 `
 
 type ListProjectMembersRow struct {
-	UserID    uuid.UUID
-	Email     string
-	Role      string
-	IsTitular bool
-	CreatedAt time.Time
+	UserID         uuid.UUID
+	Email          string
+	Role           string
+	IsTitular      bool
+	PendingTitular bool
+	CreatedAt      time.Time
 }
 
 // O titular primeiro, depois por data de entrada.
@@ -96,6 +101,7 @@ func (q *Queries) ListProjectMembers(ctx context.Context, projectID uuid.UUID) (
 			&i.Email,
 			&i.Role,
 			&i.IsTitular,
+			&i.PendingTitular,
 			&i.CreatedAt,
 		); err != nil {
 			return nil, err

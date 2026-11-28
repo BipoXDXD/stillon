@@ -1,5 +1,6 @@
 import { screen, waitFor, within } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
+import type { PapelConhecido } from '@/lib/permissoes'
 import { PROJETO_PADRAO, type ApiFalsa } from '@/test/api-falsa'
 import { alvo, canal, eventoDeHeartbeat, heartbeat, incidente, incidenteDeHeartbeat, itemDoResumo, pagina } from '@/test/fixtures'
 import { renderizarPainel } from '@/test/renderizar'
@@ -13,7 +14,7 @@ import '@/test/aquecer-estilos'
 
 const P = `/projects/${PROJETO_PADRAO}`
 
-function comPapel(papel: string, preparar?: (f: ApiFalsa) => void) {
+function comPapel(papel: PapelConhecido, preparar?: (f: ApiFalsa) => void) {
   return (f: ApiFalsa) => {
     f.definirPapel(PROJETO_PADRAO, papel)
     preparar?.(f)
@@ -70,7 +71,7 @@ describe('Reconhecer', () => {
     f.estado.incidentes = [incidente({ cause: 'conn_refused' })]
   }
 
-  it.each([
+  it.each<[PapelConhecido, boolean]>([
     ['viewer', false],
     ['member', true],
   ])('na faixa do alvo, %s: aparece = %s', async (papel, aparece) => {
@@ -80,7 +81,7 @@ describe('Reconhecer', () => {
     expect(within(faixa).queryByText(/Reconhecer interrompe os lembretes/) !== null).toBe(aparece)
   })
 
-  it.each([
+  it.each<[PapelConhecido, boolean]>([
     ['viewer', false],
     ['member', true],
   ])('nos incidentes, %s: aparece = %s', async (papel, aparece) => {
@@ -94,7 +95,7 @@ describe('Reconhecer', () => {
     expect(screen.queryByText(/Reconhecer interrompe os lembretes/) !== null).toBe(aparece)
   })
 
-  it.each([
+  it.each<[PapelConhecido, boolean]>([
     ['viewer', false],
     ['member', true],
   ])('nos incidentes do heartbeat, %s: aparece = %s', async (papel, aparece) => {

@@ -10,7 +10,8 @@ SELECT pg_advisory_xact_lock(hashtextextended('stillon.members:' || sqlc.arg(pro
 
 -- O titular primeiro, depois por data de entrada.
 -- name: ListProjectMembers :many
-SELECT m.user_id, u.email, m.role, (m.user_id = p.titular_id)::boolean AS is_titular, m.created_at
+SELECT m.user_id, u.email, m.role, (m.user_id = p.titular_id)::boolean AS is_titular,
+       ((m.user_id = p.pending_titular_id) IS TRUE)::boolean AS pending_titular, m.created_at
   FROM project_members m
   JOIN users u ON u.id = m.user_id
   JOIN projects p ON p.id = m.project_id
@@ -18,7 +19,8 @@ SELECT m.user_id, u.email, m.role, (m.user_id = p.titular_id)::boolean AS is_tit
  ORDER BY (m.user_id = p.titular_id) DESC, m.created_at, m.user_id;
 
 -- name: GetProjectMember :one
-SELECT m.user_id, u.email, m.role, (m.user_id = p.titular_id)::boolean AS is_titular, m.created_at
+SELECT m.user_id, u.email, m.role, (m.user_id = p.titular_id)::boolean AS is_titular,
+       ((m.user_id = p.pending_titular_id) IS TRUE)::boolean AS pending_titular, m.created_at
   FROM project_members m
   JOIN users u ON u.id = m.user_id
   JOIN projects p ON p.id = m.project_id

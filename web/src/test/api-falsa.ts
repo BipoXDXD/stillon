@@ -4,17 +4,20 @@ import type {
   Alvo,
   Canal,
   Check,
+  Convite,
   EventoDeHeartbeat,
   Heartbeat,
   Hora,
   Incidente,
   IncidenteDeHeartbeat,
   ItemDoResumo,
+  Membro,
   PaginaDeStatus,
   Projeto,
   Sessao,
 } from '@/lib/api/schemas'
-import { Agendamento } from '@/lib/api/schemas'
+import { Agendamento, Papel } from '@/lib/api/schemas'
+import { pode, podeConvidarComo, type PapelConhecido, type Permissao } from '@/lib/permissoes'
 import versaoDosTermos from '@/features/legal/versao.json'
 import { SITE_KEY_DO_TURNSTILE, TOKEN_DO_TURNSTILE } from './fixtures'
 
@@ -39,6 +42,8 @@ type Contexto = { request: Request; params: Record<string, string>; corpo: Json;
 type Tratador = (a: Contexto) => Response | Promise<Response>
 
 export const EMAIL = 'dono@exemplo.com'
+// O id do usuário logado na falsa (o user_id dele nas listas de membros).
+export const USUARIO = 'usr-dono'
 export const SENHA = 'uma senha bem comprida'
 export const TOTP_OK = '123456'
 export const RECUPERACAO_OK = 'ABCDEFGHIJKLMNOP'
@@ -201,7 +206,40 @@ function novosRecursos() {
 }
 
 export type RecursosFalsos = ReturnType<typeof novosRecursos>
-export type ProjetoFalso = { projeto: Entrada<typeof Projeto>; recursos: RecursosFalsos }
+// A equipe de cada projeto: os membros (o usuário logado entre eles, com o
+// papel do projeto), os convites pendentes e o id a quem a titularidade foi
+// proposta. O token de cada convite fica em tokensDeConvite, fora da resposta.
+export type ProjetoFalso = {
+  projeto: Entrada<typeof Projeto>
+  recursos: RecursosFalsos
+  membros: Entrada<typeof Membro>[]
+  convites: Entrada<typeof Convite>[]
+  pendente: string | null
+}
+
+// Os DTOs de entrada das rotas da equipe.
+const CAMPOS_DO_PAPEL = ['role']
+const CAMPOS_DO_CONVITE = ['email', 'role']
+const CAMPOS_DA_TRANSFERENCIA = ['user_id']
+const PAPEIS_CONHECIDOS: readonly string[] = ['owner', 'manager', 'member', 'viewer']
+// tenancy.LimitesDe(false).MembrosPorProjeto: o teto quando o projeto não traz
+// limits.
+const LIMITE_DE_MEMBROS = 3
+// O titular que a falsa põe no projeto quando o usuário deixa de sê-lo.
+const TITULAR_ALHEIO = 'usr-titular'
+
+// Um projeto da falsa com a equipe inicial: só o usuário logado, titular.
+function novoProjetoFalso(projeto: Entrada<typeof Projeto>, recursos: RecursosFalsos): ProjetoFalso {
+  return {
+    projeto,
+    recursos,
+    membros: [
+      { user_id: USUARIO, email: EMAIL, role: projeto.role, is_titular: true, joined_at: projeto.created_at },
+    ],
+    convites: [],
+    pendente: null,
+  }
+}
 
 // O id do projeto padrão do usuário da falsa.
 export const PROJETO_PADRAO = 'proj-padrao'
@@ -265,14 +303,25 @@ export function criarApiFalsa() {
     // Os projetos de que o usuário é membro, cada um com os recursos dele.
     // Os do padrão são o próprio st. O GET ordena como o servidor.
     projetos: [] as ProjetoFalso[],
+    // Projetos de que o usuário ainda não é membro: o destino dos convites
+    // que ele aceita.
+    projetosAlheios: [] as ProjetoFalso[],
+    // O token de cada convite pendente: o projeto e o id do convite. Revogar
+    // ou reconvidar tira o convite, e o token morre junto.
+    tokensDeConvite: new Map<string, { projeto: ProjetoFalso; id: string }>(),
+    // Quem mandou cada convite (invited_by), pelo id do convite: rebaixar quem
+    // convidou apaga o que o papel novo não poderia mandar.
+    autoresDeConvite: new Map<string, string>(),
     // tenancy.LimitesDe(false).Projetos: quantos projetos o usuário pode ter como
     // titular (owner).
     limiteDeProjetos: 3,
   }
-  st.projetos.push({
-    projeto: { id: PROJETO_PADRAO, name: 'Padrão', is_default: true, role: 'owner', created_at: '2026-09-01T10:00:00Z' },
-    recursos: st,
-  })
+  st.projetos.push(
+    novoProjetoFalso(
+      { id: PROJETO_PADRAO, name: 'Padrão', is_default: true, role: 'owner', created_at: '2026-09-01T10:00:00Z' },
+      st,
+    ),
+  )
 
   function contar(chave: string, corpo?: Json) {
     st.chamadas.set(chave, (st.chamadas.get(chave) ?? 0) + 1)
@@ -829,12 +878,188 @@ export function criarApiFalsa() {
   }
 
   function criarProjeto(nome: string): ProjetoFalso {
-    const novo = {
-      projeto: { id: `proj-${st.projetos.length + 1}`, name: nome, is_default: false, role: 'owner', created_at: agora().toISOString() },
-      recursos: novosRecursos(),
-    }
+    const novo = novoProjetoFalso(
+      { id: `proj-${st.projetos.length + 1}`, name: nome, is_default: false, role: 'owner', created_at: agora().toISOString() },
+      novosRecursos(),
+    )
     st.projetos.push(novo)
     return novo
+  }
+
+  // ProjectHandlers.Create e Rename: o nome como tenancy.ParseProjectName (o
+  // invisível aqui é só controle e formato, sem a exceção do ZWJ entre
+  // visíveis de rotulo.TemInvisivel).
+  function motivoDoNome(cru: unknown) {
+    const nome = typeof cru === 'string' ? cru.trim() : ''
+    const motivo =
+      nome === '' ? 'required' : [...nome].length > MAX_NOME_DO_PROJETO ? 'too_long' : INVISIVEL.test(nome) ? 'invalid' : null
+    return { nome, motivo }
+  }
+
+  const papelDe = (pf: ProjetoFalso) => Papel.parse(pf.projeto.role)
+  const titularDe = (pf: ProjetoFalso) => pf.membros.find((m) => m.is_titular)?.user_id
+  // A resposta de projeto: pending_titular é de quem pede (o usuário logado).
+  const respostaDoProjeto = (pf: ProjetoFalso) => ({ ...pf.projeto, pending_titular: pf.pendente === USUARIO })
+  const respostaDoMembro = (pf: ProjetoFalso, m: Entrada<typeof Membro>) => ({
+    ...m,
+    pending_titular: m.user_id === pf.pendente,
+  })
+  const tetoDeMembros = (pf: ProjetoFalso) => pf.projeto.limits?.members_per_project ?? LIMITE_DE_MEMBROS
+
+  // Um convite novo no projeto, mandado por autor; reconvidar o mesmo e-mail
+  // troca o anterior (o link antigo morre) e ocupa a mesma vaga. Devolve o
+  // convite e o token.
+  function gravarConvite(pf: ProjetoFalso, email: string, role: PapelConhecido, autor = USUARIO) {
+    pf.convites = pf.convites.filter((c) => c.email !== email)
+    st.seq++
+    const convite = {
+      id: `conv-${st.seq}`,
+      email,
+      role,
+      created_at: agora().toISOString(),
+      expires_at: new Date(agora().getTime() + 7 * 24 * UMA_HORA_S * 1000).toISOString(),
+    }
+    const token = `token-de-convite-${st.seq}`
+    pf.convites.push(convite)
+    st.tokensDeConvite.set(token, { projeto: pf, id: convite.id })
+    st.autoresDeConvite.set(convite.id, autor)
+    return { convite, token }
+  }
+
+  // As rotas da equipe de um projeto (PR 4). O projeto fora da lista do
+  // usuário é 404, como noProjeto; depois, o papel dele decide, como
+  // tenancy.Role.Can.
+  function rotasDaEquipe(): HttpHandler[] {
+    type TratadorDaEquipe = (a: Contexto & { pf: ProjetoFalso; papel: Papel }) => Response | Promise<Response>
+    const rotaP = (metodo: 'get' | 'post' | 'patch' | 'delete', caminho: string, fn: TratadorDaEquipe) =>
+      rota(metodo, `/projects/:projectId${caminho}`, (a) => {
+        const pf = st.projetos.find((p) => p.projeto.id === a.params.projectId)
+        if (!pf) return erro(404, 'not_found')
+        return fn({ ...a, pf, papel: papelDe(pf) })
+      })
+    const exige = (p: Permissao, fn: TratadorDaEquipe): TratadorDaEquipe => (a) =>
+      pode(a.papel, p) ? fn(a) : erro(403, 'forbidden')
+
+    return [
+      // MemberHandlers.List: o titular primeiro, depois por data de entrada.
+      rotaP('get', '/members', estrita([], ({ pf }) =>
+        HttpResponse.json({
+          items: pf.membros
+            .toSorted((a, b) => Number(b.is_titular) - Number(a.is_titular) || a.joined_at.localeCompare(b.joined_at))
+            .map((m) => respostaDoMembro(pf, m)),
+        }),
+      )),
+      // ChangeRole: papel fora dos quatro é 400 antes de tudo; alvo que não é
+      // membro, 404; quem não é owner, 403; o titular não deixa de ser owner.
+      // Rebaixar o pendente apaga a proposta (ClearTitularTransferTo).
+      rotaP('patch', '/members/:userId', estrita(CAMPOS_DO_PAPEL, ({ pf, papel, params, corpo }) => {
+        if (typeof corpo.role !== 'string' || !PAPEIS_CONHECIDOS.includes(corpo.role)) {
+          return erro(400, 'validation_failed', [{ field: 'role', reason: 'invalid' }])
+        }
+        const alvo = pf.membros.find((m) => m.user_id === params.userId)
+        if (!alvo) return erro(404, 'not_found')
+        if (!pode(papel, 'manage_members')) return erro(403, 'forbidden')
+        if (alvo.is_titular && corpo.role !== 'owner') return erro(409, 'titular_protected')
+        alvo.role = corpo.role
+        // apagarConvitesQueNaoPoderiaMandar: o link de um papel que quem
+        // convidou já não pode dar não fica vivo.
+        const novo = Papel.parse(corpo.role)
+        pf.convites = pf.convites.filter(
+          (c) => st.autoresDeConvite.get(c.id) !== alvo.user_id || podeConvidarComo(novo, Papel.parse(c.role) as PapelConhecido),
+        )
+        if (alvo.user_id === USUARIO) pf.projeto.role = corpo.role
+        if (corpo.role !== 'owner' && pf.pendente === alvo.user_id) pf.pendente = null
+        return HttpResponse.json(respostaDoMembro(pf, alvo))
+      })),
+      // RemoveMember: sair (o próprio id) vale para todo papel; remover outro
+      // é de owner; o titular não sai nem é removido. Remover o pendente apaga
+      // a proposta; quem sai perde o projeto da lista.
+      rotaP('delete', '/members/:userId', estrita([], ({ pf, papel, params }) => {
+        const alvo = pf.membros.find((m) => m.user_id === params.userId)
+        if (!alvo) return erro(404, 'not_found')
+        if (alvo.user_id !== USUARIO && !pode(papel, 'manage_members')) return erro(403, 'forbidden')
+        if (alvo.is_titular) return erro(409, 'titular_protected')
+        pf.membros = pf.membros.filter((m) => m !== alvo)
+        if (pf.pendente === alvo.user_id) pf.pendente = null
+        if (alvo.user_id === USUARIO) st.projetos = st.projetos.filter((p) => p !== pf)
+        return new HttpResponse(null, { status: 204 })
+      })),
+      // ProjectHandlers.Rename: de owner; a resposta é o item de GET /projects.
+      rotaP('patch', '', estrita(['name'], exige('manage_project', ({ pf, corpo }) => {
+        const { nome, motivo } = motivoDoNome(corpo.name)
+        if (motivo) return erro(400, 'validation_failed', [{ field: 'name', reason: motivo }])
+        pf.projeto.name = nome
+        return HttpResponse.json(respostaDoProjeto(pf))
+      }))),
+
+      // ListPending: de manager para cima.
+      rotaP('get', '/invitations', estrita([], exige('invite_basic', ({ pf }) => HttpResponse.json({ items: pf.convites })))),
+      // InvitationHandlers.Create, atrás de criacao: e-mail, papel, a
+      // autorização pelo papel do convite, já membro e, por último, o teto
+      // (membros além do titular mais convites pendentes, sem o do mesmo
+      // e-mail, que é trocado).
+      rotaP('post', '/invitations', exigeEmailConfirmado(estrita(CAMPOS_DO_CONVITE, ({ pf, papel, corpo }) => {
+        const email = typeof corpo.email === 'string' ? corpo.email.trim().toLowerCase() : ''
+        if (!EMAIL_VALIDO.test(email)) return erro(400, 'validation_failed', [{ field: 'email', reason: 'invalid' }])
+        if (typeof corpo.role !== 'string' || !PAPEIS_CONHECIDOS.includes(corpo.role)) {
+          return erro(400, 'validation_failed', [{ field: 'role', reason: 'invalid' }])
+        }
+        const role = corpo.role as PapelConhecido
+        if (!podeConvidarComo(papel, role)) return erro(403, 'forbidden')
+        if (pf.membros.some((m) => m.email === email)) return erro(409, 'already_member')
+        const outrosConvites = pf.convites.filter((c) => c.email !== email).length
+        if (pf.membros.length - 1 + outrosConvites >= tetoDeMembros(pf)) return erro(409, 'member_limit_reached')
+        return HttpResponse.json(gravarConvite(pf, email, role).convite, { status: 201 })
+      }))),
+      // Revoke: quem não convida nada recebe 403 antes de saber se o convite
+      // existe; o papel do convite passa pela mesma regra de convidar.
+      rotaP('delete', '/invitations/:invitationId', estrita([], exige('invite_basic', ({ pf, papel, params }) => {
+        const c = pf.convites.find((x) => x.id === params.invitationId)
+        if (!c) return erro(404, 'not_found')
+        if (!podeConvidarComo(papel, Papel.parse(c.role) as PapelConhecido)) return erro(403, 'forbidden')
+        pf.convites = pf.convites.filter((x) => x !== c)
+        return new HttpResponse(null, { status: 204 })
+      }))),
+
+      // ProposeTransfer: user_id que não é uuid é 400; só o titular propõe
+      // (403); o alvo tem de ser outro owner, e o padrão não se transfere
+      // (409). 202 sem corpo.
+      rotaP('post', '/titular-transfer', estrita(CAMPOS_DA_TRANSFERENCIA, ({ pf, corpo }) => {
+        if (typeof corpo.user_id !== 'string' || corpo.user_id === '') {
+          return erro(400, 'validation_failed', [{ field: 'user_id', reason: 'invalid' }])
+        }
+        if (titularDe(pf) !== USUARIO) return erro(403, 'forbidden')
+        const alvo = pf.membros.find((m) => m.user_id === corpo.user_id)
+        if (pf.projeto.is_default || !alvo || alvo.is_titular || alvo.role !== 'owner') {
+          return erro(409, 'titular_transfer_target')
+        }
+        pf.pendente = alvo.user_id
+        return new HttpResponse(null, { status: 202 })
+      })),
+      // AcceptTransfer, atrás de criacao: só o pendente, ainda owner. Quem
+      // recebe ganha o projeto na própria cota.
+      rotaP('post', '/titular-transfer/accept', exigeEmailConfirmado(estrita([], ({ pf, papel }) => {
+        if (pf.pendente !== USUARIO || !pode(papel, 'manage_members')) return erro(403, 'forbidden')
+        const titularidades = st.projetos.filter((p) => titularDe(p) === USUARIO).length
+        if (titularidades >= st.limiteDeProjetos) return erro(409, 'project_limit_reached')
+        for (const m of pf.membros) m.is_titular = m.user_id === USUARIO
+        pf.pendente = null
+        return HttpResponse.json(respostaDoProjeto(pf))
+      }))),
+      // CancelTransfer: o titular cancela (sem proposta, passa) e o pendente
+      // recusa; outro membro recebe 403.
+      rotaP('delete', '/titular-transfer', estrita([], ({ pf }) => {
+        if (titularDe(pf) !== USUARIO && pf.pendente !== USUARIO) return erro(403, 'forbidden')
+        pf.pendente = null
+        return new HttpResponse(null, { status: 204 })
+      })),
+    ]
+  }
+
+  function projetoDaLista(projetoId: string) {
+    const p = st.projetos.find((x) => x.projeto.id === projetoId)
+    if (!p) throw new Error(`projeto ${projetoId} não existe na falsa`)
+    return p
   }
 
   const handlers: HttpHandler[] = [
@@ -985,6 +1210,7 @@ export function criarApiFalsa() {
       false,
     ),
 
+    ...rotasDaEquipe(),
     ...rotasDosRecursos('', () => st),
     ...rotasDosRecursos('/projects/:projectId', (params) => st.projetos.find((p) => p.projeto.id === params.projectId)?.recursos),
 
@@ -992,7 +1218,7 @@ export function criarApiFalsa() {
     rota('get', '/projects', () =>
       HttpResponse.json({
         items: st.projetos
-          .map((p) => p.projeto)
+          .map(respostaDoProjeto)
           .toSorted((a, b) => Number(b.is_default) - Number(a.is_default) || a.id.localeCompare(b.id)),
       }),
     ),
@@ -1000,15 +1226,31 @@ export function criarApiFalsa() {
     // invisível aqui é só controle e formato, sem a exceção do ZWJ entre
     // visíveis de rotulo.TemInvisivel) e o teto contado pelo titular.
     rota('post', '/projects', exigeEmailConfirmado(estrita(['name'], ({ corpo }) => {
-      const nome = typeof corpo.name === 'string' ? corpo.name.trim() : ''
-      const motivo =
-        nome === '' ? 'required' : [...nome].length > MAX_NOME_DO_PROJETO ? 'too_long' : INVISIVEL.test(nome) ? 'invalid' : null
+      const { nome, motivo } = motivoDoNome(corpo.name)
       if (motivo) return erro(400, 'validation_failed', [{ field: 'name', reason: motivo }])
       if (st.projetos.filter((p) => p.projeto.role === 'owner').length >= st.limiteDeProjetos) {
         return erro(409, 'project_limit_reached')
       }
-      return HttpResponse.json(criarProjeto(nome).projeto, { status: 201 })
+      return HttpResponse.json(respostaDoProjeto(criarProjeto(nome)), { status: 201 })
     }))),
+    // InvitationHandlers.Accept: da conta, sem a trava de e-mail. Token que
+    // não existe (ou revogado, trocado, já aceito) é 400; o link de outro
+    // e-mail, 403. Quem aceita entra com o papel do convite.
+    rota('post', '/invitations/accept', estrita(['token'], ({ corpo }) => {
+      const achado = st.tokensDeConvite.get(String(corpo.token ?? ''))
+      const pf = achado?.projeto
+      const c = pf?.convites.find((x) => x.id === achado?.id)
+      if (!pf || !c) return erro(400, 'token_invalid')
+      if (c.email !== EMAIL) return erro(403, 'invitation_other_account')
+      if (pf.membros.some((m) => m.user_id === USUARIO)) return erro(409, 'already_member')
+      st.tokensDeConvite.delete(String(corpo.token))
+      pf.convites = pf.convites.filter((x) => x !== c)
+      pf.membros.push({ user_id: USUARIO, email: EMAIL, role: c.role, is_titular: false, joined_at: agora().toISOString() })
+      pf.projeto.role = c.role
+      st.projetosAlheios = st.projetosAlheios.filter((p) => p !== pf)
+      st.projetos.push(pf)
+      return HttpResponse.json(respostaDoProjeto(pf))
+    })),
 
     rota('get', '/sessions', () => HttpResponse.json({ items: st.sessoes })),
     rota('delete', '/sessions/:id', ({ params }) => {
@@ -1133,12 +1375,53 @@ export function criarApiFalsa() {
     // Um projeto novo, vazio, de que o usuário é dono.
     criarProjeto,
     chamadas: (rotaChave: string) => st.chamadas.get(rotaChave) ?? 0,
-    // O papel do usuário num projeto da lista (projectResponse.role). Só o
-    // painel o lê: as rotas desta falsa não conferem o papel.
-    definirPapel(projetoId: string, papel: string) {
-      const p = st.projetos.find((x) => x.projeto.id === projetoId)
-      if (!p) throw new Error(`projeto ${projetoId} não existe na falsa`)
+    // O papel do usuário num projeto da lista (projectResponse.role). Só as
+    // rotas da equipe o conferem; as dos recursos, não. Quem deixa de ser
+    // owner deixa de ser titular: a falsa põe outro no lugar.
+    definirPapel(projetoId: string, papel: PapelConhecido) {
+      const p = projetoDaLista(projetoId)
       p.projeto.role = papel
+      const eu = p.membros.find((m) => m.user_id === USUARIO)!
+      eu.role = papel
+      if (papel !== 'owner' && eu.is_titular) {
+        eu.is_titular = false
+        p.membros.unshift({
+          user_id: TITULAR_ALHEIO,
+          email: 'titular@exemplo.com',
+          role: 'owner',
+          is_titular: true,
+          joined_at: p.projeto.created_at,
+        })
+      }
+    },
+    // Um projeto de outro titular, de que o usuário ainda não é membro: o
+    // destino de um convite que ele aceita.
+    criarProjetoAlheio(nome: string): ProjetoFalso {
+      const novo = novoProjetoFalso(
+        { id: `alheio-${st.projetosAlheios.length + 1}`, name: nome, is_default: false, role: 'owner', created_at: agora().toISOString() },
+        novosRecursos(),
+      )
+      novo.membros = [
+        { user_id: TITULAR_ALHEIO, email: 'titular@exemplo.com', role: 'owner', is_titular: true, joined_at: novo.projeto.created_at },
+      ]
+      st.projetosAlheios.push(novo)
+      return novo
+    },
+    // Um membro a mais no projeto (sem passar por convite).
+    adicionarMembro(projetoId: string, m: { user_id: string; email: string; role: PapelConhecido }) {
+      const p = projetoDaLista(projetoId)
+      p.membros.push({ ...m, is_titular: false, joined_at: agora().toISOString() })
+    },
+    // Um convite pendente, mandado por `por` (o usuário logado, se ausente);
+    // devolve o token que o e-mail levaria. Serve também aos projetos alheios.
+    adicionarConvite(projetoId: string, c: { email: string; role: PapelConhecido; por?: string }): string {
+      const p = [...st.projetos, ...st.projetosAlheios].find((x) => x.projeto.id === projetoId)
+      if (!p) throw new Error(`projeto ${projetoId} não existe na falsa`)
+      return gravarConvite(p, c.email, c.role, c.por).token
+    },
+    // A titularidade proposta a userId, como o POST do titular.
+    proporTransferenciaA(projetoId: string, userId: string) {
+      projetoDaLista(projetoId).pendente = userId
     },
     corpos: (rotaChave: string) => st.corpos.get(rotaChave) ?? [],
     // O navegador tem um refresh válido no pote: o boot entra sozinho.

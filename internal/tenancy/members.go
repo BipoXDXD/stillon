@@ -28,7 +28,10 @@ type MemberView struct {
 	Email     string
 	Role      Role
 	IsTitular bool
-	JoinedAt  time.Time
+	// PendingTitular: a titularidade foi proposta a este membro e espera o
+	// aceite. Todo membro vê, para o titular saber a quem propôs.
+	PendingTitular bool
+	JoinedAt       time.Time
 }
 
 // AuthorizeInvite diz se actor pode convidar alguém com o papel dado: member

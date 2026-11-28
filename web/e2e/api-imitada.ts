@@ -6,12 +6,14 @@ import type { ConfigDoCadastro, ConfirmacaoTotp, InicioDaTroca, Projeto, Serie }
 import {
   alvo,
   canal,
+  convite,
   eventoDeHeartbeat,
   heartbeat,
   incidente,
   incidenteDeHeartbeat,
   itemDoResumo,
   me,
+  membro,
   pagina,
   projeto,
   sessao,
@@ -110,6 +112,17 @@ const respostas: Record<string, unknown> = {
   },
   'GET /status-pages': { items: [pagina({ id: 'p1', items: [{ target_id: 'a1', display_name: 'API' }], created_at: agora })] },
   'GET /sessions': { items: [sessao({ id: 'f1', created_at: agora, last_used_at: agora })] },
+  // A equipe (o axe da tela de membros, PR 4): o titular, um viewer e um
+  // convite pendente.
+  'GET /members': {
+    items: [
+      membro({ user_id: 'u1', email: 'dono@exemplo.com', role: 'owner', is_titular: true, joined_at: agora }),
+      membro({ user_id: 'u2', email: 'leitor@exemplo.com', role: 'viewer', joined_at: agora }),
+    ],
+  },
+  'GET /invitations': {
+    items: [convite({ id: 'i1', email: 'convidada@exemplo.com', role: 'member', created_at: agora, expires_at: agora })],
+  },
 }
 
 // A troca de autenticador (spec do Plano 9 §4.2): as respostas do rotate e

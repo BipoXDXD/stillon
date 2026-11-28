@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { z } from 'zod'
+import { ERROS_DO_SERVIDOR } from '@/test/api-falsa'
 import { ApiError } from './http'
 import { mensagemDe, mensagemDoCampo, textoDaCausa, textoDoErroDeCheck } from './mensagens'
 
@@ -90,5 +91,27 @@ describe('regra de conteúdo', () => {
 
   it('o 409 da status page repetida fala do projeto, não da conta', () => {
     expect(mensagemDe(new ApiError(409, 'status_page_exists', ''))).toBe('Este projeto já tem uma status page.')
+  })
+})
+
+// Todo código da errorTable do servidor (ERROS_DO_SERVIDOR, conferida contra o
+// Go) tem texto próprio: nenhum cai no genérico.
+// Sabotagem: apagar already_member de porCodigo → cai no genérico.
+describe('os códigos de erro do servidor', () => {
+  const GENERICO = mensagemDe(new ApiError(400, 'codigo_que_nao_existe', ''))
+
+  it('o genérico é o esperado', () => {
+    expect(GENERICO).toBe('Não foi possível concluir.')
+  })
+
+  it.each(Object.entries(ERROS_DO_SERVIDOR))('%s tem texto próprio', (codigo, status) => {
+    expect(mensagemDe(new ApiError(status, codigo, ''))).not.toBe(GENERICO)
+  })
+
+  it.each([
+    ['role', 'invalid', 'Escolha um papel.'],
+    ['user_id', 'invalid', 'Escolha um dono do projeto.'],
+  ])('o campo %s com %s vira texto próprio', (campo, motivo, texto) => {
+    expect(mensagemDoCampo(campo, motivo)).toBe(texto)
   })
 })

@@ -45,7 +45,7 @@ func (s *Store) ProposeTransfer(ctx context.Context, actorID, projectID, targetI
 		case err != nil:
 			return fmt.Errorf("ler o alvo da transferência: %w", err)
 		default:
-			if alvo, err = membro(l.UserID, l.Email, l.Role, l.IsTitular, l.CreatedAt); err != nil {
+			if alvo, err = membro(l.UserID, l.Email, l.Role, l.IsTitular, l.PendingTitular, l.CreatedAt); err != nil {
 				return err
 			}
 		}

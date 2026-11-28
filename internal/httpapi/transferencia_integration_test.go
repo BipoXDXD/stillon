@@ -110,8 +110,8 @@ func TestAcceptTransferRoute(t *testing.T) {
 	if item["id"] != c.projeto || item["role"] != "owner" || item["is_default"] != false {
 		t.Errorf("o item devolvido = %v, queria o projeto com papel owner", item)
 	}
-	if _, tem := item["pending_titular"]; tem {
-		t.Errorf("o item depois do aceite ainda traz pending_titular: %v", item)
+	if item["pending_titular"] != false {
+		t.Errorf("o item depois do aceite não traz pending_titular false: %v", item)
 	}
 
 	// O titular antigo é um owner comum: já sai; o novo é protegido.

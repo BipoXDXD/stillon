@@ -10,7 +10,15 @@ import { escolherProjeto, lembrarProjeto, lerProjetoLembrado } from './escolher-
 import { NaoEncontrada } from './NaoEncontrada'
 
 // intervaloMinimo: o do plano do titular do projeto (limits), em segundos.
-export type ProjetoAtual = { id: string; nome: string; papel: Papel; padrao: boolean; intervaloMinimo: number }
+// transferenciaPendente: a titularidade foi proposta a quem vê.
+export type ProjetoAtual = {
+  id: string
+  nome: string
+  papel: Papel
+  padrao: boolean
+  intervaloMinimo: number
+  transferenciaPendente: boolean
+}
 
 const Contexto = createContext<ProjetoAtual | null>(null)
 
@@ -48,9 +56,10 @@ function ComProjeto({ projeto }: { projeto: Projeto }) {
 export function NoProjeto({ projeto, children }: { projeto: Projeto; children: ReactNode }) {
   const { id, name, role, is_default } = projeto
   const intervaloMinimo = intervaloMinimoDo(projeto)
+  const transferenciaPendente = projeto.pending_titular ?? false
   const atual = useMemo<ProjetoAtual>(
-    () => ({ id, nome: name, papel: role, padrao: is_default, intervaloMinimo }),
-    [id, name, role, is_default, intervaloMinimo],
+    () => ({ id, nome: name, papel: role, padrao: is_default, intervaloMinimo, transferenciaPendente }),
+    [id, name, role, is_default, intervaloMinimo, transferenciaPendente],
   )
   return <Contexto.Provider value={atual}>{children}</Contexto.Provider>
 }
