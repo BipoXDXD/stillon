@@ -90,7 +90,7 @@ func (s *Service) ProposeTransfer(ctx context.Context, actorID, projectID, targe
 
 // AcceptTransfer faz de userID, a quem a titularidade foi proposta, o titular.
 func (s *Service) AcceptTransfer(ctx context.Context, userID, projectID uuid.UUID) (ProjectSummary, error) {
-	return s.repo.AcceptTransfer(ctx, userID, projectID)
+	return s.repo.AcceptTransfer(ctx, userID, projectID, s.clk.Now())
 }
 
 // CancelTransfer desfaz a proposta (o titular cancela, o pendente recusa).

@@ -33,6 +33,13 @@ const (
 		SELECT gen_random_uuid(), $1, $2, 'hb ' || i, sha256(convert_to(gen_random_uuid()::text, 'UTF8')),
 		       3600, 300, true, now(), now() + interval '1 hour', '', false
 		  FROM generate_series(1, $3::int) i`
+	// Alvos com regra de conteúdo, todos no mesmo host.
+	encherRegras = `
+		INSERT INTO targets (id, user_id, project_id, name, url, method, interval_sec, timeout_ms,
+		                     expected_status, next_run_at, content_mode, content_value)
+		SELECT gen_random_uuid(), $1, $2, 'regra ' || i, 'https://regra.exemplo.com/' || i, 'GET', 60, 10000, 200,
+		       now(), 'contains', 'ok'
+		  FROM generate_series(1, $3::int) i`
 	encherCanais = `
 		INSERT INTO notif_channels (id, user_id, project_id, kind, config_enc, verified_at, created_at)
 		SELECT gen_random_uuid(), $1, $2, 'discord', '\x01', now(), now()
@@ -181,7 +188,7 @@ func TestAcceptMovesTitularAndQuota(t *testing.T) {
 	encher(t, encherAlvos, c.b, c.padraoB, 3)
 
 	propor(t, st, c.a, c.pa, c.b)
-	p, err := st.AcceptTransfer(ctx, c.b, c.pa)
+	p, err := st.AcceptTransfer(ctx, c.b, c.pa, time.Now())
 	if err != nil {
 		t.Fatalf("aceitar: %v", err)
 	}
@@ -232,16 +239,16 @@ func TestOnlyPendingAcceptsTransfer(t *testing.T) {
 	e := novoUsuario(t, pool)
 	testdb.Membro(t, c.pa, e, "owner")
 
-	if _, err := st.AcceptTransfer(ctx, c.b, c.pa); !errors.Is(err, tenancy.ErrForbidden) {
+	if _, err := st.AcceptTransfer(ctx, c.b, c.pa, time.Now()); !errors.Is(err, tenancy.ErrForbidden) {
 		t.Errorf("aceitar sem proposta: %v, queria ErrForbidden", err)
 	}
 	propor(t, st, c.a, c.pa, c.b)
 	for nome, quem := range map[string]uuid.UUID{"outro owner": e, "o titular": c.a, "o manager": c.c} {
-		if _, err := st.AcceptTransfer(ctx, quem, c.pa); !errors.Is(err, tenancy.ErrForbidden) {
+		if _, err := st.AcceptTransfer(ctx, quem, c.pa, time.Now()); !errors.Is(err, tenancy.ErrForbidden) {
 			t.Errorf("%s aceitando: %v, queria ErrForbidden", nome, err)
 		}
 	}
-	if _, err := st.AcceptTransfer(ctx, novoUsuario(t, pool), c.pa); !errors.Is(err, tenancy.ErrProjectNotFound) {
+	if _, err := st.AcceptTransfer(ctx, novoUsuario(t, pool), c.pa, time.Now()); !errors.Is(err, tenancy.ErrProjectNotFound) {
 		t.Errorf("quem não é membro aceitando: %v, queria ErrProjectNotFound", err)
 	}
 	if got := titularDe(t, c.pa); got != c.a {
@@ -295,7 +302,7 @@ func TestPendingRefusesTransfer(t *testing.T) {
 	if p := pendenteDe(t, c.pa); p != nil {
 		t.Errorf("a proposta ficou depois da recusa: %s", p)
 	}
-	if _, err := st.AcceptTransfer(ctx, c.b, c.pa); !errors.Is(err, tenancy.ErrForbidden) {
+	if _, err := st.AcceptTransfer(ctx, c.b, c.pa, time.Now()); !errors.Is(err, tenancy.ErrForbidden) {
 		t.Errorf("aceitar depois de recusar: %v, queria ErrForbidden", err)
 	}
 	if got := titularDe(t, c.pa); got != c.a {
@@ -322,6 +329,11 @@ func TestAcceptRefusedOverReceiverLimits(t *testing.T) {
 			encher(t, encherHeartbeats, c.b, c.padraoB, heartbeat.MaxPerUser-1)
 			encher(t, encherHeartbeats, c.a, c.pa, 2)
 		}, heartbeat.ErrLimitReached},
+		// B já está no teto de regras no host; PA traz mais uma no mesmo.
+		{"regras por host", func(t *testing.T, _ *pgxpool.Pool, c cessao) {
+			encher(t, encherRegras, c.b, c.padraoB, targets.DefaultContentRulesPerHost)
+			encher(t, encherRegras, c.a, c.pa, 1)
+		}, targets.ErrContentHostLimit},
 		{"canais", func(t *testing.T, _ *pgxpool.Pool, c cessao) {
 			encher(t, encherCanais, c.b, c.padraoB, notify.MaxChannels)
 			encher(t, encherCanais, c.a, c.pa, 1)
@@ -341,7 +353,7 @@ func TestAcceptRefusedOverReceiverLimits(t *testing.T) {
 			k.montar(t, pool, c)
 			propor(t, st, c.a, c.pa, c.b)
 
-			if _, err := st.AcceptTransfer(context.Background(), c.b, c.pa); !errors.Is(err, k.quer) {
+			if _, err := st.AcceptTransfer(context.Background(), c.b, c.pa, time.Now()); !errors.Is(err, k.quer) {
 				t.Errorf("aceite acima do teto de %s: %v, queria %v", k.nome, err, k.quer)
 			}
 			if got := titularDe(t, c.pa); got != c.a {
@@ -364,8 +376,59 @@ func TestAcceptAtExactLimitPasses(t *testing.T) {
 	encher(t, encherAlvos, c.a, c.pa, 1)
 	propor(t, st, c.a, c.pa, c.b)
 
-	if _, err := st.AcceptTransfer(context.Background(), c.b, c.pa); err != nil {
+	if _, err := st.AcceptTransfer(context.Background(), c.b, c.pa, time.Now()); err != nil {
 		t.Errorf("aceite no limite exato: %v", err)
+	}
+}
+
+// O teto de regras por host é o configurado (CONTENT_RULES_PER_HOST), não o
+// padrão: com teto 2, B com 1 regra no host aceita PA com 1 no mesmo host, e
+// com 2 não aceita.
+func TestAcceptUsesConfiguredContentRulesPerHost(t *testing.T) {
+	for _, k := range []struct {
+		nome string
+		deB  int64
+		quer error
+	}{
+		{"no limite exato", 1, nil},
+		{"acima do teto", 2, targets.ErrContentHostLimit},
+	} {
+		t.Run(k.nome, func(t *testing.T) {
+			pool := testdb.New(t)
+			c := novaCessao(t, pool)
+			st := pgstore.New(pool, pgstore.ComTetoDeRegrasPorHost(2))
+			encher(t, encherRegras, c.b, c.padraoB, k.deB)
+			encher(t, encherRegras, c.a, c.pa, 1)
+			propor(t, st, c.a, c.pa, c.b)
+			if _, err := st.AcceptTransfer(context.Background(), c.b, c.pa, time.Now()); !errors.Is(err, k.quer) {
+				t.Errorf("aceite com %d regra(s) de B no host e teto 2: %v, queria %v", k.deB, err, k.quer)
+			}
+		})
+	}
+}
+
+// O convite pendente conta para o teto de membros até vencer pelo relógio
+// injetado (o now do serviço), e não pelo da máquina: com o now depois do
+// vencimento, o convite já não conta e o aceite passa.
+func TestAcceptCountsPendingInvitationsByInjectedClock(t *testing.T) {
+	pool := testdb.New(t)
+	c := novaCessao(t, pool)
+	st := pgstore.New(pool)
+	// Depois do aceite, PA tem A, C e D além de B: o teto de B (3). O convite
+	// pendente, que vence em 1 h, passaria do teto enquanto vale.
+	if _, err := testdb.Admin(t).Exec(context.Background(), `INSERT INTO project_invitations
+		(id, project_id, email, role, token_hash, invited_by, created_at, expires_at)
+		VALUES (gen_random_uuid(), $1, 'pendente@exemplo.com', 'viewer', sha256('convite-pendente'::bytea), $2,
+		        now(), now() + interval '1 hour')`, c.pa, c.a); err != nil {
+		t.Fatal(err)
+	}
+	propor(t, st, c.a, c.pa, c.b)
+
+	if _, err := st.AcceptTransfer(context.Background(), c.b, c.pa, time.Now()); !errors.Is(err, tenancy.ErrMemberLimit) {
+		t.Fatalf("aceite com o convite ainda válido: %v, queria ErrMemberLimit", err)
+	}
+	if _, err := st.AcceptTransfer(context.Background(), c.b, c.pa, time.Now().Add(2*time.Hour)); err != nil {
+		t.Errorf("aceite com o now depois do vencimento do convite: %v", err)
 	}
 }
 
@@ -500,7 +563,7 @@ func esperarTrava(t *testing.T, pool *pgxpool.Pool, oQue string, fim chan error)
 func aceitarAoFundo(st *pgstore.Store, receptor, projeto uuid.UUID) chan error {
 	fim := make(chan error, 1)
 	go func() {
-		_, err := st.AcceptTransfer(context.Background(), receptor, projeto)
+		_, err := st.AcceptTransfer(context.Background(), receptor, projeto, time.Now())
 		fim <- err
 	}()
 	return fim

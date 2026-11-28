@@ -96,13 +96,15 @@ func (s *Store) CancelTransfer(ctx context.Context, userID, projectID uuid.UUID)
 //  3. as travas de cota do receptor, na ordem projetos, alvos, heartbeats e
 //     canais (com a linha de users antes da de canais, como em
 //     notify.ChannelService): as criações dele em outros projetos esperam;
-//  4. cota_do_receptor (00050), com o projeto somado, contra os tetos de hoje,
-//     e o teto de membros do receptor, que pode ser menor que o do titular;
+//  4. cota_do_receptor e cota_urls_com_regra_do_receptor (00050), com o
+//     projeto somado, contra os tetos de hoje (o de regras por host
+//     inclusive), e o teto de membros do receptor, que pode ser menor que o
+//     do titular;
 //  5. AcceptTitularTransfer, o único UPDATE de titular_id que o gatilho aceita.
 //
 // A FK adiável projects_titular_e_owner confere no commit que o titular novo
 // é owner.
-func (s *Store) AcceptTransfer(ctx context.Context, userID, projectID uuid.UUID) (tenancy.ProjectSummary, error) {
+func (s *Store) AcceptTransfer(ctx context.Context, userID, projectID uuid.UUID, now time.Time) (tenancy.ProjectSummary, error) {
 	var out tenancy.ProjectSummary
 	err := storage.InProjectTx(ctx, s.pool, userID, projectID, func(q *db.Queries, sc tenancy.ProjectScope) error {
 		sc, err := travarEReler(ctx, q, sc)
@@ -123,7 +125,7 @@ func (s *Store) AcceptTransfer(ctx context.Context, userID, projectID uuid.UUID)
 		if err != nil {
 			return fmt.Errorf("ler se quem recebe é operador: %w", err)
 		}
-		if err := conferirCotaDoReceptor(ctx, q, projectID, operador); err != nil {
+		if err := s.conferirCotaDoReceptor(ctx, q, projectID, operador, now); err != nil {
 			return err
 		}
 		l, err := q.AcceptTitularTransfer(ctx, db.AcceptTitularTransferParams{ProjectID: projectID, UserID: userID})
@@ -165,12 +167,13 @@ func travarCotasDoReceptor(ctx context.Context, q *db.Queries, receptor uuid.UUI
 }
 
 // conferirCotaDoReceptor compara a cota do receptor, já com o projeto somado,
-// com os tetos que valem hoje (os mesmos das criações). As contagens incluem o
-// projeto: passa no limite exato e recusa acima dele. O teto de membros é o do
-// receptor: os membros além do titular continuam os mesmos (o antigo titular
-// fica no lugar de quem recebe), mais os convites pendentes válidos, como em
-// conferirTetoDeMembros.
-func conferirCotaDoReceptor(ctx context.Context, q *db.Queries, projectID uuid.UUID, operador bool) error {
+// com os tetos que valem hoje (os mesmos das criações, o de regras de
+// conteúdo por host inclusive, sob a trava de alvos já tomada). As contagens
+// incluem o projeto: passa no limite exato e recusa acima dele. O teto de
+// membros é o do receptor: os membros além do titular continuam os mesmos (o
+// antigo titular fica no lugar de quem recebe), mais os convites pendentes
+// válidos em now, o relógio do serviço, como em conferirTetoDeMembros.
+func (s *Store) conferirCotaDoReceptor(ctx context.Context, q *db.Queries, projectID uuid.UUID, operador bool, now time.Time) error {
 	c, err := q.CotaDoReceptor(ctx, projectID)
 	if err != nil {
 		return fmt.Errorf("contar a cota de quem recebe: %w", err)
@@ -185,11 +188,22 @@ func conferirCotaDoReceptor(ctx context.Context, q *db.Queries, projectID uuid.U
 	case c.Canais > notify.MaxChannels:
 		return notify.ErrLimitReached
 	}
+	regras, err := q.ListReceiverContentRuleTargetURLs(ctx, projectID)
+	if err != nil {
+		return fmt.Errorf("listar as regras de conteúdo de quem recebe: %w", err)
+	}
+	urls := make([]string, len(regras))
+	for i, r := range regras {
+		urls[i] = r.URL
+	}
+	if targets.ExcedeRegrasPorHost(urls, s.tetoPorHost) {
+		return targets.ErrContentHostLimit
+	}
 	membros, err := q.CountMembersBesidesTitular(ctx, projectID)
 	if err != nil {
 		return fmt.Errorf("contar membros: %w", err)
 	}
-	pendentes, err := q.CountPendingInvitations(ctx, db.CountPendingInvitationsParams{ProjectID: projectID, Now: time.Now()})
+	pendentes, err := q.CountPendingInvitations(ctx, db.CountPendingInvitationsParams{ProjectID: projectID, Now: now})
 	if err != nil {
 		return fmt.Errorf("contar convites pendentes: %w", err)
 	}

@@ -70,7 +70,7 @@ type ProjectRepository interface {
 	// AcceptTransfer faz de userID, o pendente, o titular, se a cota dele
 	// comporta o projeto: ErrProjectLimit, ErrMemberLimit ou o erro de teto de
 	// alvos, heartbeats ou canais. Sem proposta para ele, ErrForbidden.
-	AcceptTransfer(ctx context.Context, userID, projectID uuid.UUID) (ProjectSummary, error)
+	AcceptTransfer(ctx context.Context, userID, projectID uuid.UUID, now time.Time) (ProjectSummary, error)
 	// CancelTransfer desfaz a proposta: o titular cancela, o pendente recusa;
 	// outro membro recebe ErrForbidden.
 	CancelTransfer(ctx context.Context, userID, projectID uuid.UUID) error

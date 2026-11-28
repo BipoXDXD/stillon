@@ -242,6 +242,8 @@ func (h *ProjectHandlers) transferenciaFalhou(w http.ResponseWriter, r *http.Req
 		apierr.WriteError(w, r, apierr.CodeMemberLimit)
 	case errors.Is(err, targets.ErrLimitReached):
 		apierr.WriteError(w, r, apierr.CodeTargetLimit)
+	case errors.Is(err, targets.ErrContentHostLimit):
+		apierr.WriteError(w, r, apierr.CodeContentHostLimit)
 	case errors.Is(err, heartbeat.ErrLimitReached):
 		apierr.WriteError(w, r, apierr.CodeHeartbeatLimit)
 	case errors.Is(err, notify.ErrLimitReached):

@@ -124,3 +124,10 @@ SELECT n_projetos::bigint AS projetos, n_alvos::bigint AS alvos,
 UPDATE projects SET titular_id = sqlc.arg(user_id)::uuid, pending_titular_id = NULL
  WHERE id = sqlc.arg(project_id) AND pending_titular_id = sqlc.arg(user_id)::uuid
 RETURNING id, name, is_default, created_at;
+
+-- As URLs dos alvos com regra de conteúdo de quem recebe, com as do projeto,
+-- para o teto de regras por host (a chave do host sai em Go). Os casts e os
+-- AS são para o sqlc, como em ListTitularContentRuleTargetURLs.
+-- name: ListReceiverContentRuleTargetURLs :many
+SELECT r.id::uuid AS id, r.url::text AS url
+  FROM cota_urls_com_regra_do_receptor(sqlc.arg(project_id)::uuid) AS r;

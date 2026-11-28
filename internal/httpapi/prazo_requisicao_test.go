@@ -90,7 +90,7 @@ func (repoFalso) ProposeTransfer(context.Context, uuid.UUID, uuid.UUID, uuid.UUI
 	return errRepoFalso
 }
 
-func (repoFalso) AcceptTransfer(context.Context, uuid.UUID, uuid.UUID) (tenancy.ProjectSummary, error) {
+func (repoFalso) AcceptTransfer(context.Context, uuid.UUID, uuid.UUID, time.Time) (tenancy.ProjectSummary, error) {
 	return tenancy.ProjectSummary{}, errRepoFalso
 }
 

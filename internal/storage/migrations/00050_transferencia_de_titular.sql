@@ -12,8 +12,9 @@
 --    aceite: o titular novo é o pendente, é quem age (app.user_id), e a
 --    proposta é limpa na mesma UPDATE. A FK adiável projects_titular_e_owner
 --    (00048) exige, no commit, que ele seja owner.
--- 3. cota_do_receptor, no molde das funções da 00045, conta os recursos do
---    receptor com os do projeto somados, para o Go comparar com os tetos.
+-- 3. cota_do_receptor e cota_urls_com_regra_do_receptor, no molde das funções
+--    da 00045, contam os recursos do receptor com os do projeto somados, para
+--    o Go comparar com os tetos (o de regras por host inclusive).
 --
 -- NULLIF pelo motivo da 00004 (GUC vira '' na conexão reusada).
 SET LOCAL lock_timeout = '5s';
@@ -111,12 +112,51 @@ END
 $$;
 -- +goose StatementEnd
 
+-- As URLs dos alvos com regra de conteúdo do receptor, com as do projeto
+-- somadas: o teto de regras por host, como cota_urls_com_regra_do_titular
+-- (00045), com a chave do host em Go. Os mesmos guardas de cota_do_receptor.
+-- +goose StatementBegin
+CREATE FUNCTION cota_urls_com_regra_do_receptor(projeto uuid) RETURNS TABLE (id uuid, url text)
+LANGUAGE plpgsql
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+    escopo   text;
+    receptor uuid;
+    pendente uuid;
+    projetos uuid[];
+BEGIN
+    escopo := COALESCE(current_setting('app.project_id', true), '');
+    receptor := NULLIF(current_setting('app.user_id', true), '')::uuid;
+    PERFORM set_config('app.project_id', '', true);
+    SELECT p.pending_titular_id INTO pendente FROM projects p WHERE p.id = projeto;
+    IF receptor IS NULL OR pendente IS NULL OR pendente <> receptor THEN
+        RAISE EXCEPTION 'a titularidade do projeto não foi proposta a quem conta' USING ERRCODE = '42501';
+    END IF;
+    PERFORM set_config('app.cota_titular_id', receptor::text, true);
+    SELECT array_agg(p.id) INTO projetos FROM projects p WHERE p.titular_id = receptor;
+    projetos := array_append(COALESCE(projetos, '{}'::uuid[]), projeto);
+    PERFORM set_config('app.cota_projetos', projetos::text, true);
+    RETURN QUERY
+        SELECT t.id, t.url FROM targets t
+         WHERE t.project_id = ANY (projetos) AND t.content_mode IS NOT NULL;
+    PERFORM set_config('app.cota_projetos', '', true);
+    PERFORM set_config('app.cota_titular_id', '', true);
+    PERFORM set_config('app.project_id', escopo, true);
+    RETURN;
+END
+$$;
+-- +goose StatementEnd
+
 REVOKE EXECUTE ON FUNCTION cota_do_receptor(uuid) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION cota_do_receptor(uuid) TO CURRENT_USER;
+REVOKE EXECUTE ON FUNCTION cota_urls_com_regra_do_receptor(uuid) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION cota_urls_com_regra_do_receptor(uuid) TO CURRENT_USER;
 
 -- +goose Down
 SET LOCAL lock_timeout = '5s';
 
+DROP FUNCTION cota_urls_com_regra_do_receptor(uuid);
 DROP FUNCTION cota_do_receptor(uuid);
 
 -- O gatilho da 00048.

@@ -1,12 +1,14 @@
 package httpapi_test
 
 import (
+	"context"
 	"net/http"
 	"testing"
 
 	"github.com/google/uuid"
 
 	"github.com/BipoXDXD/stillon/internal/storage/testdb"
+	"github.com/BipoXDXD/stillon/internal/targets"
 )
 
 // cessaoHTTP é um projeto não padrão do usuário da API (titular), com outro
@@ -157,4 +159,30 @@ func TestCancelTransferRoute(t *testing.T) {
 	if pendenteNaLista(t, a, c.tReceptor, c.projeto) {
 		t.Error("a proposta cancelada continua na lista de quem recebe")
 	}
+}
+
+// O teto de regras de conteúdo por host de quem recebe dá o 409 da criação de
+// alvo.
+func TestAcceptTransferOverReceiverContentHostLimit(t *testing.T) {
+	a := newAPI(t)
+	c := novaCessaoHTTP(t, a)
+	const regras = `
+		INSERT INTO targets (id, user_id, project_id, name, url, method, interval_sec, timeout_ms,
+		                     expected_status, next_run_at, content_mode, content_value)
+		SELECT gen_random_uuid(), $1, $2, 'regra ' || i, 'https://regra.exemplo.com/' || i, 'GET', 60, 10000, 200,
+		       now(), 'contains', 'ok'
+		  FROM generate_series(1, $3::int) i`
+	admin := testdb.Admin(t)
+	if _, err := admin.Exec(context.Background(), regras, c.receptor, testdb.ProjetoPadrao(t, c.receptor), targets.DefaultContentRulesPerHost); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := admin.Exec(context.Background(), regras, c.titular, uuid.MustParse(c.projeto), 1); err != nil {
+		t.Fatal(err)
+	}
+
+	conferirCasos(t, a, []casoDeRota{
+		{"titular propõe", http.MethodPost, c.rota(), c.tTitular, para(c.receptor), http.StatusAccepted, "", nil},
+		{"aceite acima do teto por host", http.MethodPost, c.aceite(), c.tReceptor, nil,
+			http.StatusConflict, "content_rule_host_limit_reached", nil},
+	})
 }

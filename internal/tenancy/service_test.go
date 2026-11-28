@@ -36,7 +36,8 @@ func (r *repoFalso) ProposeTransfer(context.Context, uuid.UUID, uuid.UUID, uuid.
 	return nil
 }
 
-func (r *repoFalso) AcceptTransfer(context.Context, uuid.UUID, uuid.UUID) (tenancy.ProjectSummary, error) {
+func (r *repoFalso) AcceptTransfer(_ context.Context, _, _ uuid.UUID, now time.Time) (tenancy.ProjectSummary, error) {
+	r.nowRecebido = now
 	return tenancy.ProjectSummary{}, nil
 }
 
@@ -126,7 +127,7 @@ func (r repoQueFalha) ProposeTransfer(context.Context, uuid.UUID, uuid.UUID, uui
 	return nil
 }
 
-func (r repoQueFalha) AcceptTransfer(context.Context, uuid.UUID, uuid.UUID) (tenancy.ProjectSummary, error) {
+func (r repoQueFalha) AcceptTransfer(context.Context, uuid.UUID, uuid.UUID, time.Time) (tenancy.ProjectSummary, error) {
 	r.t.Error("AcceptTransfer chamado")
 	return tenancy.ProjectSummary{}, nil
 }
@@ -209,5 +210,17 @@ func TestServiceRenameValidatesName(t *testing.T) {
 	}
 	if repo.nomeRecebido != "Novo" {
 		t.Errorf("nome repassado = %q, queria \"Novo\"", repo.nomeRecebido)
+	}
+}
+
+func TestServiceAcceptTransferUsesClock(t *testing.T) {
+	agora := time.Date(2026, 11, 28, 9, 0, 0, 0, time.UTC)
+	repo := &repoFalso{}
+	svc := tenancy.NewService(repo, clock.NewFake(agora))
+	if _, err := svc.AcceptTransfer(context.Background(), uuid.New(), uuid.New()); err != nil {
+		t.Fatal(err)
+	}
+	if !repo.nowRecebido.Equal(agora) {
+		t.Errorf("now repassado = %v, queria %v (clk.Now())", repo.nowRecebido, agora)
 	}
 }

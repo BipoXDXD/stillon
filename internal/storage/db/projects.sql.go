@@ -316,6 +316,39 @@ func (q *Queries) ListMyProjects(ctx context.Context, userID uuid.UUID) ([]ListM
 	return items, nil
 }
 
+const listReceiverContentRuleTargetURLs = `-- name: ListReceiverContentRuleTargetURLs :many
+SELECT r.id::uuid AS id, r.url::text AS url
+  FROM cota_urls_com_regra_do_receptor($1::uuid) AS r
+`
+
+type ListReceiverContentRuleTargetURLsRow struct {
+	ID  uuid.UUID
+	URL string
+}
+
+// As URLs dos alvos com regra de conteúdo de quem recebe, com as do projeto,
+// para o teto de regras por host (a chave do host sai em Go). Os casts e os
+// AS são para o sqlc, como em ListTitularContentRuleTargetURLs.
+func (q *Queries) ListReceiverContentRuleTargetURLs(ctx context.Context, projectID uuid.UUID) ([]ListReceiverContentRuleTargetURLsRow, error) {
+	rows, err := q.db.Query(ctx, listReceiverContentRuleTargetURLs, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListReceiverContentRuleTargetURLsRow
+	for rows.Next() {
+		var i ListReceiverContentRuleTargetURLsRow
+		if err := rows.Scan(&i.ID, &i.URL); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const lockTitularProjects = `-- name: LockTitularProjects :exec
 SELECT pg_advisory_xact_lock(hashtextextended('stillon.projects:' || $1::uuid::text, 0))
 `
