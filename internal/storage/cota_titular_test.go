@@ -196,7 +196,7 @@ func TestQuotaFunctionDoesNotCountOtherTitulars(t *testing.T) {
 // derivada (projects_prober_select) e conta: ele já lê todos os alvos por
 // targets_prober_select e não cria recursos, então a contagem não lhe mostra
 // nada novo nem abre caminho para furar a cota.
-func TestQuotaFunctionRefusesProjectOutsideScope(t *testing.T) {
+func TestQuotaFunctionRefusesOtherTitularButCountsForProber(t *testing.T) {
 	pool := testdb.New(t)
 	ctx := context.Background()
 	u := novoUsuario(t, pool)
