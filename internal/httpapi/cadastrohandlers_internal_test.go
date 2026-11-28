@@ -56,7 +56,7 @@ type cadastroQueDevolve struct {
 	ipHash *[]byte
 }
 
-func (c cadastroQueDevolve) Cadastrar(context.Context, string, string) error { return nil }
+func (c cadastroQueDevolve) Cadastrar(context.Context, string, string, string) error { return nil }
 func (c cadastroQueDevolve) ConfirmarEmail(_ context.Context, _, senha string, ipHash []byte) error {
 	*c.senha, *c.ipHash = senha, ipHash
 	return c.err

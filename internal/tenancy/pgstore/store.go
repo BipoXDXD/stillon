@@ -14,6 +14,7 @@ import (
 
 	"github.com/BipoXDXD/stillon/internal/storage"
 	"github.com/BipoXDXD/stillon/internal/storage/db"
+	"github.com/BipoXDXD/stillon/internal/targets"
 	"github.com/BipoXDXD/stillon/internal/tenancy"
 )
 
@@ -21,12 +22,30 @@ import (
 // RLS: toda leitura e escrita passa por um escopo de storage.
 type Store struct {
 	pool *pgxpool.Pool
+	// tetoPorHost é o teto de alvos com regra de conteúdo por host, o mesmo
+	// de targets.Service: o aceite da transferência o confere para quem
+	// recebe.
+	tetoPorHost int
 }
 
 var _ tenancy.ProjectRepository = (*Store)(nil)
 
-func New(pool *pgxpool.Pool) *Store {
-	return &Store{pool: pool}
+// Opcao configura o Store.
+type Opcao func(*Store)
+
+// ComTetoDeRegrasPorHost troca o teto de regras de conteúdo por host
+// (CONTENT_RULES_PER_HOST), como targets.ComTetoDeRegrasPorHost; sem ela,
+// vale targets.DefaultContentRulesPerHost.
+func ComTetoDeRegrasPorHost(n int) Opcao {
+	return func(s *Store) { s.tetoPorHost = n }
+}
+
+func New(pool *pgxpool.Pool, opcoes ...Opcao) *Store {
+	s := &Store{pool: pool, tetoPorHost: targets.DefaultContentRulesPerHost}
+	for _, o := range opcoes {
+		o(s)
+	}
+	return s
 }
 
 // Membership confere a pertença com storage.InProjectTx, que aplica as regras
@@ -105,7 +124,8 @@ func (s *Store) ListForUser(ctx context.Context, userID uuid.UUID) ([]tenancy.Pr
 		}
 		out = append(out, tenancy.ProjectSummary{
 			ID: l.ID, Name: l.Name, IsDefault: l.IsDefault, Role: papel, CreatedAt: l.CreatedAt,
-			Limites: tenancy.LimitesDe(l.TitularIsOperator),
+			Limites:        tenancy.LimitesDe(l.TitularIsOperator),
+			PendingTitular: l.PendingTitular,
 		})
 	}
 	return out, nil

@@ -228,14 +228,16 @@ test('a barreira da CSP falha com o coletor quebrado', async ({ context }) => {
   await expect(controlePositivo(semColetor, 'sem coletor')).rejects.toThrow(/sem coletor: a violação do controle positivo/)
 })
 
-// As telas públicas do cadastro (PR 3), sem sessão, nos dois temas: o widget
-// do Turnstile vem do api.js imitado, carregado de challenges.cloudflare.com
-// sob a CSP de produção (script-src).
+// As telas públicas do cadastro (PR 3) e os textos legais, sem sessão, nos
+// dois temas: o widget do Turnstile vem do api.js imitado, carregado de
+// challenges.cloudflare.com sob a CSP de produção (script-src).
 const ROTAS_PUBLICAS: [string, string][] = [
   ['/signup', 'Criar conta no StillOn'],
   ['/confirm-email#token=token-da-caixa', 'Confirme seu e-mail'],
   ['/forgot-password', 'Redefinir a senha'],
   ['/reset-password#token=token-de-reset', 'Escolha uma senha nova'],
+  ['/termos', 'Termos de Uso'],
+  ['/privacidade', 'Política de Privacidade'],
 ]
 
 for (const tema of ['claro', 'escuro'] as const) {

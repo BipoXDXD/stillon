@@ -161,12 +161,13 @@ type Notification struct {
 }
 
 type Project struct {
-	ID          uuid.UUID
-	Name        string
-	TitularID   uuid.UUID
-	IsDefault   bool
-	CreatedAt   time.Time
-	TitularRole string
+	ID               uuid.UUID
+	Name             string
+	TitularID        uuid.UUID
+	IsDefault        bool
+	CreatedAt        time.Time
+	TitularRole      string
+	PendingTitularID *uuid.UUID
 }
 
 type ProjectInvitation struct {
@@ -297,4 +298,6 @@ type User struct {
 	IsOperator               bool
 	EmailVerifiedAt          *time.Time
 	SuspendedAt              *time.Time
+	TermsVersion             *string
+	TermsAcceptedAt          *time.Time
 }

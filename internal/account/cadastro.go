@@ -13,6 +13,7 @@ import (
 	"github.com/BipoXDXD/stillon/internal/auth"
 	"github.com/BipoXDXD/stillon/internal/clock"
 	"github.com/BipoXDXD/stillon/internal/crypto"
+	"github.com/BipoXDXD/stillon/internal/legal"
 	"github.com/BipoXDXD/stillon/internal/storage"
 	"github.com/BipoXDXD/stillon/internal/storage/db"
 )
@@ -29,6 +30,11 @@ type Cadastro struct {
 	// hash é o auth.HashPassword em produção; os testes o trocam (SetHash).
 	hash func(context.Context, string) (string, error)
 }
+
+// ErrTermosNaoAceitos: o cadastro chegou sem aceitar a versão vigente dos
+// termos (vazia ou outra que não legal.VersaoAtual). O handler recusa antes
+// com validation_failed (required ou outdated); aqui é a última barreira.
+var ErrTermosNaoAceitos = errors.New("cadastro sem aceite dos termos")
 
 // NewCadastro monta o serviço do cadastro público.
 func NewCadastro(pool *pgxpool.Pool, clk clock.Clock, mailer AccountMailer, links Links) *Cadastro {
@@ -49,11 +55,15 @@ func ValidarCadastro(email, senha string) (string, error) {
 	return e, nil
 }
 
-// Cadastrar cria a conta não confirmada, com o Projeto padrão e o token de
-// confirmação, e manda o link por e-mail. Com o e-mail já cadastrado
-// (confirmado ou não, em qualquer caixa), não grava nada e manda o "você já
-// tem conta; esqueceu a senha?" para o endereço gravado. Nos dois casos
-// devolve nil. Os erros possíveis são de validação ou de infraestrutura,
+// Cadastrar cria a conta não confirmada, com o Projeto padrão, o token de
+// confirmação e o aceite dos termos (versaoDosTermos, que o handler já
+// conferiu, e o instante do cadastro), e manda o link por e-mail. Com o
+// e-mail já cadastrado (confirmado ou não, em qualquer caixa), não grava nada,
+// nem o aceite, e manda o "você já tem conta; esqueceu a senha?" para o
+// endereço gravado. Nos dois casos
+// devolve nil. Sem a versão vigente aceita, devolve ErrTermosNaoAceitos antes
+// de tudo.
+// Os outros erros possíveis são de validação ou de infraestrutura,
 // inclusive auth.ErrArgon2Busy. A falha do mailer vai para o log e a
 // resposta continua igual.
 //
@@ -61,7 +71,10 @@ func ValidarCadastro(email, senha string) (string, error) {
 // roda SEMPRE, antes de qualquer consulta, e sai exatamente um e-mail, depois
 // do commit (o AccountMailer só enfileira). Sobram alguns ms de banco no ramo
 // novo (projeto, token, auditoria), risco aceito no plano.
-func (c *Cadastro) Cadastrar(ctx context.Context, email, senha string) error {
+func (c *Cadastro) Cadastrar(ctx context.Context, email, senha, versaoDosTermos string) error {
+	if versaoDosTermos != legal.VersaoAtual {
+		return ErrTermosNaoAceitos
+	}
 	e, err := ValidarCadastro(email, senha)
 	if err != nil {
 		return err
@@ -84,7 +97,7 @@ func (c *Cadastro) Cadastrar(ctx context.Context, email, senha string) error {
 	destino := e
 	err = emTx(ctx, c.pool, func(q *db.Queries) error {
 		_, err := q.InsertSignupUser(ctx, db.InsertSignupUserParams{
-			ID: id, Email: e, PasswordHash: hash, CreatedAt: now,
+			ID: id, Email: e, PasswordHash: hash, CreatedAt: now, TermsVersion: versaoDosTermos,
 		})
 		if errors.Is(err, pgx.ErrNoRows) {
 			// Depois do conflito, a leitura em READ COMMITTED enxerga a conta

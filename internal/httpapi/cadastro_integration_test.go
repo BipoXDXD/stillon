@@ -25,6 +25,7 @@ import (
 	"github.com/BipoXDXD/stillon/internal/contaemail"
 	"github.com/BipoXDXD/stillon/internal/crypto"
 	"github.com/BipoXDXD/stillon/internal/httpapi"
+	"github.com/BipoXDXD/stillon/internal/legal"
 	"github.com/BipoXDXD/stillon/internal/storage"
 	"github.com/BipoXDXD/stillon/internal/turnstile"
 	"github.com/BipoXDXD/stillon/internal/turnstile/turnstiletest"
@@ -126,7 +127,10 @@ func exigirErro(t *testing.T, nome string, r respostaCrua, status int, codigo ap
 }
 
 func corpoSignup(email, senha string) map[string]string {
-	return map[string]string{"email": email, "password": senha, "turnstile_token": turnstiletest.TokenFalso}
+	return map[string]string{
+		"email": email, "password": senha, "turnstile_token": turnstiletest.TokenFalso,
+		"accepted_terms_version": legal.VersaoAtual,
+	}
 }
 
 func corpoForgot(email string) map[string]string {
@@ -427,7 +431,7 @@ func conferirConfig(t *testing.T, a *api, ligado bool, chave string) {
 	if err := json.Unmarshal([]byte(r.corpo), &cfg); err != nil {
 		t.Fatal(err)
 	}
-	quer := map[string]any{"enabled": ligado, "turnstile_site_key": chave}
+	quer := map[string]any{"enabled": ligado, "turnstile_site_key": chave, "terms_version": legal.VersaoAtual}
 	if !maps.Equal(cfg, quer) {
 		t.Errorf("signup-config = %v, queria %v", cfg, quer)
 	}
@@ -750,5 +754,80 @@ func TestSuppressedAccountEmailKeepsSameResponse(t *testing.T) {
 				exigirIguais(t, "reenvio: suprimido × enviado", *livre, r)
 			}
 		})
+	}
+}
+
+// camposDoErro lê os campos culpados do envelope de validação.
+func camposDoErro(t *testing.T, r respostaCrua) []apierr.FieldError {
+	t.Helper()
+	var envelope struct {
+		Error struct {
+			Fields []apierr.FieldError `json:"fields"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal([]byte(r.corpo), &envelope); err != nil {
+		t.Fatalf("envelope ilegível: %v %s", err, r.corpo)
+	}
+	return envelope.Error.Fields
+}
+
+// Sem o aceite dos termos, 400 junto com o formato: o Turnstile não é
+// chamado (o token de uso único não se gasta) e nenhuma conta nasce.
+func TestCadastroSemAceiteRecusaAntesDoTurnstile(t *testing.T) {
+	a := newAPI(t)
+	for nome, versao := range map[string]*string{"ausente": nil, "vazio": new(string)} {
+		t.Run(nome, func(t *testing.T) {
+			corpo := map[string]any{"email": "fulano@exemplo.com", "password": testPass, "turnstile_token": turnstiletest.TokenFalso}
+			if versao != nil {
+				corpo["accepted_terms_version"] = *versao
+			}
+			r := pedirPublico(t, a, http.MethodPost, "/api/v1/auth/signup", corpo)
+			exigirErro(t, "sem aceite", r, http.StatusBadRequest, apierr.CodeValidation)
+			campos := camposDoErro(t, r)
+			quer := apierr.FieldError{Field: "accepted_terms_version", Reason: "required"}
+			if len(campos) != 1 || campos[0] != quer {
+				t.Errorf("campos = %v; queria [%v]", campos, quer)
+			}
+		})
+	}
+	if n := len(turnstiletest.Recebidos(a.turnstile)); n != 0 {
+		t.Errorf("o siteverify recebeu %d chamadas, queria 0", n)
+	}
+	if n := contarUsuarios(t, a); n != 1 {
+		t.Errorf("%d usuários, queria só o da fixture", n)
+	}
+}
+
+// Uma versão que não é a atual (o painel aberto antes de os termos mudarem)
+// é recusada como outdated, antes do Turnstile.
+func TestCadastroComVersaoVelhaRecusa(t *testing.T) {
+	a := newAPI(t)
+	corpo := corpoSignup("fulano@exemplo.com", testPass)
+	corpo["accepted_terms_version"] = "2020-01-01"
+	r := pedirPublico(t, a, http.MethodPost, "/api/v1/auth/signup", corpo)
+	exigirErro(t, "versão velha", r, http.StatusBadRequest, apierr.CodeValidation)
+	quer := apierr.FieldError{Field: "accepted_terms_version", Reason: "outdated"}
+	if campos := camposDoErro(t, r); len(campos) != 1 || campos[0] != quer {
+		t.Errorf("campos = %v; queria [%v]", campos, quer)
+	}
+	if n := len(turnstiletest.Recebidos(a.turnstile)); n != 0 {
+		t.Errorf("o siteverify recebeu %d chamadas, queria 0", n)
+	}
+	if n := contarUsuarios(t, a); n != 1 {
+		t.Errorf("%d usuários, queria só o da fixture", n)
+	}
+}
+
+func TestSignupConfigInformaVersaoDosTermos(t *testing.T) {
+	a := newAPI(t)
+	r := pedirPublico(t, a, http.MethodGet, "/api/v1/auth/signup-config", nil)
+	var cfg struct {
+		TermsVersion string `json:"terms_version"`
+	}
+	if err := json.Unmarshal([]byte(r.corpo), &cfg); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.TermsVersion != legal.VersaoAtual {
+		t.Errorf("terms_version = %q; queria %q (%s)", cfg.TermsVersion, legal.VersaoAtual, r.corpo)
 	}
 }

@@ -83,7 +83,7 @@ type ReserveAccountEmailForUserParams struct {
 	Teto   int32
 }
 
-// Teto diário por conta (migration 00051), no molde de ReserveAccountEmail e
+// Teto diário por conta (migration 00053), no molde de ReserveAccountEmail e
 // na mesma transação dele: a linha (conta, dia) travada pelo ON CONFLICT faz
 // N reservas simultâneas da mesma conta pararem no teto. Nenhuma linha
 // devolvida (pgx.ErrNoRows) é teto da conta atingido. O CTE apaga as linhas

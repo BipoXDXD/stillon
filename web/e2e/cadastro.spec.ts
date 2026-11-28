@@ -1,5 +1,5 @@
 import type { Page } from '@playwright/test'
-import { imitarApi } from './api-imitada'
+import { imitarApi, VERSAO_DOS_TERMOS } from './api-imitada'
 import { controlePositivo, expect, test } from './fixtures'
 
 // As telas públicas do cadastro sob a CSP de produção, com a API e o api.js
@@ -26,6 +26,7 @@ test('cadastro até o confira seu e-mail', async ({ page }) => {
   await expect(page.getByRole('heading', { name: 'Criar conta no StillOn', level: 1 })).toBeVisible()
   await page.getByLabel('E-mail').fill('nova@exemplo.com')
   await page.getByLabel('Senha', { exact: true }).fill(SENHA_NOVA)
+  await page.getByRole('checkbox', { name: /^Li e aceito os Termos de Uso/ }).check()
   // O api.js imitado resolveu o desafio: o botão habilita.
   await expect(page.locator('[data-turnstile-imitado]')).toBeAttached()
   const pedido = page.waitForRequest('**/api/v1/auth/signup')
@@ -34,6 +35,7 @@ test('cadastro até o confira seu e-mail', async ({ page }) => {
     email: 'nova@exemplo.com',
     password: SENHA_NOVA,
     turnstile_token: 'XXXX.DUMMY.TOKEN.XXXX',
+    accepted_terms_version: VERSAO_DOS_TERMOS,
   })
   await expect(page.getByRole('heading', { name: 'Confira seu e-mail', level: 1 })).toBeVisible()
   await expect(page.getByText('Abra o link em até 24 horas para concluir o cadastro.')).toBeVisible()

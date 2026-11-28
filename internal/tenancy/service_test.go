@@ -32,6 +32,17 @@ func (r *repoFalso) ChangeRole(_ context.Context, _, _, alvo uuid.UUID, para ten
 
 func (r *repoFalso) RemoveMember(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) error { return nil }
 
+func (r *repoFalso) ProposeTransfer(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) error {
+	return nil
+}
+
+func (r *repoFalso) AcceptTransfer(_ context.Context, _, _ uuid.UUID, now time.Time) (tenancy.ProjectSummary, error) {
+	r.nowRecebido = now
+	return tenancy.ProjectSummary{}, nil
+}
+
+func (r *repoFalso) CancelTransfer(context.Context, uuid.UUID, uuid.UUID) error { return nil }
+
 func (r *repoFalso) Rename(_ context.Context, _, projeto uuid.UUID, nome string) (tenancy.ProjectSummary, error) {
 	r.nomeRecebido = nome
 	return tenancy.ProjectSummary{ID: projeto, Name: nome}, nil
@@ -111,6 +122,21 @@ func (r repoQueFalha) RemoveMember(context.Context, uuid.UUID, uuid.UUID, uuid.U
 	return nil
 }
 
+func (r repoQueFalha) ProposeTransfer(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) error {
+	r.t.Error("ProposeTransfer chamado")
+	return nil
+}
+
+func (r repoQueFalha) AcceptTransfer(context.Context, uuid.UUID, uuid.UUID, time.Time) (tenancy.ProjectSummary, error) {
+	r.t.Error("AcceptTransfer chamado")
+	return tenancy.ProjectSummary{}, nil
+}
+
+func (r repoQueFalha) CancelTransfer(context.Context, uuid.UUID, uuid.UUID) error {
+	r.t.Error("CancelTransfer chamado")
+	return nil
+}
+
 func (r repoQueFalha) Rename(context.Context, uuid.UUID, uuid.UUID, string) (tenancy.ProjectSummary, error) {
 	r.t.Error("Rename chamado")
 	return tenancy.ProjectSummary{}, nil
@@ -184,5 +210,17 @@ func TestServiceRenameValidatesName(t *testing.T) {
 	}
 	if repo.nomeRecebido != "Novo" {
 		t.Errorf("nome repassado = %q, queria \"Novo\"", repo.nomeRecebido)
+	}
+}
+
+func TestServiceAcceptTransferUsesClock(t *testing.T) {
+	agora := time.Date(2026, 11, 28, 9, 0, 0, 0, time.UTC)
+	repo := &repoFalso{}
+	svc := tenancy.NewService(repo, clock.NewFake(agora))
+	if _, err := svc.AcceptTransfer(context.Background(), uuid.New(), uuid.New()); err != nil {
+		t.Fatal(err)
+	}
+	if !repo.nowRecebido.Equal(agora) {
+		t.Errorf("now repassado = %v, queria %v (clk.Now())", repo.nowRecebido, agora)
 	}
 }

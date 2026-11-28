@@ -29,7 +29,7 @@ var errTetoGlobal = errors.New("teto global de e-mails de conta atingido")
 // TetoDeEmailsDeConta é o teto diário (dia UTC) de e-mails de conta
 // (confirmação, redefinição, verificação de canal), guardado no Postgres
 // (account_email_daily, migration 00047) para valer entre réplicas, e o teto
-// diário por conta (account_email_daily_by_user, migration 00051). Protege a
+// diário por conta (account_email_daily_by_user, migration 00053). Protege a
 // cota e a reputação do provedor de e-mail; os avisos de incidente nunca
 // passam por ele. O valor zero não serve: use NewTetoDeEmailsDeConta.
 type TetoDeEmailsDeConta struct {

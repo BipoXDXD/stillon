@@ -86,6 +86,18 @@ func (repoFalso) RemoveMember(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) 
 	return errRepoFalso
 }
 
+func (repoFalso) ProposeTransfer(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) error {
+	return errRepoFalso
+}
+
+func (repoFalso) AcceptTransfer(context.Context, uuid.UUID, uuid.UUID, time.Time) (tenancy.ProjectSummary, error) {
+	return tenancy.ProjectSummary{}, errRepoFalso
+}
+
+func (repoFalso) CancelTransfer(context.Context, uuid.UUID, uuid.UUID) error {
+	return errRepoFalso
+}
+
 func (repoFalso) Rename(context.Context, uuid.UUID, uuid.UUID, string) (tenancy.ProjectSummary, error) {
 	return tenancy.ProjectSummary{}, errRepoFalso
 }
@@ -102,7 +114,9 @@ func (conferidorQueConfirma) EmailConfirmado(context.Context, uuid.UUID) (bool, 
 // token é inválido, e o resto falha como o repositório falso.
 type contaPublicaFalsa struct{}
 
-func (contaPublicaFalsa) Cadastrar(context.Context, string, string) error { return errRepoFalso }
+func (contaPublicaFalsa) Cadastrar(context.Context, string, string, string) error {
+	return errRepoFalso
+}
 func (contaPublicaFalsa) ConfirmarEmail(context.Context, string, string, []byte) error {
 	return account.ErrTokenInvalido
 }

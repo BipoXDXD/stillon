@@ -19,6 +19,7 @@ import (
 	"github.com/BipoXDXD/stillon/internal/auth"
 	"github.com/BipoXDXD/stillon/internal/clock"
 	"github.com/BipoXDXD/stillon/internal/httpapi/middleware"
+	"github.com/BipoXDXD/stillon/internal/legal"
 )
 
 // corpoEstrito é um handler que lê corpo JSON. valido é um corpo que passa
@@ -55,21 +56,22 @@ func corposEstritos() map[string]corpoEstrito {
 			aninhados: []string{`{"slug":"empresa","title":"T","items":[` + item + `]}`}},
 		"StatusPageHandlers.Update": {handler: noProjetoPadrao(paginas.Update), valido: `{"title":"T"}`,
 			aninhados: []string{`{"items":[` + item + `]}`}},
-		"ProjectHandlers.Create":         {handler: projetos.Create, valido: `{"name":"Projeto"}`},
-		"ProjectHandlers.Rename":         {handler: noProjetoPadrao(projetos.Rename), valido: `{"name":"Projeto"}`},
-		"MemberHandlers.ChangeRole":      {handler: noProjetoPadrao(membros.ChangeRole), valido: `{"role":"viewer"}`},
-		"InvitationHandlers.Create":      {handler: noProjetoPadrao(convites.Create), valido: `{"email":"a@exemplo.com","role":"viewer"}`},
-		"InvitationHandlers.Accept":      {handler: convites.Accept, valido: `{"token":"` + strings.Repeat("A", 43) + `"}`},
-		"AccountHandlers.ChangePassword": {handler: conta.ChangePassword, valido: `{"current_password":"a","new_password":"b"}`},
-		"AuthHandlers.Login":             {handler: sessao.Login, valido: `{"email":"a@exemplo.com","password":"x"}`},
-		"AuthHandlers.TOTPEnroll":        {handler: sessao.TOTPEnroll, valido: `{"password":"x"}`},
-		"AuthHandlers.TOTPConfirm":       {handler: sessao.TOTPConfirm, valido: `{"code":"1"}`},
-		"AuthHandlers.TOTPVerify":        {handler: sessao.TOTPVerify, valido: `{"challenge":"x","code":"1"}`},
-		"AuthHandlers.TOTPDisable":       {handler: sessao.TOTPDisable, valido: `{"password":"x","code":"1"}`},
-		"AuthHandlers.TOTPRotate":        {handler: sessao.TOTPRotate, valido: `{"password":"x","code":"1"}`},
-		"AuthHandlers.TOTPRotateConfirm": {handler: sessao.TOTPRotateConfirm, valido: `{"code":"1","rotation":"x"}`},
+		"ProjectHandlers.Create":          {handler: projetos.Create, valido: `{"name":"Projeto"}`},
+		"ProjectHandlers.Rename":          {handler: noProjetoPadrao(projetos.Rename), valido: `{"name":"Projeto"}`},
+		"MemberHandlers.ChangeRole":       {handler: noProjetoPadrao(membros.ChangeRole), valido: `{"role":"viewer"}`},
+		"ProjectHandlers.ProposeTransfer": {handler: noProjetoPadrao(projetos.ProposeTransfer), valido: `{"user_id":"` + uuid.NewString() + `"}`},
+		"InvitationHandlers.Create":       {handler: noProjetoPadrao(convites.Create), valido: `{"email":"a@exemplo.com","role":"viewer"}`},
+		"InvitationHandlers.Accept":       {handler: convites.Accept, valido: `{"token":"` + strings.Repeat("A", 43) + `"}`},
+		"AccountHandlers.ChangePassword":  {handler: conta.ChangePassword, valido: `{"current_password":"a","new_password":"b"}`},
+		"AuthHandlers.Login":              {handler: sessao.Login, valido: `{"email":"a@exemplo.com","password":"x"}`},
+		"AuthHandlers.TOTPEnroll":         {handler: sessao.TOTPEnroll, valido: `{"password":"x"}`},
+		"AuthHandlers.TOTPConfirm":        {handler: sessao.TOTPConfirm, valido: `{"code":"1"}`},
+		"AuthHandlers.TOTPVerify":         {handler: sessao.TOTPVerify, valido: `{"challenge":"x","code":"1"}`},
+		"AuthHandlers.TOTPDisable":        {handler: sessao.TOTPDisable, valido: `{"password":"x","code":"1"}`},
+		"AuthHandlers.TOTPRotate":         {handler: sessao.TOTPRotate, valido: `{"password":"x","code":"1"}`},
+		"AuthHandlers.TOTPRotateConfirm":  {handler: sessao.TOTPRotateConfirm, valido: `{"code":"1","rotation":"x"}`},
 		"CadastroHandlers.Signup": {handler: cadastro.Signup,
-			valido: `{"email":"a@exemplo.com","password":"uma-senha-bem-comprida","turnstile_token":"x"}`},
+			valido: `{"email":"a@exemplo.com","password":"uma-senha-bem-comprida","turnstile_token":"x","accepted_terms_version":"` + legal.VersaoAtual + `"}`},
 		"CadastroHandlers.ConfirmarEmail": {handler: cadastro.ConfirmarEmail, valido: `{"token":"x","password":"y"}`},
 		"CadastroHandlers.EsqueciASenha":  {handler: cadastro.EsqueciASenha, valido: `{"email":"a@exemplo.com","turnstile_token":"x"}`},
 		"CadastroHandlers.RedefinirSenha": {handler: cadastro.RedefinirSenha,

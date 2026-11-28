@@ -16,13 +16,14 @@ import (
 	"github.com/BipoXDXD/stillon/internal/clock"
 	"github.com/BipoXDXD/stillon/internal/crypto"
 	"github.com/BipoXDXD/stillon/internal/httpapi/middleware"
+	"github.com/BipoXDXD/stillon/internal/legal"
 	"github.com/BipoXDXD/stillon/internal/observability"
 	"github.com/BipoXDXD/stillon/internal/turnstile"
 )
 
 // Cadastrador é o cadastro público (account.Cadastro).
 type Cadastrador interface {
-	Cadastrar(ctx context.Context, email, senha string) error
+	Cadastrar(ctx context.Context, email, senha, versaoDosTermos string) error
 	ConfirmarEmail(ctx context.Context, token, senha string, ipHash []byte) error
 	ReenviarConfirmacao(ctx context.Context, userID uuid.UUID) error
 }
@@ -82,12 +83,14 @@ func NewCadastroHandlers(c Cadastrador, r Recuperador, t VerificadorTurnstile, c
 type configCadastroResponse struct {
 	Enabled          bool   `json:"enabled"`
 	TurnstileSiteKey string `json:"turnstile_site_key"`
+	TermsVersion     string `json:"terms_version"`
 }
 
 // Config é GET /auth/signup-config: o painel decide se mostra o formulário e
-// com que site key monta o widget. Desligado, a chave sai vazia.
+// com que site key monta o widget. Desligado, a chave sai vazia. A versão dos
+// termos sai sempre: é a que o signup exige em accepted_terms_version.
 func (h *CadastroHandlers) Config(w http.ResponseWriter, _ *http.Request) {
-	resp := configCadastroResponse{Enabled: h.config.Habilitado}
+	resp := configCadastroResponse{Enabled: h.config.Habilitado, TermsVersion: legal.VersaoAtual}
 	if h.config.Habilitado {
 		resp.TurnstileSiteKey = h.config.SiteKey
 	}
@@ -98,15 +101,19 @@ type signupRequest struct {
 	Email          string `json:"email"`
 	Password       string `json:"password"`
 	TurnstileToken string `json:"turnstile_token"`
+	// AcceptedTermsVersion é a versão dos termos que a pessoa aceitou. Só a
+	// atual (legal.VersaoAtual) passa: ausente ou vazia é required; outra,
+	// outdated (o painel aberto antes de os termos mudarem).
+	AcceptedTermsVersion *string `json:"accepted_terms_version"`
 }
 
 // Signup é POST /auth/signup: 202 sem corpo, com conta nova ou já existente.
 //
-// A ordem é a do plano: desligado (404), corpo, formato (só olha a entrada,
-// então não enumera, e não gasta o token de uso único do Turnstile num
-// formulário errado), Turnstile (recusado é 400 antes de qualquer consulta;
-// fora do ar é 503, falha fechada) e só então o serviço, que responde igual
-// nos dois ramos.
+// A ordem é a do plano: desligado (404), corpo, formato e aceite dos termos
+// (só olha a entrada, então não enumera, e não gasta o token de uso único do
+// Turnstile num formulário errado), Turnstile (recusado é 400 antes de
+// qualquer consulta; fora do ar é 503, falha fechada) e só então o serviço,
+// que responde igual nos dois ramos.
 func (h *CadastroHandlers) Signup(w http.ResponseWriter, r *http.Request) {
 	if !h.config.Habilitado {
 		apierr.WriteError(w, r, apierr.CodeNotFound)
@@ -123,6 +130,12 @@ func (h *CadastroHandlers) Signup(w http.ResponseWriter, r *http.Request) {
 	if motivo := auth.ValidateNewPassword(req.Password); motivo != "" {
 		campos = append(campos, apierr.FieldError{Field: "password", Reason: motivo})
 	}
+	switch {
+	case req.AcceptedTermsVersion == nil || *req.AcceptedTermsVersion == "":
+		campos = append(campos, apierr.FieldError{Field: "accepted_terms_version", Reason: "required"})
+	case *req.AcceptedTermsVersion != legal.VersaoAtual:
+		campos = append(campos, apierr.FieldError{Field: "accepted_terms_version", Reason: "outdated"})
+	}
 	if len(campos) > 0 {
 		apierr.WriteValidation(w, r, campos)
 		return
@@ -130,7 +143,7 @@ func (h *CadastroHandlers) Signup(w http.ResponseWriter, r *http.Request) {
 	if !h.desafioAceito(w, r, req.TurnstileToken, acaoSignup) {
 		return
 	}
-	if err := h.cadastro.Cadastrar(r.Context(), req.Email, req.Password); err != nil {
+	if err := h.cadastro.Cadastrar(r.Context(), req.Email, req.Password, *req.AcceptedTermsVersion); err != nil {
 		h.internal(w, r, "cadastrar", err)
 		return
 	}

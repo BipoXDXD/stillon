@@ -13,6 +13,7 @@ import (
 	"github.com/BipoXDXD/stillon/internal/account"
 	"github.com/BipoXDXD/stillon/internal/contaemail"
 	"github.com/BipoXDXD/stillon/internal/crypto"
+	"github.com/BipoXDXD/stillon/internal/legal"
 	"github.com/BipoXDXD/stillon/internal/notify"
 	"github.com/BipoXDXD/stillon/internal/storage"
 	"github.com/BipoXDXD/stillon/internal/storage/testdb"
@@ -64,7 +65,7 @@ func iniciarFluxoDeLink(t *testing.T, a ambienteCadastro, finalidade string, mai
 	if finalidade == "confirmacao" {
 		cad := account.NewCadastro(a.pool, a.clk, mailer, linksDeTeste)
 		cad.SetHash(hashArgon2Barato)
-		if err := cad.Cadastrar(ctx, destinoDeLink, senha); err != nil {
+		if err := cad.Cadastrar(ctx, destinoDeLink, senha, legal.VersaoAtual); err != nil {
 			t.Fatal(err)
 		}
 		id := idDoEmail(t, destinoDeLink)

@@ -47,7 +47,8 @@ func (s *Store) ListMembers(ctx context.Context, actorID, projectID uuid.UUID) (
 
 // ChangeRole dá o papel to ao alvo, sob a trava dos membros do projeto, com a
 // autorização pelo papel de actorID lido na transação. Na mesma transação,
-// somem os convites pendentes do alvo que o papel novo não poderia mandar.
+// somem os convites pendentes do alvo que o papel novo não poderia mandar e,
+// se ele deixa de ser owner, a proposta de titularidade feita a ele.
 func (s *Store) ChangeRole(ctx context.Context, actorID, projectID, targetID uuid.UUID, to tenancy.Role) (tenancy.MemberView, error) {
 	var out tenancy.MemberView
 	err := s.mutarMembro(ctx, actorID, projectID, targetID,
@@ -63,6 +64,13 @@ func (s *Store) ChangeRole(ctx context.Context, actorID, projectID, targetID uui
 			if err := apagarConvitesQueNaoPoderiaMandar(ctx, q, projectID, targetID, to); err != nil {
 				return err
 			}
+			// A titularidade só vai para owner: rebaixado, o pendente perde a
+			// proposta feita a ele.
+			if to != tenancy.RoleOwner {
+				if err := q.ClearTitularTransferTo(ctx, db.ClearTitularTransferToParams{ProjectID: projectID, UserID: targetID}); err != nil {
+					return fmt.Errorf("apagar a proposta de transferência ao rebaixado: %w", err)
+				}
+			}
 			out = alvo
 			out.Role = to
 			return nil
@@ -75,7 +83,8 @@ func (s *Store) ChangeRole(ctx context.Context, actorID, projectID, targetID uui
 
 // RemoveMember tira o alvo do projeto (alvo = actorID é sair). Na mesma
 // transação, os canais de e-mail que ele criou ali param de avisar, os
-// convites que ele aceitou ali somem e os pendentes que ele mandou também.
+// convites que ele aceitou ali somem, os pendentes que ele mandou também, e a
+// proposta de titularidade feita a ele.
 func (s *Store) RemoveMember(ctx context.Context, actorID, projectID, targetID uuid.UUID) error {
 	return s.mutarMembro(ctx, actorID, projectID, targetID,
 		func(q *db.Queries, sc tenancy.ProjectScope, alvo tenancy.MemberView) error {
@@ -100,6 +109,10 @@ func (s *Store) RemoveMember(ctx context.Context, actorID, projectID, targetID u
 				ProjectID: projectID, UserID: targetID,
 			}); err != nil {
 				return fmt.Errorf("apagar os convites pendentes do membro: %w", err)
+			}
+			// E a proposta de transferência feita a ele.
+			if err := q.ClearTitularTransferTo(ctx, db.ClearTitularTransferToParams{ProjectID: projectID, UserID: targetID}); err != nil {
+				return fmt.Errorf("apagar a proposta de transferência ao membro: %w", err)
 			}
 			n, err := q.DeleteProjectMember(ctx, db.DeleteProjectMemberParams{ProjectID: projectID, UserID: targetID})
 			if err != nil {

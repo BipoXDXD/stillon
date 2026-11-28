@@ -4,6 +4,7 @@ import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { usarApiFalsa } from './ambiente'
 import { EMAIL, ERROS_DO_SERVIDOR, PROJETO_PADRAO, SENHA, TOKEN_DO_TURNSTILE, TOTP_OK } from './api-falsa'
+import versaoDosTermos from '@/features/legal/versao.json'
 import { alvo, canal, heartbeat, incidente, itemDoResumo, pagina } from './fixtures'
 
 // A API falsa é o contrato dos testes de tela: quando ela diverge do servidor,
@@ -606,7 +607,12 @@ describe('o cadastro público', () => {
     })
   }
 
-  const cadastro = (email: string) => ({ email, password: SENHA, turnstile_token: TOKEN_DO_TURNSTILE })
+  const cadastro = (email: string) => ({
+    email,
+    password: SENHA,
+    turnstile_token: TOKEN_DO_TURNSTILE,
+    accepted_terms_version: versaoDosTermos.versao,
+  })
 
   it.each([
     ['/auth/signup', cadastro('nova@exemplo.com')],
@@ -643,6 +649,31 @@ describe('o cadastro público', () => {
     expect(r.status).toBe(400)
     expect(await r.json()).toMatchObject({ error: { code: 'validation_failed' } })
     expect(falsa.estado.cadastro.contas.has('nova@exemplo.com')).toBe(false)
+  })
+
+  // O aceite dos termos entra com o formato, antes do Turnstile.
+  it.each([
+    ['ausente', undefined, 'required'],
+    ['vazio', '', 'required'],
+    ['de outra versão', '2020-01-01', 'outdated'],
+  ])('signup com aceite %s dá 400 sem criar conta', async (_, versao, motivo) => {
+    const falsa = usarApiFalsa()
+    const r = await pedirPublico('/auth/signup', {
+      ...cadastro('nova@exemplo.com'),
+      accepted_terms_version: versao,
+      turnstile_token: 'token-que-o-turnstile-recusaria',
+    })
+    expect(r.status).toBe(400)
+    expect(await r.json()).toMatchObject({
+      error: { code: 'validation_failed', fields: [{ field: 'accepted_terms_version', reason: motivo }] },
+    })
+    expect(falsa.estado.cadastro.contas.has('nova@exemplo.com')).toBe(false)
+  })
+
+  it('signup-config informa a versão dos termos', async () => {
+    usarApiFalsa()
+    const r = await fetch(new URL('/api/v1/auth/signup-config', location.origin))
+    expect(await r.json()).toMatchObject({ terms_version: versaoDosTermos.versao })
   })
 
   it('signup responde 202 igual com e sem conta', async () => {

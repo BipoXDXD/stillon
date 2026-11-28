@@ -15,6 +15,7 @@ import type {
   Sessao,
 } from '@/lib/api/schemas'
 import { Agendamento } from '@/lib/api/schemas'
+import versaoDosTermos from '@/features/legal/versao.json'
 import { SITE_KEY_DO_TURNSTILE, TOKEN_DO_TURNSTILE } from './fixtures'
 
 // Uma API falsa, com estado, para o MSW. Ela imita as GUARDAS do servidor, e
@@ -93,6 +94,8 @@ export const ERROS_DO_SERVIDOR = {
   member_limit_reached: 409,
   already_member: 409,
   invitation_other_account: 403,
+  // O código da transferência de titularidade (PR 4.3).
+  titular_transfer_target: 409,
 } as const
 
 type ErrosDoServidor = typeof ERROS_DO_SERVIDOR
@@ -362,11 +365,19 @@ export function criarApiFalsa() {
 
   // A ordem do servidor no signup e no forgot: o formato (sem consulta, sem
   // gastar o token do Turnstile), depois o Turnstile, e só então o banco.
-  function recusaDoFormulario(corpo: Json, campoDaSenha?: string) {
+  // No signup, o aceite dos termos entra junto: ausente ou vazio é required;
+  // outra versão que não a atual é outdated.
+  function recusaDoFormulario(corpo: Json, campoDaSenha?: string, exigeAceite = false) {
     const fields: CampoComErro[] = []
     if (!EMAIL_VALIDO.test(String(corpo.email ?? ''))) fields.push({ field: 'email', reason: 'invalid' })
     const motivo = campoDaSenha ? motivoDaSenha(corpo[campoDaSenha]) : null
     if (campoDaSenha && motivo) fields.push({ field: campoDaSenha, reason: motivo })
+    const aceite = corpo.accepted_terms_version
+    if (exigeAceite && (aceite === undefined || aceite === null || aceite === '')) {
+      fields.push({ field: 'accepted_terms_version', reason: 'required' })
+    } else if (exigeAceite && aceite !== versaoDosTermos.versao) {
+      fields.push({ field: 'accepted_terms_version', reason: 'outdated' })
+    }
     if (fields.length > 0) return erro(400, 'validation_failed', fields)
     if (corpo.turnstile_token !== TOKEN_DO_TURNSTILE) return erro(400, 'turnstile_failed')
     return null
@@ -904,6 +915,7 @@ export function criarApiFalsa() {
         HttpResponse.json({
           enabled: st.cadastro.habilitado,
           turnstile_site_key: st.cadastro.habilitado ? SITE_KEY_DO_TURNSTILE : '',
+          terms_version: versaoDosTermos.versao,
         }),
       false,
     ),
@@ -912,8 +924,8 @@ export function criarApiFalsa() {
     rota(
       'post',
       '/auth/signup',
-      comCadastroHabilitado(estrita(['email', 'password', 'turnstile_token'], ({ corpo }) => {
-        const recusa = recusaDoFormulario(corpo, 'password')
+      comCadastroHabilitado(estrita(['email', 'password', 'turnstile_token', 'accepted_terms_version'], ({ corpo }) => {
+        const recusa = recusaDoFormulario(corpo, 'password', true)
         if (recusa) return recusa
         const email = String(corpo.email)
         if (!st.cadastro.contas.has(email)) {

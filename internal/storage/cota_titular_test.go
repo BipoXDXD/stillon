@@ -369,8 +369,10 @@ func TestQuotaPoliciesAndFunctionsAreContained(t *testing.T) {
 			}
 		}
 	}
-	quer = []string{"cota_alvos_do_titular", "cota_canais_do_titular", "cota_heartbeats_do_titular",
-		"cota_urls_com_regra_do_titular"}
+	// cota_do_receptor e cota_urls_com_regra_do_receptor (00051): a cota de
+	// quem recebe a titularidade.
+	quer = []string{"cota_alvos_do_titular", "cota_canais_do_titular", "cota_do_receptor", "cota_heartbeats_do_titular",
+		"cota_urls_com_regra_do_receptor", "cota_urls_com_regra_do_titular"}
 	if !slices.Equal(nomes, quer) {
 		t.Errorf("funções que citam app.cota_: %v; queria exatamente %v", nomes, quer)
 	}
