@@ -31,7 +31,8 @@ export const rotas: RouteObject[] = [
   { path: '/confirm-email', Component: PaginaConfirmarEmail, ErrorBoundary: ErroDeRota },
   { path: '/forgot-password', Component: PaginaEsqueciSenha, ErrorBoundary: ErroDeRota },
   { path: '/reset-password', Component: PaginaRedefinirSenha, ErrorBoundary: ErroDeRota },
-  // Os textos legais: públicos, abertos pela caixa de aceite do cadastro.
+  // Os textos legais, abertos pela caixa de aceite do cadastro: só aparecem
+  // com o cadastro aberto (a porta fica na MolduraLegal).
   { path: '/termos', Component: PaginaTermos, ErrorBoundary: ErroDeRota },
   { path: '/privacidade', Component: PaginaPrivacidade, ErrorBoundary: ErroDeRota },
   {

@@ -5,8 +5,9 @@ import { chaves } from '@/lib/api/consultas'
 import { renderizarPainel } from '@/test/renderizar'
 import versaoDosTermos from './versao.json'
 
-// Os Termos de Uso e a Política de Privacidade: públicos, como o cadastro que
-// leva até eles, e sem nome nem CNPJ de empresa até o dono aprovar o texto.
+// Os Termos de Uso e a Política de Privacidade: aparecem só com o cadastro
+// aberto, como o cadastro que leva até eles, e sem nome nem CNPJ de empresa até
+// o dono aprovar o texto.
 const PAGINAS = [
   { rota: '/termos', titulo: 'Termos de Uso' },
   { rota: '/privacidade', titulo: 'Política de Privacidade' },
