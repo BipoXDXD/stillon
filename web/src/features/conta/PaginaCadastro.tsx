@@ -9,7 +9,7 @@ import { Botao } from '@/components/ui/botao'
 import { CaixaDeMarcar, Campo, Entrada, ErroDoFormulario } from '@/components/ui/campo'
 import versaoDosTermos from '@/features/legal/versao.json'
 import { useConfigDoCadastro } from '@/lib/api/consultas'
-import { MARQUE_O_ACEITE, mensagemDe } from '@/lib/api/mensagens'
+import { MARQUE_O_ACEITE, mensagemDe, TERMOS_DESATUALIZADOS } from '@/lib/api/mensagens'
 import {
   campoEmail,
   CarregandoConfig,
@@ -34,6 +34,7 @@ const esquema = z.object({
 })
 
 const TITULO = 'Criar conta no StillOn'
+const NOME_DO_ACEITE = 'Li e aceito os Termos de Uso e a Política de Privacidade'
 
 export function PaginaCadastro() {
   const config = useConfigDoCadastro()
@@ -115,6 +116,10 @@ export function PaginaCadastro() {
         <CarregandoConfig />
       ) : config.isError ? (
         <FalhaDaConfig erro={config.error} aoTentar={() => void config.refetch()} />
+      ) : config.data.terms_version !== versaoDosTermos.versao ? (
+        // O painel carregado é de antes dos termos novos: o servidor recusaria
+        // a versão que ele enviaria, e só recarregar traz o texto novo.
+        <ErroDoFormulario>{TERMOS_DESATUALIZADOS}</ErroDoFormulario>
       ) : (
         <>
           <ErroDoFormulario>{erro}</ErroDoFormulario>
@@ -171,11 +176,22 @@ function LinkDoTexto({ para, children }: { para: string; children: string }) {
 }
 
 // A caixa do aceite, com o erro ligado a ela como o Campo faz com as entradas.
+// O nome vem de um texto escondido sem os avisos de aba nova: tirado do
+// rótulo, ele levaria o "(abre em nova aba)" dos dois links.
 function CaixaDoAceite({ erro, registro }: { erro?: string; registro: UseFormRegisterReturn }) {
   const idErro = useId()
+  const idNome = useId()
   return (
     <div className="space-y-2">
-      <CaixaDeMarcar aria-invalid={erro ? true : undefined} aria-describedby={erro ? idErro : undefined} {...registro}>
+      <span id={idNome} hidden>
+        {NOME_DO_ACEITE}
+      </span>
+      <CaixaDeMarcar
+        aria-labelledby={idNome}
+        aria-invalid={erro ? true : undefined}
+        aria-describedby={erro ? idErro : undefined}
+        {...registro}
+      >
         <span>
           Li e aceito os <LinkDoTexto para="/termos">Termos de Uso</LinkDoTexto> e a{' '}
           <LinkDoTexto para="/privacidade">Política de Privacidade</LinkDoTexto>.
