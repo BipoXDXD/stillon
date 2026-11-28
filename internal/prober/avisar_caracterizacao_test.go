@@ -81,7 +81,7 @@ func (b *bancada) fecharPeloAgendador(t *testing.T, a db.ClaimDueTargetsRow, de 
 func (b *bancada) alvoDeAviso(t *testing.T) db.ClaimDueTargetsRow {
 	t.Helper()
 	alvo := b.alvo(t, "https://exemplo.com", nil)
-	return db.ClaimDueTargetsRow{ID: alvo, UserID: b.dono, URL: "https://exemplo.com", Method: "GET", IntervalSec: 60}
+	return db.ClaimDueTargetsRow{ID: alvo, URL: "https://exemplo.com", Method: "GET", IntervalSec: 60}
 }
 
 func TestSchedulerMarcaEEnfileiraAAbertura(t *testing.T) {

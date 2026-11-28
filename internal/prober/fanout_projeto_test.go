@@ -64,7 +64,7 @@ func projetoOuNulo(projeto uuid.UUID) *uuid.UUID {
 func alvoNoProjeto(t *testing.T, projeto, criador uuid.UUID) db.ClaimDueTargetsRow {
 	t.Helper()
 	a := db.ClaimDueTargetsRow{
-		ID: uuid.Must(uuid.NewV7()), UserID: criador, URL: "https://exemplo.com", Method: "GET", IntervalSec: 60,
+		ID: uuid.Must(uuid.NewV7()), ProjectID: projetoOuNulo(projeto), URL: "https://exemplo.com", Method: "GET", IntervalSec: 60,
 	}
 	if _, err := testdb.Admin(t).Exec(context.Background(), `
 		INSERT INTO targets (id, user_id, project_id, name, url, method, interval_sec, timeout_ms,

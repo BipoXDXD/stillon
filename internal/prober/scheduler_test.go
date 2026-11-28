@@ -887,7 +887,7 @@ func TestLooksLikeAVanishedTarget(t *testing.T) {
 func TestCheckWithoutResponseHasNoStatusCode(t *testing.T) {
 	b := novaBancada(t, nil, MaxInFlight)
 	alvo := b.alvo(t, "https://exemplo.com", nil)
-	a := db.ClaimDueTargetsRow{ID: alvo, UserID: b.dono, URL: "https://exemplo.com", Method: "GET", IntervalSec: 60}
+	a := db.ClaimDueTargetsRow{ID: alvo, URL: "https://exemplo.com", Method: "GET", IntervalSec: 60}
 
 	b.s.gravar(a, b.clk.Now(), Result{Status: StatusDown, ErrorKind: KindTimeout})
 

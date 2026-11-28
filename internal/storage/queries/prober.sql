@@ -8,8 +8,21 @@
 -- SKIP LOCKED faz um segundo sondador pegar OUTROS alvos em vez de esperar
 -- pelos que o primeiro travou (TestSkipLockedDoesNotWaitForAnotherProber).
 --
--- user_id volta só por compatibilidade: o fan-out sai pelo projeto do
--- incidente (ListDeliverableChannelsForIncident), não pelo dono do alvo;
+-- Justiça entre projetos: a janela numera os vencidos de cada projeto pela
+-- ordem do vencimento (vez 1 é o mais atrasado de cada um), e o lote sai por
+-- vez e só depois por next_run_at. Um projeto com mil alvos atrasados não
+-- toma a rodada inteira: um de cada projeto por vez
+-- (TestClaimInterleavesProjects). Sem teto fixo por projeto, as vagas que um
+-- projeto não usa vão para os outros.
+--
+-- FOR UPDATE não aceita função de janela no mesmo SELECT: a janela roda sem
+-- trava, e o lote re-trava os escolhidos conferindo de novo o vencimento.
+-- Com SKIP LOCKED, o alvo que outro sondador travou fica de fora; o que ele
+-- reivindicou e já gravou volta pelo EvalPlanQual com o next_run_at novo e
+-- cai no filtro (TestClaimDoesNotDoubleClaimConcurrently).
+--
+-- project_id volta para os testes e o diagnóstico: o fan-out sai pelo projeto
+-- do incidente (ListDeliverableChannelsForIncident);
 -- interval_sec, porque a histerese recomeça
 -- depois de uma lacuna longa entre checks; as três colunas da regra de
 -- conteúdo, porque a sonda julga o corpo pela regra que reivindicou, e a
@@ -19,18 +32,24 @@
 -- dentro do IN, um nested loop pode reexecutá-la a cada linha de fora, e o
 -- LIMIT deixaria de limitar o lote (TestClaimDueTargetsRespectsTheLimitInAnyPlan).
 -- name: ClaimDueTargets :many
-WITH lote AS MATERIALIZED (
-    SELECT id FROM targets
+WITH vencidos AS (
+    SELECT id, next_run_at,
+           row_number() OVER (PARTITION BY project_id ORDER BY next_run_at, id) AS vez
+      FROM targets
      WHERE enabled AND next_run_at <= sqlc.arg(now)::timestamptz
-     ORDER BY next_run_at
-     LIMIT sqlc.arg(max_rows)::int
+), escolhidos AS (
+    SELECT id FROM vencidos ORDER BY vez, next_run_at, id LIMIT sqlc.arg(max_rows)::int
+), lote AS MATERIALIZED (
+    SELECT t.id FROM targets t
+     WHERE t.id IN (SELECT id FROM escolhidos)
+       AND t.enabled AND t.next_run_at <= sqlc.arg(now)::timestamptz
        FOR UPDATE SKIP LOCKED
 )
 UPDATE targets t
    SET next_run_at = sqlc.arg(now)::timestamptz
        + make_interval(secs => t.interval_sec * (0.9 + random() * 0.2))
  WHERE t.id IN (SELECT id FROM lote)
-RETURNING t.id, t.user_id, t.url, t.method, t.timeout_ms, t.expected_status,
+RETURNING t.id, t.project_id, t.url, t.method, t.timeout_ms, t.expected_status,
           t.headers_enc, t.degraded_threshold_ms, t.interval_sec,
           t.content_mode, t.content_value, t.content_json_pointer;
 

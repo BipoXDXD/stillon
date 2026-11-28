@@ -99,7 +99,7 @@ UPDATE heartbeats SET ping_token_hash = sqlc.arg(ping_token_hash)
 -- este binário não conhece: o prazo dela não é confiável e não abre atraso, mas
 -- a falha avisada abre.
 -- name: ClaimHeartbeatsToOpen :many
-SELECT h.id, h.user_id, h.deadline_at, h.failing_since
+SELECT h.id, h.project_id, h.deadline_at, h.failing_since
   FROM heartbeats h
  WHERE h.enabled
    AND (h.failing_since IS NOT NULL
@@ -117,7 +117,7 @@ SELECT h.id, h.user_id, h.deadline_at, h.failing_since
 -- Agendamento desconhecido (sem período e sem cron) não tem prazo confiável, e o
 -- sucesso basta: o ping nessa linha nunca move o prazo.
 -- name: ClaimHeartbeatsToClose :many
-SELECT h.id, h.user_id, h.last_success_at, x.id AS incident_id, x.started_at
+SELECT h.id, h.project_id, h.last_success_at, x.id AS incident_id, x.started_at
   FROM incidents x
   JOIN heartbeats h ON h.id = x.heartbeat_id
  WHERE x.resolved_at IS NULL

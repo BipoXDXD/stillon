@@ -66,7 +66,7 @@ func (b *bancada) falhasSeguidas(t *testing.T, alvo uuid.UUID) int32 {
 // abertura: se a sonda velha contar, a URL nova herda a sequência.
 func (b *bancada) semearFalhas(t *testing.T, alvo uuid.UUID) {
 	t.Helper()
-	b.semearFalhasDa(t, db.ClaimDueTargetsRow{ID: alvo, UserID: b.dono, URL: urlVelha, Method: "GET", IntervalSec: 60})
+	b.semearFalhasDa(t, db.ClaimDueTargetsRow{ID: alvo, URL: urlVelha, Method: "GET", IntervalSec: 60})
 }
 
 // semearFalhasDa grava as duas falhas como sondas da reivindicação a, que tem
@@ -147,7 +147,7 @@ func TestProbeWriteWaitsForAnOpenPatchAndSeesTheNewURL(t *testing.T) {
 	gravou := make(chan struct{}, 1)
 	go func() {
 		defer func() { gravou <- struct{}{} }()
-		a := db.ClaimDueTargetsRow{ID: alvo, UserID: b.dono, URL: urlVelha, Method: "GET", IntervalSec: 60}
+		a := db.ClaimDueTargetsRow{ID: alvo, URL: urlVelha, Method: "GET", IntervalSec: 60}
 		b.s.gravar(a, b.clk.Now(), Result{Status: StatusDown, ErrorKind: KindTimeout})
 	}()
 	if !testdb.EsperarBloqueados(t, b.pool, 1, gravou) {
@@ -235,7 +235,7 @@ func TestPauseWithProbeInFlightIsAwaitedByTheWrite(t *testing.T) {
 	gravou := make(chan struct{}, 1)
 	go func() {
 		defer func() { gravou <- struct{}{} }()
-		a := db.ClaimDueTargetsRow{ID: alvo, UserID: b.dono, URL: urlVelha, Method: http.MethodGet, IntervalSec: 60}
+		a := db.ClaimDueTargetsRow{ID: alvo, URL: urlVelha, Method: http.MethodGet, IntervalSec: 60}
 		b.s.gravar(a, b.clk.Now(), Result{Status: StatusDown, ErrorKind: KindTimeout})
 	}()
 	if !testdb.EsperarBloqueados(t, b.pool, 1, gravou) {
@@ -262,7 +262,7 @@ func TestProbeWithTheOldMethodIsDiscarded(t *testing.T) {
 	if _, err := svc.Update(context.Background(), b.escopo(t), alvo, targets.Patch{Method: &head}); err != nil {
 		t.Fatal(err)
 	}
-	a := db.ClaimDueTargetsRow{ID: alvo, UserID: b.dono, URL: urlVelha, Method: http.MethodGet, IntervalSec: 60}
+	a := db.ClaimDueTargetsRow{ID: alvo, URL: urlVelha, Method: http.MethodGet, IntervalSec: 60}
 	b.s.gravar(a, b.clk.Now(), Result{Status: StatusDown, ErrorKind: KindTimeout})
 
 	if n := b.falhasSeguidas(t, alvo); n != 0 {
@@ -292,7 +292,7 @@ func TestProbeDiscardedWhenRuleChanged(t *testing.T) {
 	alvo := b.alvo(t, urlVelha, alvoComContains("a"))
 	modo, valor := string(targets.ContentContains), "a"
 	b.semearFalhasDa(t, db.ClaimDueTargetsRow{
-		ID: alvo, UserID: b.dono, URL: urlVelha, Method: http.MethodGet, IntervalSec: 60,
+		ID: alvo, URL: urlVelha, Method: http.MethodGet, IntervalSec: 60,
 		ContentMode: &modo, ContentValue: &valor,
 	})
 
