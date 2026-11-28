@@ -126,10 +126,12 @@ func TestClaimRoundRobinAcrossThreeProjects(t *testing.T) {
 	}
 }
 
-// A janela de row_number roda sem trava; quem impede o lote em dobro é a
-// re-trava do lote. O primeiro sondador segura 10 alvos sem commit; o segundo
-// pede 20 e não pode levar nenhum dos 10, nem quando o primeiro faz commit
-// com o segundo esperando.
+// A janela de row_number roda sem trava; com o primeiro sondador ainda aberto,
+// quem impede o lote em dobro é o FOR UPDATE SKIP LOCKED do lote. O primeiro
+// segura 10 alvos sem commit; o segundo pede 20, não espera por eles e não
+// leva nenhum. A reconferência do vencimento no lote, que só entra quando o
+// outro faz commit no meio da instrução, tem teste próprio
+// (TestClaimRechecksDueAfterConcurrentCommit).
 func TestClaimDoesNotDoubleClaimConcurrently(t *testing.T) {
 	pool := testdb.New(t)
 	ctx := context.Background()
@@ -166,7 +168,9 @@ func TestClaimDoesNotDoubleClaimConcurrently(t *testing.T) {
 		})
 		fim <- resultado{lote, err}
 	}()
-	testdb.EsperarBloqueados(t, pool, 1, fim)
+	if testdb.EsperarBloqueados(t, pool, 1, fim) {
+		t.Error("o segundo sondador esperou pelas linhas do primeiro; o lote devia pulá-las (SKIP LOCKED)")
+	}
 	if err := tx1.Commit(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -186,6 +190,95 @@ func TestClaimDoesNotDoubleClaimConcurrently(t *testing.T) {
 	}
 	if len(primeiros)+len(r.lote) != 20 {
 		t.Errorf("reivindicados %d+%d, queria 20 no total", len(primeiros), len(r.lote))
+	}
+}
+
+// segurarReivindicacao faz toda leitura de targets pelo papel da aplicação
+// parar até o teste soltar a trava consultiva devolvida, por uma política
+// restritiva de teste (o banco volta do snapshot no fim). A instrução que lê
+// para depois de tirar o snapshot, no meio da janela: é o intervalo em que
+// outro sondador pode fazer commit, e que nenhum teste com tempo de parede
+// acerta.
+func segurarReivindicacao(t *testing.T) (soltar func()) {
+	t.Helper()
+	ctx := context.Background()
+	admin := testdb.Admin(t)
+	for _, ddl := range []string{
+		`CREATE FUNCTION teste_segurar_leitura() RETURNS boolean LANGUAGE plpgsql VOLATILE AS $$
+		 BEGIN PERFORM pg_advisory_xact_lock_shared(4242551); RETURN true; END $$`,
+		`CREATE POLICY teste_segurar_leitura ON targets AS RESTRICTIVE FOR SELECT TO stillon_app
+		 USING (teste_segurar_leitura())`,
+	} {
+		if _, err := admin.Exec(ctx, ddl); err != nil {
+			t.Fatal(err)
+		}
+	}
+	trava, err := admin.Acquire(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := trava.Exec(ctx, `SELECT pg_advisory_lock(4242551)`); err != nil {
+		t.Fatal(err)
+	}
+	solta := false
+	soltar = func() {
+		if solta {
+			return
+		}
+		solta = true
+		if _, err := trava.Exec(ctx, `SELECT pg_advisory_unlock(4242551)`); err != nil {
+			t.Error(err)
+		}
+		trava.Release()
+	}
+	t.Cleanup(soltar)
+	return soltar
+}
+
+// O alvo vencido no snapshot da instrução que outro sondador reivindicou (ou o
+// dono pausou) com commit antes de o lote travá-lo: o FOR UPDATE relê a versão
+// nova (EvalPlanQual), e só a reconferência do vencimento no lote a tira.
+func TestClaimRechecksDueAfterConcurrentCommit(t *testing.T) {
+	for _, caso := range []struct{ nome, mudanca string }{
+		{"reivindicado por outro", `UPDATE targets SET next_run_at = $1::timestamptz + interval '1 minute'`},
+		{"pausado pelo dono", `UPDATE targets SET enabled = false WHERE $1::timestamptz IS NOT NULL`},
+	} {
+		t.Run(caso.nome, func(t *testing.T) {
+			pool := testdb.New(t)
+			ctx := context.Background()
+			dono := novoUsuario(t, pool)
+			alvosVencidosNoProjeto(t, testdb.ProjetoPadrao(t, dono), dono, 1, agora.Add(-time.Minute), 0)
+			soltar := segurarReivindicacao(t)
+
+			type resultado struct {
+				lote []db.ClaimDueTargetsRow
+				err  error
+			}
+			fim := make(chan resultado, 1)
+			go func() {
+				var lote []db.ClaimDueTargetsRow
+				err := storage.InProberTx(ctx, pool, func(q *db.Queries) error {
+					var err error
+					lote, err = q.ClaimDueTargets(ctx, db.ClaimDueTargetsParams{Now: agora, MaxRows: 10})
+					return err
+				})
+				fim <- resultado{lote, err}
+			}()
+			if !testdb.EsperarBloqueados(t, pool, 1, fim) {
+				t.Fatal("a reivindicação não parou na trava do teste; ela não prova nada")
+			}
+			if _, err := testdb.Admin(t).Exec(ctx, caso.mudanca, agora); err != nil {
+				t.Fatal(err)
+			}
+			soltar()
+			r := <-fim
+			if r.err != nil {
+				t.Fatal(r.err)
+			}
+			if len(r.lote) != 0 {
+				t.Errorf("reivindicou %d alvos que já não estavam vencidos e ativos", len(r.lote))
+			}
+		})
 	}
 }
 

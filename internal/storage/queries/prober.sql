@@ -17,9 +17,10 @@
 --
 -- FOR UPDATE não aceita função de janela no mesmo SELECT: a janela roda sem
 -- trava, e o lote re-trava os escolhidos conferindo de novo o vencimento.
--- Com SKIP LOCKED, o alvo que outro sondador travou fica de fora; o que ele
--- reivindicou e já gravou volta pelo EvalPlanQual com o next_run_at novo e
--- cai no filtro (TestClaimDoesNotDoubleClaimConcurrently).
+-- Com SKIP LOCKED, o alvo que outro sondador travou fica de fora
+-- (TestClaimDoesNotDoubleClaimConcurrently); o que ele reivindicou, ou o dono
+-- pausou, com commit no meio desta instrução volta pelo EvalPlanQual com a
+-- versão nova e cai no filtro (TestClaimRechecksDueAfterConcurrentCommit).
 --
 -- project_id volta para os testes e o diagnóstico: o fan-out sai pelo projeto
 -- do incidente (ListDeliverableChannelsForIncident);
