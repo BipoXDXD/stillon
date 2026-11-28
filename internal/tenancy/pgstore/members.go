@@ -46,7 +46,8 @@ func (s *Store) ListMembers(ctx context.Context, actorID, projectID uuid.UUID) (
 }
 
 // ChangeRole dá o papel to ao alvo, sob a trava dos membros do projeto, com a
-// autorização pelo papel de actorID lido na transação.
+// autorização pelo papel de actorID lido na transação. Na mesma transação,
+// somem os convites pendentes do alvo que o papel novo não poderia mandar.
 func (s *Store) ChangeRole(ctx context.Context, actorID, projectID, targetID uuid.UUID, to tenancy.Role) (tenancy.MemberView, error) {
 	var out tenancy.MemberView
 	err := s.mutarMembro(ctx, actorID, projectID, targetID,
@@ -59,6 +60,9 @@ func (s *Store) ChangeRole(ctx context.Context, actorID, projectID, targetID uui
 			}); err != nil {
 				return fmt.Errorf("mudar papel: %w", err)
 			}
+			if err := apagarConvitesQueNaoPoderiaMandar(ctx, q, projectID, targetID, to); err != nil {
+				return err
+			}
 			out = alvo
 			out.Role = to
 			return nil
@@ -70,8 +74,8 @@ func (s *Store) ChangeRole(ctx context.Context, actorID, projectID, targetID uui
 }
 
 // RemoveMember tira o alvo do projeto (alvo = actorID é sair). Na mesma
-// transação, os canais de e-mail que ele criou ali param de avisar e os
-// convites que ele aceitou ali somem.
+// transação, os canais de e-mail que ele criou ali param de avisar, os
+// convites que ele aceitou ali somem e os pendentes que ele mandou também.
 func (s *Store) RemoveMember(ctx context.Context, actorID, projectID, targetID uuid.UUID) error {
 	return s.mutarMembro(ctx, actorID, projectID, targetID,
 		func(q *db.Queries, sc tenancy.ProjectScope, alvo tenancy.MemberView) error {
@@ -89,6 +93,13 @@ func (s *Store) RemoveMember(ctx context.Context, actorID, projectID, targetID u
 				ProjectID: projectID, UserID: targetID,
 			}); err != nil {
 				return fmt.Errorf("apagar os convites aceitos pelo membro: %w", err)
+			}
+			// Os pendentes que ele mandou também: o link não sobrevive a quem
+			// o assinou.
+			if err := q.DeletePendingInvitationsBy(ctx, db.DeletePendingInvitationsByParams{
+				ProjectID: projectID, UserID: targetID,
+			}); err != nil {
+				return fmt.Errorf("apagar os convites pendentes do membro: %w", err)
 			}
 			n, err := q.DeleteProjectMember(ctx, db.DeleteProjectMemberParams{ProjectID: projectID, UserID: targetID})
 			if err != nil {
@@ -162,6 +173,31 @@ func (s *Store) mutarMembro(ctx context.Context, actorID, projectID, targetID uu
 		return tenancy.ErrTitularProtected
 	}
 	return err
+}
+
+// apagarConvitesQueNaoPoderiaMandar apaga os pendentes de quem convidou que
+// AuthorizeInvite recusaria com o papel novo: rebaixar quem convidou não deixa
+// vivo o link de um papel que ele já não pode dar. Roda sob a trava dos
+// membros, na transação da mudança de papel.
+func apagarConvitesQueNaoPoderiaMandar(ctx context.Context, q *db.Queries, projectID, inviterID uuid.UUID, novo tenancy.Role) error {
+	convites, err := q.ListPendingInvitationsBy(ctx, db.ListPendingInvitationsByParams{ProjectID: projectID, UserID: inviterID})
+	if err != nil {
+		return fmt.Errorf("ler os convites pendentes de quem convidou: %w", err)
+	}
+	quem := tenancy.ProjectScope{ProjectID: projectID, UserID: inviterID, Role: novo}
+	for _, c := range convites {
+		papel, err := tenancy.ParseRole(c.Role)
+		if err != nil {
+			return fmt.Errorf("papel gravado em project_invitations: %w", err)
+		}
+		if tenancy.AuthorizeInvite(quem, papel) == nil {
+			continue
+		}
+		if _, err := q.DeleteInvitation(ctx, db.DeleteInvitationParams{ProjectID: projectID, ID: c.ID}); err != nil {
+			return fmt.Errorf("apagar convite que o papel novo não mandaria: %w", err)
+		}
+	}
+	return nil
 }
 
 // travarEReler pega a trava dos membros do projeto do escopo e relê o papel de

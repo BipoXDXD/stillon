@@ -129,6 +129,23 @@ func (q *Queries) DeletePendingInvitationForEmail(ctx context.Context, arg Delet
 	return err
 }
 
+const deletePendingInvitationsBy = `-- name: DeletePendingInvitationsBy :exec
+DELETE FROM project_invitations
+ WHERE project_id = $1 AND invited_by = $2::uuid AND accepted_at IS NULL
+`
+
+type DeletePendingInvitationsByParams struct {
+	ProjectID uuid.UUID
+	UserID    uuid.UUID
+}
+
+// Quem convidou e foi removido leva junto os pendentes que mandou: o link não
+// sobrevive a quem o assinou.
+func (q *Queries) DeletePendingInvitationsBy(ctx context.Context, arg DeletePendingInvitationsByParams) error {
+	_, err := q.db.Exec(ctx, deletePendingInvitationsBy, arg.ProjectID, arg.UserID)
+	return err
+}
+
 const deleteStaleInvitations = `-- name: DeleteStaleInvitations :exec
 
 DELETE FROM project_invitations
@@ -316,6 +333,44 @@ func (q *Queries) ListPendingInvitations(ctx context.Context, arg ListPendingInv
 			&i.CreatedAt,
 			&i.ExpiresAt,
 		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listPendingInvitationsBy = `-- name: ListPendingInvitationsBy :many
+SELECT id, role
+  FROM project_invitations
+ WHERE project_id = $1 AND invited_by = $2::uuid AND accepted_at IS NULL
+`
+
+type ListPendingInvitationsByParams struct {
+	ProjectID uuid.UUID
+	UserID    uuid.UUID
+}
+
+type ListPendingInvitationsByRow struct {
+	ID   uuid.UUID
+	Role string
+}
+
+// Os pendentes de quem convidou, para a mudança de papel apagar os que o
+// papel novo não poderia mandar (a regra é a do Go, AuthorizeInvite).
+func (q *Queries) ListPendingInvitationsBy(ctx context.Context, arg ListPendingInvitationsByParams) ([]ListPendingInvitationsByRow, error) {
+	rows, err := q.db.Query(ctx, listPendingInvitationsBy, arg.ProjectID, arg.UserID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListPendingInvitationsByRow
+	for rows.Next() {
+		var i ListPendingInvitationsByRow
+		if err := rows.Scan(&i.ID, &i.Role); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

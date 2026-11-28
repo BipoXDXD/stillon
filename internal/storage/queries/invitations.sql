@@ -98,3 +98,16 @@ ON CONFLICT (project_id, user_id) DO NOTHING;
 -- name: DeleteAcceptedInvitationsOf :exec
 DELETE FROM project_invitations
  WHERE project_id = sqlc.arg(project_id) AND accepted_by = sqlc.arg(user_id)::uuid;
+
+-- Quem convidou e foi removido leva junto os pendentes que mandou: o link não
+-- sobrevive a quem o assinou.
+-- name: DeletePendingInvitationsBy :exec
+DELETE FROM project_invitations
+ WHERE project_id = sqlc.arg(project_id) AND invited_by = sqlc.arg(user_id)::uuid AND accepted_at IS NULL;
+
+-- Os pendentes de quem convidou, para a mudança de papel apagar os que o
+-- papel novo não poderia mandar (a regra é a do Go, AuthorizeInvite).
+-- name: ListPendingInvitationsBy :many
+SELECT id, role
+  FROM project_invitations
+ WHERE project_id = sqlc.arg(project_id) AND invited_by = sqlc.arg(user_id)::uuid AND accepted_at IS NULL;

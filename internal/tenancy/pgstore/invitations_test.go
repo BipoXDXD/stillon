@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"maps"
 	"sync"
 	"testing"
 	"time"
@@ -22,8 +23,9 @@ import (
 	"github.com/BipoXDXD/stillon/internal/tenancy/pgstore"
 )
 
-// t0 é o relógio dos convites destes testes.
-var t0 = time.Date(2026, 11, 27, 9, 0, 0, 0, time.UTC)
+// t0 é o relógio dos convites destes testes. Fica perto do relógio real: a
+// política de aceite confere o prazo também com o now() do banco.
+var t0 = time.Now().UTC().Truncate(time.Second)
 
 // timeConvite é o projeto PA de A (titular), com M manager e V viewer: um
 // membro além do titular conta para o teto (V também); são dois.
@@ -488,4 +490,85 @@ func TestAcceptedInvitationCannotReinsertRemovedMember(t *testing.T) {
 	if codigoPG(err) != "42501" {
 		t.Errorf("o removido voltando com o link antigo: %v; queria 42501", err)
 	}
+}
+
+// O owner removido leva junto os convites pendentes que mandou: o link do
+// cúmplice convidado como owner morre na mesma transação. Os convites de
+// outros ficam.
+func TestRemovingInviterDropsTheirPendingInvitations(t *testing.T) {
+	pool := testdb.New(t)
+	ctx := context.Background()
+	e := novoTimeConvite(t, pool)
+	testdb.Operador(t, e.a) // folga no teto: o teste é de quem convidou
+	o := novoUsuario(t, pool)
+	testdb.Membro(t, e.pa, o, "owner")
+	st := pgstore.NewInvitations(pool)
+	cumplice := usuarioComEmail(t, pool, "cumplice@y.com")
+	_, doRemovido := aceitarConviteDe(t, pool, o, e.pa, "cumplice@y.com", tenancy.RoleOwner)
+	doTitular, err := convidar(t, st, e.a, e.pa, "outro@y.com", tenancy.RoleMember, t0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := pgstore.New(pool).RemoveMember(ctx, e.a, e.pa, o); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.Accept(ctx, cumplice, doRemovido, t0.Add(time.Hour)); !errors.Is(err, tenancy.ErrInvitationInvalid) {
+		t.Errorf("aceite do convite do owner removido: %v; queria ErrInvitationInvalid", err)
+	}
+	if err := espiar(t, pool, doTitular, t0); err != nil {
+		t.Errorf("o convite do titular sumiu junto: %v", err)
+	}
+}
+
+// Rebaixar quem convidou apaga os pendentes que o papel novo não poderia
+// mandar (AuthorizeInvite): a manager perde os de owner e manager e fica com
+// os de member e viewer; a viewer, perde todos.
+func TestDemotingInviterDropsInvitationsTheyCouldNoLongerSend(t *testing.T) {
+	pool := testdb.New(t)
+	ctx := context.Background()
+	e := novoTimeConvite(t, pool)
+	testdb.Operador(t, e.a)
+	o := novoUsuario(t, pool)
+	testdb.Membro(t, e.pa, o, "owner")
+	links := map[tenancy.Role][]byte{}
+	for _, papel := range []tenancy.Role{tenancy.RoleOwner, tenancy.RoleManager, tenancy.RoleMember, tenancy.RoleViewer} {
+		_, links[papel] = aceitarConviteDe(t, pool, o, e.pa, string(papel)+"@y.com", papel)
+	}
+	vivos := func() map[tenancy.Role]bool {
+		out := map[tenancy.Role]bool{}
+		for papel, hash := range links {
+			out[papel] = espiar(t, pool, hash, t0) == nil
+		}
+		return out
+	}
+	membros := pgstore.New(pool)
+
+	if _, err := membros.ChangeRole(ctx, e.a, e.pa, o, tenancy.RoleManager); err != nil {
+		t.Fatal(err)
+	}
+	queria := map[tenancy.Role]bool{tenancy.RoleOwner: false, tenancy.RoleManager: false, tenancy.RoleMember: true, tenancy.RoleViewer: true}
+	if got := vivos(); !maps.Equal(got, queria) {
+		t.Errorf("pendentes vivos depois de rebaixar a manager = %v; queria %v", got, queria)
+	}
+	if _, err := membros.ChangeRole(ctx, e.a, e.pa, o, tenancy.RoleViewer); err != nil {
+		t.Fatal(err)
+	}
+	queria = map[tenancy.Role]bool{tenancy.RoleOwner: false, tenancy.RoleManager: false, tenancy.RoleMember: false, tenancy.RoleViewer: false}
+	if got := vivos(); !maps.Equal(got, queria) {
+		t.Errorf("pendentes vivos depois de rebaixar a viewer = %v; queria %v", got, queria)
+	}
+}
+
+// aceitarConviteDe grava um convite de quem, para email com o papel dado, e
+// devolve o token e o hash do link.
+func aceitarConviteDe(t *testing.T, pool *pgxpool.Pool, quem, projeto uuid.UUID, email string, papel tenancy.Role) (token string, hash []byte) {
+	t.Helper()
+	token, hash = novoTokenDeConvite(t)
+	if _, _, err := pgstore.NewInvitations(pool).Create(context.Background(), quem, projeto, tenancy.NewInvitation{
+		ID: uuid.Must(uuid.NewV7()), Email: email, Role: papel, TokenHash: hash, Now: t0,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	return token, hash
 }
