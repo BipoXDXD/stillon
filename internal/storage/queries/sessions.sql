@@ -53,7 +53,7 @@ UPDATE sessions SET revoked_at = sqlc.arg(now)::timestamptz
 -- ordem (família, linha mais nova, id) é total: ListSessions fica com a
 -- primeira linha de cada família, e um empate de created_at não pode ser sorteio.
 -- name: ListLiveFamilies :many
-SELECT family_id, created_at, coalesce(user_agent, '')::text AS user_agent
+SELECT family_id, created_at, coalesce(user_agent, '')::text AS user_agent, expires_at
   FROM sessions
  WHERE user_id = sqlc.arg(user_id) AND used_at IS NULL AND revoked_at IS NULL
    AND expires_at > sqlc.arg(now)::timestamptz

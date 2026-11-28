@@ -22,8 +22,10 @@ ON CONFLICT DO NOTHING;
 -- restringe aos vínculos dele, e o filtro por user_id deixa isso explícito.
 -- titular_is_operator dá os limites do titular de cada projeto
 -- (tenancy.LimitesDe): valem os do dono do projeto, não os de quem pede.
+-- is_titular serve à exportação da conta (memberships).
 -- name: ListMyProjects :many
-SELECT p.id, p.name, p.is_default, m.role, p.created_at, t.is_operator AS titular_is_operator
+SELECT p.id, p.name, p.is_default, m.role, p.created_at, t.is_operator AS titular_is_operator,
+       (p.titular_id = m.user_id)::boolean AS is_titular
   FROM project_members m
   JOIN projects p ON p.id = m.project_id
   JOIN users t ON t.id = p.titular_id

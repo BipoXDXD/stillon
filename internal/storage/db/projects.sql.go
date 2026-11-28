@@ -175,7 +175,8 @@ func (q *Queries) InsertProjectOwner(ctx context.Context, arg InsertProjectOwner
 }
 
 const listMyProjects = `-- name: ListMyProjects :many
-SELECT p.id, p.name, p.is_default, m.role, p.created_at, t.is_operator AS titular_is_operator
+SELECT p.id, p.name, p.is_default, m.role, p.created_at, t.is_operator AS titular_is_operator,
+       (p.titular_id = m.user_id)::boolean AS is_titular
   FROM project_members m
   JOIN projects p ON p.id = m.project_id
   JOIN users t ON t.id = p.titular_id
@@ -190,6 +191,7 @@ type ListMyProjectsRow struct {
 	Role              string
 	CreatedAt         time.Time
 	TitularIsOperator bool
+	IsTitular         bool
 }
 
 // Os projetos de que user_id é membro, com o papel dele, sem os de titular
@@ -198,6 +200,7 @@ type ListMyProjectsRow struct {
 // restringe aos vínculos dele, e o filtro por user_id deixa isso explícito.
 // titular_is_operator dá os limites do titular de cada projeto
 // (tenancy.LimitesDe): valem os do dono do projeto, não os de quem pede.
+// is_titular serve à exportação da conta (memberships).
 func (q *Queries) ListMyProjects(ctx context.Context, userID uuid.UUID) ([]ListMyProjectsRow, error) {
 	rows, err := q.db.Query(ctx, listMyProjects, userID)
 	if err != nil {
@@ -214,6 +217,7 @@ func (q *Queries) ListMyProjects(ctx context.Context, userID uuid.UUID) ([]ListM
 			&i.Role,
 			&i.CreatedAt,
 			&i.TitularIsOperator,
+			&i.IsTitular,
 		); err != nil {
 			return nil, err
 		}
