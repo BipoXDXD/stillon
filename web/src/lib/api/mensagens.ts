@@ -78,6 +78,9 @@ export const CARACTERE_INVISIVEL = 'Tem um caractere que não pode ser mostrado'
 
 // O erro da caixa de aceite do cadastro, igual no cliente e no servidor.
 export const MARQUE_O_ACEITE = 'Marque para aceitar os Termos de Uso e a Política de Privacidade.'
+// A config do cadastro traz outra versão dos termos que a deste painel: o
+// painel em cache é de antes da mudança.
+export const TERMOS_DESATUALIZADOS = 'Os termos mudaram. Recarregue a página para ler a versão nova antes de criar a conta.'
 
 export const LIMITE_DA_REGRA = 'Até 256 caracteres.'
 export const CONTROLE_NA_REGRA = 'Sem tab, quebra de linha ou outro caractere de controle.'

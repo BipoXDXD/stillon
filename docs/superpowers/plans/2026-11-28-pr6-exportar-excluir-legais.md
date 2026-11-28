@@ -75,20 +75,20 @@
 
 1. **Exclusão da conta de um membro apaga recursos no projeto de outra pessoa.** Hoje `targets/heartbeats/notif_channels/status_pages.user_id` são `ON DELETE CASCADE`.
    - Esperado: os recursos ficam, com `user_id` NULL.
-   - Teste: `TestExcluirContaDeMembroPreservaRecursosNoProjetoAlheio` (T6).
+   - Teste: `TestExcluirContaDeMembroPreservaRecursosNoProjetoAlheio` (Task 6).
 2. **Corrida entre exclusão de conta e aceite de convite no projeto que era só dela.**
    - Esperado: ou a exclusão vê o membro novo e recusa, ou o aceite falha.
    - Nunca: o projeto apagado com o membro novo dentro.
-   - Teste: `TestExcluirContaCorreComAceiteDeConvite` (T6).
+   - Teste: `TestExcluirContaCorreComAceiteDeConvite` (Task 6).
 3. **Sessão roubada exclui a conta sem o segundo fator, ou adivinha a senha sem custo.**
    - Esperado: com 2FA ligado, exige o código (ou um código de recuperação). Cada prova errada conta na família; a 5ª derruba a família.
-   - Teste: `TestExcluirContaProvaErradaContaNaFamilia` (T7).
+   - Teste: `TestExcluirContaProvaErradaContaNaFamilia` (Task 7).
 4. **Exportação vaza segredo ou dado de outro inquilino.** Segredos: hash, segredo TOTP, URL do webhook, valor de header, token de ping, ip_hash.
    - Esperado: nenhum segredo no arquivo. Projetos onde ela não é owner aparecem só como vínculo.
-   - Teste: `TestExportacaoNaoVazaSegredoNemProjetoAlheio` (T8).
+   - Teste: `TestExportacaoNaoVazaSegredoNemProjetoAlheio` (Task 8).
 5. **Cadastro sem aceite, ou com versão velha (aba aberta antes da troca dos termos).**
    - Esperado: 400 no campo, antes do Turnstile, sem gravar nada.
-   - Teste: `TestCadastroSemAceiteRecusaAntesDoTurnstile` (T1).
+   - Teste: `TestCadastroSemAceiteRecusaAntesDoTurnstile` (Task 1).
 
 ---
 
@@ -99,8 +99,8 @@
 - **D3 = A:** auditoria anônima (`user_id` NULL) até a retenção de 12 meses; `ip_hash` fica; a política informa os backups.
 - **D4 = B:** apaga os canais criados por ela cujo endereço é o e-mail da conta; desliga os outros.
 - **D5 = A, D7 = A, D8 = A:** recomendação seguida (checks fora da exportação; sem novo aceite por ora; aviso de exclusão por e-mail).
-- **D6 (novo valor):** remetente `StillOn <avisos@stillon.tech>`, no domínio raiz. A caixa `avisos@stillon.tech` é criada no Zoho Mail (MX do domínio raiz) pelo builder, no 6.6. O envio continua pelo Resend, que precisa do domínio `stillon.tech` verificado (DKIM `resend._domainkey` e SPF/MX do subdomínio de retorno `send`), sem conflitar com o MX do Zoho. O passo 3 do runbook do T12 segue esta opção, não a A nem a B abaixo.
-- **D1:** continua pendente; o T10 para com as maquetes.
+- **D6 (novo valor):** remetente `StillOn <avisos@stillon.tech>`, no domínio raiz. A caixa `avisos@stillon.tech` é criada no Zoho Mail (MX do domínio raiz) pelo builder, no 6.6. O envio continua pelo Resend, que precisa do domínio `stillon.tech` verificado (DKIM `resend._domainkey` e SPF/MX do subdomínio de retorno `send`), sem conflitar com o MX do Zoho. O passo 3 do runbook da Task 12 segue esta opção, não a A nem a B abaixo.
+- **D1:** continua pendente; a Task 10 para com as maquetes.
 
 Não decido estas. Cada uma traz opções, prós e contras, e uma recomendação.
 
@@ -111,7 +111,7 @@ Não decido estas. Cada uma traz opções, prós e contras, e uma recomendação
 | A (recomendada) | Em Configurações, seção "Seus dados" (botão Exportar) e, embaixo, "Excluir conta" numa zona de perigo. Um diálogo mostra a prévia (projetos bloqueantes, com link para transferir a titularidade; projetos que somem junto) e pede senha + código. "Excluir projeto" fica nas configurações do projeto e exige digitar o nome. | Uma página só; padrão conhecido; a prévia evita surpresa | O diálogo fica denso quando há muitos projetos |
 | B | Página própria `/settings/excluir-conta` em etapas: prévia → confirmação → feito | Respira melhor; dá para explicar cada consequência | Mais rota, mais estado, mais teste E2E |
 
-A tarefa T10 traz as maquetes e para para o dono escolher.
+A Task 10 traz as maquetes e para para o dono escolher.
 
 **D2 — Conteúdo dos termos e da política de privacidade**
 
@@ -187,12 +187,12 @@ Os outros recursos ficam com `user_id` NULL; esta decisão é só sobre os canai
 
 | Sub-PR | Tarefas | Migration | Depende de | Esforço |
 |---|---|---|---|---|
-| 6.1 Textos legais e aceite | T1, T2 | M | PR 3 na main | M |
-| 6.2 Expand + excluir projeto | T3, T4 | M+1 | 4.2 na main | L |
-| 6.3 Excluir conta | T5, T6, T7 | — | 6.2 **no ar** e 4.3 na main | L |
-| 6.4 Exportar | T8, T9 | — | 4.2 na main (paralelo ao 6.3) | M |
-| 6.5 Painel | T10 (para), T11 | — | 6.3, 6.4 e D1 | M |
-| 6.6a / 6.6b Ligar o cadastro em produção | T12 | — | 6.1–6.5 no ar, D2 aprovado, D6 decidido; passos do dono | S de código + runbook |
+| 6.1 Textos legais e aceite | Task 1, Task 2 | M | PR 3 na main | M |
+| 6.2 Expand + excluir projeto | Task 3, Task 4 | M+1 | 4.2 na main | L |
+| 6.3 Excluir conta | Task 5, Task 6, Task 7 | — | 6.2 **no ar** e 4.3 na main | L |
+| 6.4 Exportar | Task 8, Task 9 | — | 4.2 na main (paralelo ao 6.3) | M |
+| 6.5 Painel | Task 10 (para), Task 11 | — | 6.3, 6.4 e D1 | M |
+| 6.6a / 6.6b Ligar o cadastro em produção | Task 12 | — | 6.1–6.5 no ar, D2 aprovado, D6 decidido; passos do dono | S de código + runbook |
 
 **Por que o 6.2 sobe antes do 6.3:** a M+1 só torna `user_id` anulável. NULL só aparece quando alguém exclui a conta (6.3). Então o binário anterior nunca encontra um NULL que não consegue ler.
 
@@ -244,7 +244,7 @@ Os outros recursos ficam com `user_id` NULL; esta decisão é só sobre os canai
 
 ### Sub-PR 6.1 — Textos legais e aceite
 
-### Task 1: Versão dos termos, migration M e gravação no cadastro (esforço M)
+#### Task 1: Versão dos termos, migration M e gravação no cadastro (esforço M)
 
 **Arquivos**
 - Criar: `internal/legal/versao.go`, `internal/legal/versao_test.go`, `internal/storage/migrations/<M>_aceite_dos_termos.sql`.
@@ -289,9 +289,9 @@ O binário anterior insere sem as colunas: as duas ficam NULL e o CHECK aceita. 
 - [ ] **Passo 4:** os mesmos testes passam. Rodar `go build ./... && go vet ./... && make test`.
 - [ ] **Passo 5:** commit `feat(cadastro): grava a versão dos termos aceita`.
 
-### Task 2: Páginas `/termos` e `/privacidade` e caixa de aceite (esforço M)
+#### Task 2: Páginas `/termos` e `/privacidade` e caixa de aceite (esforço M)
 
-O visual é funcional, no padrão das telas públicas atuais. O acabamento fica para o T11.
+O visual é funcional, no padrão das telas públicas atuais. O acabamento fica para a Task 11.
 
 **Arquivos**
 - Criar: `web/src/features/legal/{versao.json,PaginaTermos.tsx,PaginaPrivacidade.tsx,legal.test.tsx}`.
@@ -327,7 +327,7 @@ O visual é funcional, no padrão das telas públicas atuais. O acabamento fica 
 
 ### Sub-PR 6.2 — Expand e excluir projeto
 
-### Task 3: Migration M+1 e leitores de `user_id` anulável (esforço L)
+#### Task 3: Migration M+1 e leitores de `user_id` anulável (esforço L)
 
 **Arquivos**
 - Criar:
@@ -349,7 +349,7 @@ O visual é funcional, no padrão das telas públicas atuais. O acabamento fica 
 
 **Interfaces**
 - Produz: `testdb.ApagarUsuario(t *testing.T, id uuid.UUID)`. Pela conexão de admin, apaga os projetos dos quais o usuário é titular e depois o usuário.
-- Produz: a política `projects_do_projeto_delete` (`FOR DELETE USING (id = current_setting('app.project_id', true)::uuid)`), que T4 e T6 usam.
+- Produz: a política `projects_do_projeto_delete` (`FOR DELETE USING (id = current_setting('app.project_id', true)::uuid)`), que a Task 4 e a Task 6 usam.
 
 **Esboço da migration M+1.** Confirme os nomes reais das constraints com `SELECT conname FROM pg_constraint WHERE conrelid = 'targets'::regclass`.
 ```sql
@@ -389,9 +389,9 @@ CREATE POLICY projects_do_projeto_delete ON projects FOR DELETE
 - [ ] **Passo 4:** `go build ./... && go vet ./... && make test`.
 - [ ] **Passo 5:** commit `feat(storage): exclusão de conta preserva recursos em projetos alheios`.
 
-**Correção levada do plano do PR 7 (risco R1):** a guarda `guardar_notificacao_no_projeto` (00043) trata `recurso_dono IS NULL` como recurso escondido e descarta o aviso. Com `user_id` anulável, o aviso de um recurso cujo criador excluiu a conta sumiria. A migration M+1 do T3 troca a função para resolver o projeto pelo `project_id` do recurso, e não pelo dono. Teste a mais no T3: `TestNotificacaoComCriadorApagadoPassa` (alvo e canal no projeto de A, criado por B, que excluiu a conta: o INSERT em `notifications` sob `InProberTx` entra). Sabotagem: manter o `IF recurso_dono IS NULL`.
+**Correção levada do plano do PR 7 (risco R1):** a guarda `guardar_notificacao_no_projeto` (00043) trata `recurso_dono IS NULL` como recurso escondido e descarta o aviso. Com `user_id` anulável, o aviso de um recurso cujo criador excluiu a conta sumiria. A migration M+1 da Task 3 troca a função para resolver o projeto pelo `project_id` do recurso, e não pelo dono. Teste a mais na Task 3: `TestNotificacaoComCriadorApagadoPassa` (alvo e canal no projeto de A, criado por B, que excluiu a conta: o INSERT em `notifications` sob `InProberTx` entra). Sabotagem: manter o `IF recurso_dono IS NULL`.
 
-### Task 4: `DELETE /api/v1/projects/{projectID}` (esforço M)
+#### Task 4: `DELETE /api/v1/projects/{projectID}` (esforço M)
 
 **Arquivos**
 - Alterar:
@@ -417,7 +417,7 @@ CREATE POLICY projects_do_projeto_delete ON projects FOR DELETE
   6. nome diferente dá `ErrConfirmationMismatch`;
   7. `DeleteProject`; 0 linhas dá `ErrProjectNotFound`;
   8. auditoria `project.deleted`.
-- A ordem titular → membros é a mesma da exclusão de conta (T6) e da criação, para evitar deadlock.
+- A ordem titular → membros é a mesma da exclusão de conta (Task 6) e da criação, para evitar deadlock.
 - Alvos apagados enquanto há um check em andamento: confira como o `DELETE` de alvo trata isso hoje no agendador e no prober, e reaproveite. O teste abaixo trava esse caso.
 
 - [ ] **Passo 1 — testes que falham:**
@@ -439,7 +439,7 @@ CREATE POLICY projects_do_projeto_delete ON projects FOR DELETE
 
 ### Sub-PR 6.3 — Excluir conta
 
-### Task 5: Escopo `InAccountDeletionTx` (esforço S)
+#### Task 5: Escopo `InAccountDeletionTx` (esforço S)
 
 **Arquivos**
 - Alterar: `internal/storage/scope.go`.
@@ -464,7 +464,7 @@ func InAccountDeletionTx(ctx context.Context, b Beginner, userID uuid.UUID,
 - [ ] **Passo 4:** o teste passa, e o `guarda_escopo_test` continua verde.
 - [ ] **Passo 5:** commit `feat(storage): escopo da exclusão de conta`.
 
-### Task 6: `account.ExcluirConta` e `PreviaDaExclusao` (esforço L)
+#### Task 6: `account.ExcluirConta` e `PreviaDaExclusao` (esforço L)
 
 **Arquivos**
 - Criar: `internal/account/exclusao.go`, `internal/account/exclusao_test.go`, `internal/storage/queries/exclusao.sql`.
@@ -474,7 +474,7 @@ func InAccountDeletionTx(ctx context.Context, b Beginner, userID uuid.UUID,
   - A query de canais de e-mail conforme o D4.
 
 **Interfaces**
-- Consome: `InAccountDeletionTx` (T5), `DeleteProject` (T4), `CountMembersBesidesTitular`, `LockUserSessions`, `LockTitularProjects`, `LockProjectMembers`, `travarFamiliaViva`, `provarSegundoFator`.
+- Consome: `InAccountDeletionTx` (Task 5), `DeleteProject` (Task 4), `CountMembersBesidesTitular`, `LockUserSessions`, `LockTitularProjects`, `LockProjectMembers`, `travarFamiliaViva`, `provarSegundoFator`.
 - Produz:
 ```go
 type ProjetoResumo struct { ID uuid.UUID; Nome string }
@@ -528,14 +528,14 @@ O e-mail de aviso (D8) sai no handler, depois do commit.
 - [ ] **Passo 4:** `go build ./... && go vet ./... && make test`.
 - [ ] **Passo 5:** commit `feat(conta): exclusão de conta com prévia e bloqueio do titular`.
 
-### Task 7: Rotas `GET /me/deletion-preview` e `DELETE /me` (esforço M)
+#### Task 7: Rotas `GET /me/deletion-preview` e `DELETE /me` (esforço M)
 
 **Arquivos**
 - Criar: `internal/httpapi/exclusaohandlers.go`, `internal/httpapi/exclusao_integration_test.go`.
 - Alterar: `routes.go`, `apierr/errors.go` (`account_deletion_blocked`, `operator_account`), `api-falsa.ts`, `corposEstritos()`, `TestProtectedRoutesRequireAuthentication`.
 
 **Interfaces**
-- Consome: `ExcluirConta`, `PreviaDaExclusao` (T6); `provasDaFamilia` (`reservar`, `errou`, `Succeed`); `apagarCookieDeRefresh`; o `AccountMailer` para o aviso (D8, sem bloquear a resposta).
+- Consome: `ExcluirConta`, `PreviaDaExclusao` (Task 6); `provasDaFamilia` (`reservar`, `errou`, `Succeed`); `apagarCookieDeRefresh`; o `AccountMailer` para o aviso (D8, sem bloquear a resposta).
 - Corpo estrito: `{password string, totp_code string}`.
 
 - [ ] **Passo 1 — testes que falham:**
@@ -555,7 +555,7 @@ O e-mail de aviso (D8) sai no handler, depois do commit.
 
 ### Sub-PR 6.4 — Exportar
 
-### Task 8: Pacote `internal/exportacao` (esforço M)
+#### Task 8: Pacote `internal/exportacao` (esforço M)
 
 **Arquivos**
 - Criar: `internal/exportacao/exportacao.go`, `internal/exportacao/exportacao_test.go`.
@@ -601,7 +601,7 @@ O e-mail de aviso (D8) sai no handler, depois do commit.
 - [ ] **Passo 4:** `go build ./... && go vet ./... && make test`.
 - [ ] **Passo 5:** commit `feat(conta): exportação dos dados da conta`.
 
-### Task 9: Rota `GET /api/v1/me/export` (esforço S)
+#### Task 9: Rota `GET /api/v1/me/export` (esforço S)
 
 **Arquivos**
 - Criar: `internal/httpapi/exportacaohandlers.go`, mais o teste de integração.
@@ -627,7 +627,7 @@ O e-mail de aviso (D8) sai no handler, depois do commit.
 
 ### Sub-PR 6.5 — Painel
 
-### Task 10: Design das telas de conta (para e espera o dono) (esforço M)
+#### Task 10: Design das telas de conta (para e espera o dono) (esforço M)
 
 - Skills: `frontend-design:frontend-design`, `design-skills:ux-writing`, `design-skills:interaction-design`, `design-skills:design-systems`, `design-skills:accessibility-audit` (WCAG 2.2 AA).
 - Entrega:
@@ -635,9 +635,9 @@ O e-mail de aviso (D8) sai no handler, depois do commit.
   - os textos de exportar, prévia, bloqueio (com link para a transferência do 4.3), confirmação e sucesso;
   - o texto do aviso por e-mail (D8);
   - a tipografia das páginas legais.
-- **PARE** e apresente ao dono. Só siga para o T11 com o D1 decidido.
+- **PARE** e apresente ao dono. Só siga para a Task 11 com o D1 decidido.
 
-### Task 11: Telas de exportar, excluir conta e excluir projeto (esforço M)
+#### Task 11: Telas de exportar, excluir conta e excluir projeto (esforço M)
 
 **Arquivos**
 - Criar: `web/src/features/configuracoes/SeusDados.tsx`, `ExclusaoDeConta.tsx`.
@@ -671,7 +671,7 @@ O e-mail de aviso (D8) sai no handler, depois do commit.
 
 ### Sub-PR 6.6 — Ligar o cadastro público em produção (por último)
 
-### Task 12: Manifesto, testes de infraestrutura e runbook (esforço S de código)
+#### Task 12: Manifesto, testes de infraestrutura e runbook (esforço S de código)
 
 **Pré-requisitos**
 - 6.1–6.5 no ar.
@@ -742,24 +742,24 @@ O e-mail de aviso (D8) sai no handler, depois do commit.
 
 | Requisito da spec | Onde |
 |---|---|
-| Exportar | T8, T9 |
-| Excluir conta: senha + 2FA | T6, T7 |
-| Bloqueio do último owner | B3 / T6 |
-| Projetos só dela | T6 |
-| Sessões revogadas | cascade + teste do `viva` em T7 |
-| E-mail liberado | T6 |
-| `audit_log.user_id` SET NULL | D3 / T6 |
-| `/termos` e `/privacidade` com "[operador]" | T2 |
-| Aceite gravado | T1 |
-| Excluir projeto (adiado do PR 4) | T4 |
-| Ligar o cadastro | T12 |
+| Exportar | Task 8, Task 9 |
+| Excluir conta: senha + 2FA | Task 6, Task 7 |
+| Bloqueio do último owner | B3 / Task 6 |
+| Projetos só dela | Task 6 |
+| Sessões revogadas | cascade + teste do `viva` em Task 7 |
+| E-mail liberado | Task 6 |
+| `audit_log.user_id` SET NULL | D3 / Task 6 |
+| `/termos` e `/privacidade` com "[operador]" | Task 2 |
+| Aceite gravado | Task 1 |
+| Excluir projeto (adiado do PR 4) | Task 4 |
+| Ligar o cadastro | Task 12 |
 
 O destino de `user_id` nas tabelas de recurso fica para o contract do PR 7. Este plano só o torna anulável.
 
 **Tipos**
-- `ProjetoResumo` e `ErroDeExclusaoBloqueada` (T6) são os mesmos que o T7 usa.
-- `EntrarNoProjeto` (T5) é o mesmo tipo consumido no T6.
-- `DeleteProject` (T4) é reaproveitado no T6.
+- `ProjetoResumo` e `ErroDeExclusaoBloqueada` (Task 6) são os mesmos que a Task 7 usa.
+- `EntrarNoProjeto` (Task 5) é o mesmo tipo consumido na Task 6.
+- `DeleteProject` (Task 4) é reaproveitado na Task 6.
 
 **Proporção:** os blocos de código ficam só no esboço da migration, nas assinaturas e no formato da exportação.
 

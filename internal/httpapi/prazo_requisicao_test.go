@@ -95,6 +95,18 @@ func (repoFalso) RemoveMember(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) 
 	return errRepoFalso
 }
 
+func (repoFalso) ProposeTransfer(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) error {
+	return errRepoFalso
+}
+
+func (repoFalso) AcceptTransfer(context.Context, uuid.UUID, uuid.UUID, time.Time) (tenancy.ProjectSummary, error) {
+	return tenancy.ProjectSummary{}, errRepoFalso
+}
+
+func (repoFalso) CancelTransfer(context.Context, uuid.UUID, uuid.UUID) error {
+	return errRepoFalso
+}
+
 func (repoFalso) Rename(context.Context, uuid.UUID, uuid.UUID, string) (tenancy.ProjectSummary, error) {
 	return tenancy.ProjectSummary{}, errRepoFalso
 }

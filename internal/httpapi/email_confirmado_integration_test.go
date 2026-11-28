@@ -26,6 +26,7 @@ var postsQueNaoCriam = map[string]string{
 	"POST /api/v1/auth/signup":                                                      "pública: cria a conta, que nasce não confirmada; nenhum recurso atrás da trava",
 	"POST /api/v1/auth/email/confirm":                                               "pública: é a própria confirmação, pelo token do e-mail",
 	"POST /api/v1/auth/email/resend":                                                "reenvia a confirmação à própria conta não confirmada (tem balde próprio)",
+	"POST /api/v1/projects/{projectID}/titular-transfer":                            "propor a transferência não cria nada: quem recebe ganha o projeto só no aceite, que passa pela trava",
 	"POST /api/v1/invitations/accept":                                               "o token do convite prova a caixa de entrada; não cria recurso, entra num projeto que já existe",
 	"POST /api/v1/auth/password/forgot":                                             "pública: pede o link de redefinição, sem criar recurso",
 	"POST /api/v1/auth/password/reset":                                              "pública: troca a senha pelo token do e-mail, sem criar recurso",

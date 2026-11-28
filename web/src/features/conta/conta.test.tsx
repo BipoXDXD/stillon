@@ -62,8 +62,10 @@ afterEach(() => {
 const SENHA_NOVA = 'uma senha nova bem comprida'
 const NOVO = 'nova@exemplo.com'
 
-// O nome leva os dois links, cada um com o aviso de aba nova.
-const ACEITE = /^Li e aceito os Termos de Uso.* e a Política de Privacidade/
+// O nome exato, curto: o aviso de aba nova fica só nos links. Sabotagem
+// prevista: voltar os links para dentro do rótulo (o aviso entra no nome
+// duas vezes).
+const ACEITE = 'Li e aceito os Termos de Uso e a Política de Privacidade'
 
 async function preencherCadastro(
   usuario: Awaited<ReturnType<typeof renderizarPainel>>['usuario'],
@@ -222,6 +224,29 @@ describe('cadastro', () => {
     )
     expect(aceite).toHaveFocus()
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
+  // O painel em cache tem o versao.json velho, e o servidor já exige a versão
+  // nova: o cadastro avisa antes, em vez de enviar uma versão que seria
+  // recusada. Sabotagem prevista: ignorar o terms_version da config.
+  it('cadastro pede para recarregar quando a versão dos termos do servidor é outra', async () => {
+    const { falsa } = await renderizarPainel('/signup', {
+      logado: false,
+      antes: () =>
+        servidor.use(
+          http.get('*/api/v1/auth/signup-config', () =>
+            HttpResponse.json({ enabled: true, turnstile_site_key: SITE_KEY_DO_TURNSTILE, terms_version: '2099-01-01' }),
+          ),
+        ),
+    })
+    await screen.findByRole('heading', { name: 'Criar conta no StillOn' })
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Os termos mudaram. Recarregue a página para ler a versão nova antes de criar a conta.',
+    )
+    expect(screen.queryByRole('checkbox', { name: ACEITE })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Criar conta' })).not.toBeInTheDocument()
+    expect(turnstile.render).not.toHaveBeenCalled()
+    expect(falsa.chamadas('POST /auth/signup')).toBe(0)
   })
 
   // Abrir os textos não pode levar embora o que já foi digitado.

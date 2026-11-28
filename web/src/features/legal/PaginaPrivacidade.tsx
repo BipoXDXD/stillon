@@ -1,4 +1,4 @@
-import { LinkTerciario } from '@/features/conta/comum'
+import { LinkEmProsa } from '@/features/conta/comum'
 import { Lista, MolduraLegal, Secao } from './MolduraLegal'
 
 // A Política de Privacidade. Os prazos saem de internal/storage/maintenance.go
@@ -185,7 +185,7 @@ export function PaginaPrivacidade() {
       </Secao>
 
       <p>
-        Veja também os <LinkTerciario para="/termos">Termos de Uso</LinkTerciario>.
+        Veja também os <LinkEmProsa para="/termos">Termos de Uso</LinkEmProsa>.
       </p>
     </MolduraLegal>
   )
