@@ -662,9 +662,28 @@ func suspensa(t *testing.T, pool *pgxpool.Pool, email string) bool {
 	return s
 }
 
+// leitorProibido falha o teste se alguém o ler.
+type leitorProibido struct{ t *testing.T }
+
+func (l leitorProibido) Read([]byte) (int, error) {
+	l.t.Error("o subcomando leu o stdin")
+	return 0, io.EOF
+}
+
+// stdinProibido é uma entrada cujas duas formas (pipe e terminal) falham o
+// teste se lidas: prova que o subcomando não lê senha.
+func stdinProibido(t *testing.T) entradaDaSenha {
+	return entradaDaSenha{
+		pipe: leitorProibido{t},
+		lerSemEco: func() ([]byte, error) {
+			t.Error("o subcomando leu a senha do terminal")
+			return nil, io.EOF
+		},
+	}
+}
+
 // suspend: conta comum suspende e conta as sessões; e-mail sem conta é 4;
-// operador é 2 e não muda nada. Nenhum caso lê senha: o stdin traz a senha
-// marcada, e ela nunca sai.
+// operador é 2 e não muda nada. Nenhum caso lê o stdin.
 func TestUserSuspendCLI(t *testing.T) {
 	pool := testdb.New(t)
 	dsn := testdb.DSN(t)
@@ -695,13 +714,10 @@ func TestUserSuspendCLI(t *testing.T) {
 	}
 	for _, c := range casos {
 		t.Run(c.nome, func(t *testing.T) {
-			r := rodarUser(t, dsn, senhaMarcada, c.args...)
+			r := rodarUserCom(t, dsn, stdinProibido(t), nil, c.args...)
 			if r.codigo != c.codigo || r.stdout != c.stdout || r.stderr != c.stderr {
 				t.Errorf("código %d, stdout %q, stderr %q; queria %d, %q e %q",
 					r.codigo, r.stdout, r.stderr, c.codigo, c.stdout, c.stderr)
-			}
-			if strings.Contains(r.saida(), senhaMarcada) {
-				t.Error("a senha do stdin apareceu na saída")
 			}
 		})
 	}
@@ -716,7 +732,8 @@ func TestUserSuspendCLI(t *testing.T) {
 	}
 }
 
-// unsuspend: conta suspensa volta; e-mail sem conta é 4.
+// unsuspend: conta suspensa volta; e-mail sem conta é 4. Nenhum caso lê o
+// stdin.
 func TestUserUnsuspendCLI(t *testing.T) {
 	pool := testdb.New(t)
 	dsn := testdb.DSN(t)
@@ -738,7 +755,7 @@ func TestUserUnsuspendCLI(t *testing.T) {
 	}
 	for _, c := range casos {
 		t.Run(c.nome, func(t *testing.T) {
-			r := rodarUser(t, dsn, senhaMarcada, c.args...)
+			r := rodarUserCom(t, dsn, stdinProibido(t), nil, c.args...)
 			if r.codigo != c.codigo || r.stdout != c.stdout || r.stderr != c.stderr {
 				t.Errorf("código %d, stdout %q, stderr %q; queria %d, %q e %q",
 					r.codigo, r.stdout, r.stderr, c.codigo, c.stdout, c.stderr)
