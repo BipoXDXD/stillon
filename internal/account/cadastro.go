@@ -30,6 +30,10 @@ type Cadastro struct {
 	hash func(context.Context, string) (string, error)
 }
 
+// ErrTermosNaoAceitos: o cadastro chegou sem a versão dos termos aceita. O
+// handler recusa antes com validation_failed; aqui é a última barreira.
+var ErrTermosNaoAceitos = errors.New("cadastro sem aceite dos termos")
+
 // NewCadastro monta o serviço do cadastro público.
 func NewCadastro(pool *pgxpool.Pool, clk clock.Clock, mailer AccountMailer, links Links) *Cadastro {
 	return &Cadastro{pool: pool, users: auth.NewPGStore(pool), clk: clk, mailer: mailer, links: links, hash: auth.HashPassword}
@@ -55,7 +59,8 @@ func ValidarCadastro(email, senha string) (string, error) {
 // e-mail já cadastrado (confirmado ou não, em qualquer caixa), não grava nada,
 // nem o aceite, e manda o "você já tem conta; esqueceu a senha?" para o
 // endereço gravado. Nos dois casos
-// devolve nil. Os erros possíveis são de validação ou de infraestrutura,
+// devolve nil. Sem versão aceita, devolve ErrTermosNaoAceitos antes de tudo.
+// Os outros erros possíveis são de validação ou de infraestrutura,
 // inclusive auth.ErrArgon2Busy. A falha do mailer vai para o log e a
 // resposta continua igual.
 //
@@ -64,6 +69,9 @@ func ValidarCadastro(email, senha string) (string, error) {
 // do commit (o AccountMailer só enfileira). Sobram alguns ms de banco no ramo
 // novo (projeto, token, auditoria), risco aceito no plano.
 func (c *Cadastro) Cadastrar(ctx context.Context, email, senha, versaoDosTermos string) error {
+	if versaoDosTermos == "" {
+		return ErrTermosNaoAceitos
+	}
 	e, err := ValidarCadastro(email, senha)
 	if err != nil {
 		return err
