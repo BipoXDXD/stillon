@@ -75,6 +75,56 @@ func RateLimitIPCompartilhado(o Orcamentos, b BaldeIP, px Proxies, chaveIP []byt
 	}
 }
 
+// BaldeUsuario é um orçamento por usuário autenticado com nome próprio: uma
+// ficha a cada ACada, até Rajada. Baldes de nomes diferentes não dividem
+// fichas.
+type BaldeUsuario struct {
+	Nome   string
+	ACada  time.Duration
+	Rajada int
+}
+
+// RateLimitUserCompartilhado limita por usuário (o que authn põe no contexto)
+// como RateLimitUserEvery, com o estado em o: réplicas da API dividem o mesmo
+// orçamento por conta. Tem de ficar depois de Authn na cadeia.
+//
+// A chave gravada é o HMAC de "usuario:<uuid>" com chaveIP, a IP_HASH_KEY: o
+// prefixo separa as chaves de usuário das de origem, e o UUID não vai em claro
+// para o banco.
+//
+// Falha FECHADO, como RateLimitIPCompartilhado: sem resposta do orçamento,
+// erro interno; sem usuário no contexto (montado sem authn), 401, em vez de um
+// balde anônimo que todos dividiriam.
+func RateLimitUserCompartilhado(o Orcamentos, b BaldeUsuario, chaveIP []byte) func(http.Handler) http.Handler {
+	if len(chaveIP) < crypto.KeySize {
+		panic("middleware: RateLimitUserCompartilhado exige chaveIP de ao menos 32 bytes")
+	}
+	if b.Nome == "" || b.ACada <= 0 || b.Rajada <= 0 {
+		panic("middleware: BaldeUsuario sem nome, intervalo ou rajada positiva")
+	}
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			id, ok := UserID(r.Context())
+			if !ok {
+				apierr.WriteError(w, r, apierr.CodeUnauthorized)
+				return
+			}
+			chave := crypto.HashIP(chaveIP, "usuario:"+id.String())
+			espera, permitido, err := o.Gastar(r.Context(), b.Nome, chave, b.ACada, b.Rajada)
+			if err != nil {
+				slog.Error("limite por usuário", "balde", b.Nome, "erro", err, "trace_id", observability.TraceID(r.Context()))
+				apierr.WriteError(w, r, apierr.CodeInternal)
+				return
+			}
+			if !permitido {
+				recusar(w, r, espera)
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
 // recusar é o 429 com Retry-After em segundos inteiros, arredondado para cima.
 // Sem prazo conhecido, o cabeçalho fica de fora.
 func recusar(w http.ResponseWriter, r *http.Request, espera time.Duration) {
