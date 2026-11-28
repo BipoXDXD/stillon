@@ -70,7 +70,7 @@
 10. **Sondador justo sem teto rígido por projeto:** a reivindicação ordena por `row_number() OVER (PARTITION BY project_id ORDER BY next_run_at)` e depois por `next_run_at`, ou seja, um de cada projeto por rodada. Um teto fixo por projeto deixaria vagas ociosas quando só um projeto tem alvos vencidos.
 11. **Teto por host: 60 requisições/min, rajada 20, por host canônico (`safedial.DialedHost`)**, em memória no sondador. Acima dele a sonda não sai e o alvo volta para `now + espera`, sem check, sem incidente e devolvendo a vaga do semáforo. Os saltos de redirect não contam (risco 4).
 12. **Suspensão:** `projeto_suspenso(uuid)` (SQL, `SECURITY INVOKER`) e duas políticas de SELECT em `projects` (escopo `prober` e a página pública do slug), migration N+2. O ping continua aceito durante a suspensão: é barato, e manter `deadline_at` em dia evita incidente falso ao reativar. Suspender revoga todas as sessões; o operador não pode ser suspenso (código de uso).
-13. **`user usage`** lê por uma função `uso_do_titular()` (N+3) no `InUserTx` do titular, no molde das funções de cota da 00045. `InProjectTx` recusaria o titular suspenso, que é justamente o caso que o operador quer olhar.
+13. **`user usage`** lê por uma função `uso_do_titular(agora)` (N+3; membros e convites pendentes contados como no portão do convite, revisão de 28/11) no `InUserTx` do titular, no molde das funções de cota da 00045. `InProjectTx` recusaria o titular suspenso, que é justamente o caso que o operador quer olhar.
 14. **Slugs reservados no Go** (`statuspage.slugReservado`), respondendo `ErrSlugTaken` (o mesmo 409 `slug_taken` de slug ocupado, que o painel já trata); prefixo `stillon` reservado; a página que já tem um slug reservado continua com ele.
 
 ## Review Focus
@@ -589,84 +589,149 @@ Login: a senha é conferida como hoje (mesmo custo de Argon2id); certa e suspens
 
 # 5.7 — uso da conta e slugs reservados
 
+> **Revisado em 28/11 contra accb2fb4.** Pré-voo: `.superpowers/sdd/2026-11-27-pr5-cotas-abuso/preflight-5.7.md` (git-ignored).
+> - **Ordem:** a Task 18 não depende de nada e vai primeiro. A Task 17 só começa com o **5.3 na `main`** (usa `TetoDeEmailsDeConta.EnviadosHojePelaConta` e `contaemail.TetoDiarioPorConta`) e, de preferência, com o **5.2** também (antes dele, o `usage` mostra os limites do plano, que ainda não são os aplicados). Se o 5.3 atrasar, a Task 18 sai num PR sozinha.
+> - **Migration provisória: 00056** (5.2 = 00054, 6.2 = 00055). A numeração é renumerada antes do merge, contígua com o que estiver na `main`, e as listas de teste que citam o nome do arquivo (`migrationsDaCota`) acompanham.
+> - O que já está na `main` e muda o desenho original: `tenancy.LimitesDe` (5.1) já tem `MembrosPorProjeto`; o teto de membros do 4.2 conta **membros além do titular + convites pendentes válidos** (`conferirTetoDeMembros`); a suspensão (5.6) só barra `InProjectTx`, então `InUserTx` continua servindo ao titular suspenso; a página pública é `/p/{slug}`, sem colisão de rota com o painel.
+
 ### Task 17: `stillon user usage` (complexa)
 
 **Files:**
-- Create: `internal/storage/migrations/<N+3>_uso_do_titular.sql`
-- Modify: `internal/storage/queries/projects.sql` (`TitularUsage`), `internal/account/account.go` (`Usage`), `cmd/stillon/user.go`, `cmd/stillon/main.go` (o CLI monta o `TetoDeEmailsDeConta`), `internal/storage/guarda_escopo_test.go` (`TestOnlyQuotaFunctionsUseQuotaGUCs` aceita a N+3), `internal/storage/cota_titular_test.go` (`TestQuotaPoliciesAndFunctionsAreContained`: cinco políticas, cinco funções)
-- Modify (gerado): `internal/storage/db/projects.sql.go`
+- Create: `internal/storage/migrations/00056_uso_do_titular.sql`, `internal/storage/queries/uso.sql` (arquivo próprio: o 6.2 mexe em `queries/projects.sql`), `internal/account/uso.go`
+- Create (gerado): `internal/storage/db/uso.sql.go`
+- Modify: `cmd/stillon/user.go` (`usoUser`, `subcomandoConhecido`, `switch` de `runUser`, `abrirServico` devolve também o teto de e-mails, `runUsage`, comentário de `saidaNaoCadastrado`), `docs/deploy/vps.md` (seção de operação, ao lado de `suspend`/`unsuspend`, ~linha 4557: uma linha)
+- Modify (contratos): `internal/storage/guarda_escopo_test.go` (`migrationsDaCota` ganha a 00056; `chamadoresDeInUserTx` ganha `internal/account/uso.go`, motivo "relatório de uso do titular para o operador (CLI)"), `internal/storage/cota_titular_test.go` (`TestQuotaPoliciesAndFunctionsAreContained`: seis políticas e sete funções)
 - Test: `internal/storage/uso_do_titular_test.go`, `internal/account/uso_test.go`, `cmd/stillon/user_test.go`
 
-**Interfaces (Produces, N+3):**
+**Interfaces (Produces, 00056):**
 ```sql
+-- +goose Up
+SET LOCAL lock_timeout = '5s';
 CREATE POLICY project_members_cota_select ON project_members FOR SELECT
     USING (project_id = ANY (NULLIF(current_setting('app.cota_projetos', true), '')::uuid[]));
--- uso_do_titular(): o titular é o app.user_id da transação (NULL → 42501);
--- mesmo preâmbulo e mesma cláusula SET das funções da 00045.
-CREATE FUNCTION uso_do_titular()
-    RETURNS TABLE (project_id uuid, name text, is_default boolean,
-                   alvos bigint, heartbeats bigint, canais bigint, membros bigint) …
+CREATE POLICY project_invitations_cota_select ON project_invitations FOR SELECT
+    USING (project_id = ANY (NULLIF(current_setting('app.cota_projetos', true), '')::uuid[]));
+-- uso_do_titular(agora): o titular é o app.user_id da transação (NULL → 42501).
+-- Molde de cota_do_receptor (00051): LANGUAGE plpgsql, SET search_path = public, pg_temp
+-- (nenhum outro proconfig), guarda app.project_id em `escopo`, zera, liga
+-- app.cota_titular_id e app.cota_projetos (COALESCE(projetos, '{}')), roda o
+-- RETURN QUERY, zera os dois da cota e devolve app.project_id := escopo antes do RETURN.
+-- Colunas de saída com prefixo (p_id, p_nome...): project_id/name sem prefixo colidem
+-- com as colunas das tabelas no plpgsql (erro de referência ambígua).
+CREATE FUNCTION uso_do_titular(agora timestamptz)
+    RETURNS TABLE (p_id uuid, p_nome text, p_padrao boolean,
+                   n_alvos bigint, n_heartbeats bigint, n_canais bigint,
+                   n_membros bigint, n_convites bigint) …
+-- Uma linha por projeto com titular_id = app.user_id, ORDER BY is_default DESC, created_at, id.
+-- n_membros: vínculos com user_id <> titular (= CountMembersBesidesTitular).
+-- n_convites: accepted_at IS NULL AND expires_at > agora (= CountPendingInvitations).
+REVOKE EXECUTE ON FUNCTION uso_do_titular(timestamptz) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION uso_do_titular(timestamptz) TO CURRENT_USER;
+-- +goose Down
+SET LOCAL lock_timeout = '5s';
+DROP FUNCTION uso_do_titular(timestamptz);
+DROP POLICY project_invitations_cota_select ON project_invitations;
+DROP POLICY project_members_cota_select ON project_members;
 ```
-`membros` conta os vínculos sem o titular. Down: `DROP FUNCTION`, `DROP POLICY`.
+```sql
+-- queries/uso.sql. Casts e AS para o sqlc, como em CotaDoReceptor.
+-- name: TitularUsage :many
+SELECT u.p_id::uuid AS id, u.p_nome::text AS name, u.p_padrao::boolean AS is_default,
+       u.n_alvos::bigint AS alvos, u.n_heartbeats::bigint AS heartbeats, u.n_canais::bigint AS canais,
+       u.n_membros::bigint AS membros, u.n_convites::bigint AS convites
+  FROM uso_do_titular(sqlc.arg(agora)::timestamptz) AS u;
+```
 ```go
+// internal/account/uso.go
 type UsoDoProjeto struct {
-    ID uuid.UUID; Nome string; Padrao bool
-    Alvos, Heartbeats, Canais, Membros int64
+    ID     uuid.UUID
+    Nome   string
+    Padrao bool
+    Alvos, Heartbeats, Canais, Membros, Convites int64
 }
 type Uso struct {
-    Email       string
-    Operador    bool
-    SuspensaEm  *time.Time
-    Limites     tenancy.Limites
-    Projetos    []UsoDoProjeto
-    EmailsHoje  int // da conta (Task 9)
+    Email            string
+    Operador         bool
+    SuspensaEm       *time.Time
+    Limites          tenancy.Limites // tenancy.LimitesDe(Operador): os do plano, como o 5.2 aplica
+    Projetos         []UsoDoProjeto  // padrão primeiro
+    EmailsHoje       int             // da conta (5.3)
     EmailsHojeGlobal int
 }
-func (s *Service) Usage(ctx context.Context, email string) (Uso, error)
+// ContagemDeEmailsDeConta é o que Usage lê do teto de e-mails de conta
+// (*storage.TetoDeEmailsDeConta satisfaz). account não importa contaemail (ciclo).
+type ContagemDeEmailsDeConta interface {
+    EnviadosHoje(ctx context.Context) (int, error)
+    EnviadosHojePelaConta(ctx context.Context, conta uuid.UUID) (int, error)
+}
+// Usage: ErrUserNotFound para e-mail sem conta. Só lê: sem trava e sem auditoria.
+// GetUserIDByEmail (users não tem RLS), depois InUserTx(id): UserIsOperator,
+// UserSuspension e TitularUsage(agora = s.clk.Now()) na mesma transação.
+func (s *Service) Usage(ctx context.Context, email string, emails ContagemDeEmailsDeConta) (Uso, error)
 ```
-Saída do CLI, uma linha por item, `ACIMA` ao lado do que passa do limite (D1):
+`abrirServico(ctx, dsn) (svc *account.Service, emails *storage.TetoDeEmailsDeConta, fechar func(), err error)`, com `storage.NewTetoDeEmailsDeConta(pool, clock.Real{}, contaemail.TetoDiario, contaemail.TetoDiarioPorConta)` (assinatura do 5.3). Os outros subcomandos ignoram `emails`.
+
+Saída do CLI (stdout, código 0). `ACIMA` só quando o valor passa **estritamente** do limite (no limite exato a conta está cheia, não acima). O nome do projeto sai com `%q` (o nome é do usuário: aspas e caracteres de controle escapados no terminal do operador). Membros comparam `membros + convites` com o limite, como o portão do convite:
 ```
 conta: x@y (grátis, ativa)
 projetos: 2/3
 alvos: 21/20 ACIMA
 heartbeats: 3/20
 e-mails de conta hoje: 4/10 (global 17/50)
-projeto "Projeto padrão": 15 alvos, 2 heartbeats, 5/5 canais, 1/3 membros
+projeto "Projeto padrão" (padrão): 15 alvos, 2 heartbeats, 5/5 canais, 1/3 membros
+projeto "Loja": 6 alvos, 1 heartbeats, 6/5 canais ACIMA, 2/3 membros (+2 convites) ACIMA
 ```
+Primeira linha: `(grátis, ativa)`, `(operador, ativa)` ou `(grátis, suspensa desde 2026-11-28 14:03 UTC)` (`time.UTC`, formato `2006-01-02 15:04`). Os denominadores de e-mail vêm de `contaemail.TetoDiarioPorConta` e `contaemail.TetoDiario` no CLI. Comentário no `.go`: não escrever o nome dos GUCs da cota (`TestOnlyQuotaFunctionsUseQuotaGUCs` varre os `.go` de produção, comentários inclusive).
 
-- [ ] **Step 1: testes que falham**
-  - `TestTitularUsageCountsEveryProject` (`storage`): U titular de A e B com alvos, heartbeats, canais e um membro M em B; em `InUserTx(U)`, `TitularUsage` traz as duas linhas com as contagens certas, e depois, na mesma transação, `count(*)` em `targets` é 0 e os `app.cota_*` são `''`.
-  - `TestTitularUsageWorksWhileSuspended`: `testdb.Suspender(U)`; a função ainda devolve as linhas.
-  - `TestTitularUsageRefusesWithoutUserScope`: em `InProberTx`, 42501.
-  - `TestUsageMarksOverQuota` (`account`): U grátis com 21 alvos (admin) → `Uso.Limites.Alvos == 20` e a soma dos projetos 21.
-  - `TestUserUsageCLI` (`cmd`): a saída tem as linhas acima, com `ACIMA` só onde passa; sem conta → `saidaNaoCadastrado`.
-- [ ] **Step 2:** `go test -race -count=1 -p 1 ./internal/storage ./internal/account ./cmd/stillon -run 'TestTitularUsage|TestUsageMarksOverQuota|TestUserUsageCLI|TestOnlyQuotaFunctionsUseQuotaGUCs|TestQuotaPoliciesAndFunctionsAreContained'`. Esperado: `function uso_do_titular() does not exist`.
-- [ ] **Step 3: implementar;** `make generate`.
-- [ ] **Step 4:** o comando do Step 2 passa, mais `make test` e `sqlc diff`.
+**Fica para depois:** propostas de transferência recebidas (não contam para o receptor até o aceite, que confere a cota); flag `--json`.
+
+- [ ] **Step 0:** `git log --oneline origin/main -- internal/storage/migrations | head` mostra a 00053 do 5.3 (e, se já entrou, a do 5.2). Sem o 5.3 na `main`, pare e avise: a Task 18 segue sozinha. Rebase na `main` e renumere a migration para o próximo número livre.
+- [ ] **Step 1: testes que falham** (helpers: `testdb.New`, `testdb.NovoProjeto`, `testdb.Membro`, `testdb.Convite`, `testdb.Suspender`, `testdb.Operador`, `testdb.Admin` para semear alvos/heartbeats/canais e para vencer/aceitar convite)
+  - `TestTitularUsageCountsEveryProject` (`storage`): U titular do padrão A (3 alvos, 1 heartbeat, 2 canais) e de B (2 alvos, 0 heartbeats, 5 canais, M membro `member`, 1 convite válido, 1 vencido, 1 aceito). Em `InUserTx(U)`, `TitularUsage` devolve duas linhas, A primeiro: A = (3, 1, 2, 0, 0); B = (2, 0, 5, 1, 1). Na mesma transação, depois: `count(*)` em `targets` é 0 e `current_setting('app.cota_projetos', true)` e `…cota_titular_id…` são `''`. Sabotagens: tirar `user_id <> titular` → membros de A vira 1; contar canais com `ANY (projetos)` → A e B com 7; tirar o `expires_at > agora` → convites 2; tirar a restauração de `app.cota_projetos` → `count(*)` em `targets` vira 5.
+  - `TestTitularUsageIgnoresProjectsWhereOnlyMember`: U membro do projeto de O; em `InUserTx(U)`, só os projetos de que U é titular. Sabotagem: filtrar por projeto visível em vez de `titular_id` → aparece o de O.
+  - `TestTitularUsageWorksWhileSuspended`: `testdb.Suspender(U)`; as linhas voltam iguais. Sabotagem: `AND NOT projeto_suspenso(p.id)` → zero linhas.
+  - `TestTitularUsageRefusesWithoutUserScope`: em `InProberTx`, erro com SQLSTATE 42501. Sabotagem: tirar o `IF titular IS NULL THEN RAISE` → zero linhas sem erro.
+  - `TestUsageMarksOverQuota` (`account`): U grátis com 21 alvos (admin) no padrão; contagem falsa de e-mails devolvendo global 17 e conta 4 → `Uso.Limites == tenancy.LimitesDe(false)`, soma dos `Alvos` 21, `EmailsHojeGlobal == 17`, `EmailsHoje == 4`, `Operador == false`, `SuspensaEm == nil`. Sabotagens: `LimitesDe(true)` → `Alvos` 100; trocar as duas contagens → 4 e 17.
+  - `TestUsageOperatorAndSuspended`: O operador → `Limites == LimitesDe(true)`; U suspenso → `SuspensaEm` não nulo e as linhas ainda vêm.
+  - `TestUsageUnknownEmail`: `errors.Is(err, account.ErrUserNotFound)`.
+  - `TestUserUsageCLI` (`cmd`, tabela no molde de `TestUserSuspendCLI`, `stdinProibido`): o cenário do bloco acima semeado por admin (contas `account_email_daily` = 17 e a da conta, tabela da 00053, = 4) dá exatamente aquele stdout; e-mail sem conta → código 4 e `stillon user: nenhum usuário com o e-mail ninguem@exemplo.com; nada foi alterado`; argumento sobrando → 2 e `argumento inesperado: "x"`. Sabotagem: `>=` no lugar de `>` → `5/5 canais ACIMA` e o teste fica vermelho.
+  - `TestUserSubcommandsListedInUsage`: passa a exigir também `stillon user usage --email`.
+- [ ] **Step 2:** `go test -race -count=1 -p 1 ./internal/storage ./internal/account ./cmd/stillon -run 'TestTitularUsage|TestUsage|TestUserUsageCLI|TestUserSubcommandsListedInUsage|TestOnlyQuotaFunctionsUseQuotaGUCs|TestQuotaPoliciesAndFunctionsAreContained|TestInUserTxOnlyInPersonalContexts'`. Esperado: não compila (`q.TitularUsage undefined`, `svc.Usage undefined`); com a migration e a query antes do Go, `function uso_do_titular(timestamp with time zone) does not exist`; com a migration, as duas guardas de contenção ficam vermelhas até as listas mudarem.
+- [ ] **Step 3: implementar;** `make generate` e `sqlc diff`.
+- [ ] **Step 4:** o comando do Step 2 passa, mais `go build ./... && go vet ./... && make test`.
 - [ ] **Step 5:** `feat(cli): stillon user usage com projetos, contagens e e-mails do dia`
 
 ### Task 18: slugs reservados da status page (simples)
 
+**Onde o slug é validado hoje:** `internal/statuspage/statuspage.go:49` (`slugRE`, par do CHECK da 00006) em `validate` (`:100-107`), chamado no `Create` antes da transação e no `Update` depois de `aplicarPatch`, sob a trava de `lerTravada` (`service.go:69-133`); a unicidade vem do UNIQUE `status_pages_slug_key` traduzido para `ErrSlugTaken` (`service.go:274-281`) → 409 `slug_taken` (`httpapi/statuspagehandlers.go:162`). No painel, a mesma regex em `web/src/features/statuspage/PaginaStatusPage.tsx:26`, que já trata `slug_taken` ("Este endereço já está em uso."). Nenhuma lista reservada existe; o comentário de `ErrSlugTaken` (`statuspage.go:27`) já a menciona.
+
 **Files:**
 - Create: `internal/statuspage/slugs_reservados.go`
-- Modify: `internal/statuspage/service.go` (`Create`; `Update` só quando o slug muda), `internal/statuspage/statuspage.go:27` (comentário)
-- Test: `internal/statuspage/slugs_reservados_test.go`, `internal/httpapi/statuspages_projeto_integration_test.go`
+- Modify: `internal/statuspage/service.go` (`Create`: depois de `validate`, antes da transação; `Update`: dentro da transação, depois de `validate`, só quando `in.Slug != antes.Slug`), `internal/statuspage/statuspage.go:27` (o comentário cita `slugReservado`)
+- Test: `internal/statuspage/slugs_reservados_test.go` (`package statuspage`), `internal/httpapi/statuspages_projeto_integration_test.go`
+- Sem mudança: `apierr`, `ERROS_DO_SERVIDOR` (o 409 `slug_taken` já existe), painel, migrations.
 
 **Interfaces (Produces):**
 ```go
-// slugReservado: a lista abaixo e todo slug que começa com "stillon".
+// slugReservado: os nomes da lista e todo slug que começa com "stillon" ou
+// "still-on". A lista é um switch (ou um map não exportado), sem estado mutável
+// exportado. Não vale para a página que já tem o slug (Update compara com o
+// atual relido sob a trava).
 func slugReservado(slug string) bool
 ```
-Lista inicial: `admin`, `administrador`, `api`, `app`, `assets`, `auth`, `blog`, `cdn`, `conta`, `contas`, `dashboard`, `docs`, `help`, `ajuda`, `login`, `entrar`, `cadastro`, `signup`, `logout`, `mail`, `email`, `painel`, `privacidade`, `termos`, `root`, `static`, `status`, `suporte`, `support`, `www`, `oficial`, `official`, `security`, `seguranca`, `billing`, `pagamento`, `healthchecks`, `google`, `microsoft`, `apple`, `amazon`, `aws`, `azure`, `cloudflare`, `github`, `gitlab`, `paypal`, `stripe`, `facebook`, `meta`, `instagram`, `whatsapp`, `netflix`, `nubank`, `itau`, `bradesco`, `santander`, `caixa`, `bancodobrasil`, `pix`, `mercadopago`, `mercadolivre`, `resend`, `hostinger`.
+Lista: `admin`, `administrador`, `api`, `app`, `assets`, `auth`, `blog`, `cdn`, `conta`, `contas`, `account`, `dashboard`, `docs`, `help`, `ajuda`, `login`, `entrar`, `cadastro`, `signup`, `logout`, `mail`, `email`, `painel`, `privacidade`, `termos`, `root`, `static`, `status`, `suporte`, `support`, `www`, `oficial`, `official`, `security`, `seguranca`, `billing`, `pagamento`, `healthchecks`, e as rotas de conta do painel: `confirm-email`, `forgot-password`, `reset-password`, `settings`, `configuracoes`, `projects`, `projetos`, `invite`, `convite`, `convites`, `export`, `exportar`; marcas: `google`, `microsoft`, `apple`, `amazon`, `aws`, `azure`, `cloudflare`, `github`, `gitlab`, `paypal`, `stripe`, `facebook`, `meta`, `instagram`, `whatsapp`, `netflix`, `nubank`, `itau`, `bradesco`, `santander`, `caixa`, `bancodobrasil`, `pix`, `mercadopago`, `mercadolivre`, `resend`, `hostinger`. A página pública mora em `/p/{slug}`: a lista evita confusão e phishing ("stillon.tech/p/reset-password"), não colisão de rota.
 
+**Retroatividade:** pergunta ao dono (P1 do pré-voo). O plano segue a recomendação (a): a página que já tem um slug reservado fica com ele, e ninguém novo o adota. Se o dono escolher outra opção, esta task muda antes do Step 3.
+
+- [ ] **Step 0 (informativo, antes do merge):** na produção, `SELECT count(*) FROM status_pages WHERE slug = ANY(<lista>) OR slug LIKE 'stillon%' OR slug LIKE 'still-on%'` e anotar o número no PR.
 - [ ] **Step 1: testes que falham**
-  - `TestReservedSlugs` (tabela): `admin`, `www`, `stillon`, `stillon-status`, `paypal` → `true`; `minha-loja`, `status-da-loja` → `false`.
-  - `TestCreateWithReservedSlugIsTaken` (`httpapi`): `POST /projects/{id}/status-pages` com `admin` dá 409 `slug_taken`, igual a slug ocupado.
-  - `TestRenameToReservedSlugIsTaken`: `PATCH` para `api` dá 409 `slug_taken`.
-  - `TestExistingReservedSlugKeepsWorking`: página com slug `status` gravada via admin; `PATCH` só do título passa.
+  - `TestReservedSlugs` (tabela): `admin`, `www`, `termos`, `privacidade`, `reset-password`, `stillon`, `stillon-status`, `still-on`, `paypal` → `true`; `minha-loja`, `status-da-loja`, `meu-stillon`, `administradora` → `false`. Sabotagens: sem o prefixo → `stillon-status` falso; `strings.Contains` no lugar de `HasPrefix` → `meu-stillon` verdadeiro; prefixo da lista inteira (`admin*`) → `administradora` verdadeiro.
+  - `TestCreateWithReservedSlugIsTaken` (`httpapi`): `POST /api/v1/projects/{id}/status-pages` com `admin` → 409 `slug_taken`, igual a slug ocupado; o `GET` da página do projeto continua 404 (nada gravado). Sabotagem: pular a conferência no `Create` → 201.
+  - `TestRenameToReservedSlugIsTaken`: página `minha-loja`; `PATCH` com `slug: "api"` → 409 `slug_taken`; o `GET` ainda mostra `minha-loja`. Sabotagem: conferir só no `Create` → 200.
+  - `TestExistingReservedSlugKeepsWorking`: página com slug `status` gravada via admin, publicada; `PATCH` só de `title` → 200; `PATCH` com `slug: "status"` (o mesmo) → 200; `GET /p/status` → 200. Sabotagem: conferir `slugReservado(in.Slug)` sem comparar com `antes.Slug` → 409 no `PATCH` do título.
 - [ ] **Step 2:** `go test -race -count=1 -p 1 ./internal/statuspage ./internal/httpapi -run 'TestReservedSlugs|TestCreateWithReservedSlugIsTaken|TestRenameToReservedSlugIsTaken|TestExistingReservedSlugKeepsWorking'`. Esperado: `undefined: slugReservado`.
 - [ ] **Step 3: implementar.**
-- [ ] **Step 4:** o comando do Step 2 passa, mais `go test -race -count=1 -p 1 ./internal/statuspage ./internal/httpapi`.
+- [ ] **Step 4:** o comando do Step 2 passa, mais `go test -race -count=1 -p 1 ./internal/statuspage ./internal/httpapi` e `go build ./... && go vet ./...`.
 - [ ] **Step 5:** `feat(statuspage): slugs reservados respondem como ocupados`
 
 ---
