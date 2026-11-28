@@ -14,18 +14,24 @@ import (
 
 const claimDueTargets = `-- name: ClaimDueTargets :many
 
-WITH lote AS MATERIALIZED (
-    SELECT id FROM targets
+WITH vencidos AS (
+    SELECT id, next_run_at,
+           row_number() OVER (PARTITION BY project_id ORDER BY next_run_at, id) AS vez
+      FROM targets
      WHERE enabled AND next_run_at <= $1::timestamptz
-     ORDER BY next_run_at
-     LIMIT $2::int
+), escolhidos AS (
+    SELECT id FROM vencidos ORDER BY vez, next_run_at, id LIMIT $2::int
+), lote AS MATERIALIZED (
+    SELECT t.id FROM targets t
+     WHERE t.id IN (SELECT id FROM escolhidos)
+       AND t.enabled AND t.next_run_at <= $1::timestamptz
        FOR UPDATE SKIP LOCKED
 )
 UPDATE targets t
    SET next_run_at = $1::timestamptz
        + make_interval(secs => t.interval_sec * (0.9 + random() * 0.2))
  WHERE t.id IN (SELECT id FROM lote)
-RETURNING t.id, t.user_id, t.url, t.method, t.timeout_ms, t.expected_status,
+RETURNING t.id, t.project_id, t.url, t.method, t.timeout_ms, t.expected_status,
           t.headers_enc, t.degraded_threshold_ms, t.interval_sec,
           t.content_mode, t.content_value, t.content_json_pointer
 `
@@ -37,7 +43,7 @@ type ClaimDueTargetsParams struct {
 
 type ClaimDueTargetsRow struct {
 	ID                  uuid.UUID
-	UserID              uuid.UUID
+	ProjectID           *uuid.UUID
 	URL                 string
 	Method              string
 	TimeoutMS           int32
@@ -59,8 +65,22 @@ type ClaimDueTargetsRow struct {
 // SKIP LOCKED faz um segundo sondador pegar OUTROS alvos em vez de esperar
 // pelos que o primeiro travou (TestSkipLockedDoesNotWaitForAnotherProber).
 //
-// user_id volta só por compatibilidade: o fan-out sai pelo projeto do
-// incidente (ListDeliverableChannelsForIncident), não pelo dono do alvo;
+// Justiça entre projetos: a janela numera os vencidos de cada projeto pela
+// ordem do vencimento (vez 1 é o mais atrasado de cada um), e o lote sai por
+// vez e só depois por next_run_at. Um projeto com mil alvos atrasados não
+// toma a rodada inteira: um de cada projeto por vez
+// (TestClaimInterleavesProjects). Sem teto fixo por projeto, as vagas que um
+// projeto não usa vão para os outros.
+//
+// FOR UPDATE não aceita função de janela no mesmo SELECT: a janela roda sem
+// trava, e o lote re-trava os escolhidos conferindo de novo o vencimento.
+// Com SKIP LOCKED, o alvo que outro sondador travou fica de fora
+// (TestClaimDoesNotDoubleClaimConcurrently); o que ele reivindicou, ou o dono
+// pausou, com commit no meio desta instrução volta pelo EvalPlanQual com a
+// versão nova e cai no filtro (TestClaimRechecksDueAfterConcurrentCommit).
+//
+// project_id volta para os testes e o diagnóstico: o fan-out sai pelo projeto
+// do incidente (ListDeliverableChannelsForIncident);
 // interval_sec, porque a histerese recomeça
 // depois de uma lacuna longa entre checks; as três colunas da regra de
 // conteúdo, porque a sonda julga o corpo pela regra que reivindicou, e a
@@ -80,7 +100,7 @@ func (q *Queries) ClaimDueTargets(ctx context.Context, arg ClaimDueTargetsParams
 		var i ClaimDueTargetsRow
 		if err := rows.Scan(
 			&i.ID,
-			&i.UserID,
+			&i.ProjectID,
 			&i.URL,
 			&i.Method,
 			&i.TimeoutMS,
@@ -208,6 +228,25 @@ func (q *Queries) LockTargetProbeSpec(ctx context.Context, id uuid.UUID) (LockTa
 		&i.ContentJsonPointer,
 	)
 	return i, err
+}
+
+const postponeTarget = `-- name: PostponeTarget :exec
+UPDATE targets SET next_run_at = LEAST(next_run_at, $1::timestamptz)
+ WHERE id = $2
+`
+
+type PostponeTargetParams struct {
+	NextRunAt time.Time
+	ID        uuid.UUID
+}
+
+// Adiamento pelo teto por host (prober.tetoPorHost): o alvo reivindicado que
+// não coube no teto volta para quando a ficha do host chega, e não um
+// intervalo inteiro depois. LEAST: se o dono mexeu no alvo entre a
+// reivindicação e aqui e o next_run_at ficou mais cedo, ele vale.
+func (q *Queries) PostponeTarget(ctx context.Context, arg PostponeTargetParams) error {
+	_, err := q.db.Exec(ctx, postponeTarget, arg.NextRunAt, arg.ID)
+	return err
 }
 
 const saveTargetTLS = `-- name: SaveTargetTLS :exec

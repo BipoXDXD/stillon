@@ -33,7 +33,7 @@ func fechadoComAviso(t *testing.T, b *bancadaHB) (uuid.UUID, db.ClaimHeartbeatsT
 		t.Fatalf("incidentes antes da reivindicação velha: %+v", l)
 	}
 	velha := db.ClaimHeartbeatsToCloseRow{
-		ID: id, UserID: b.dono, LastSuccessAt: &sucesso, IncidentID: l[0].ID, StartedAt: l[0].Inicio,
+		ID: id, LastSuccessAt: &sucesso, IncidentID: l[0].ID, StartedAt: l[0].Inicio,
 	}
 	return id, velha
 }

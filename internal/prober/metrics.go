@@ -19,6 +19,8 @@ type Metrics struct {
 	heartbeatEvents prometheus.Gauge
 	// blockedCIDRs é o tamanho de PROBE_BLOCKED_CIDRS; 0 é a lista vazia.
 	blockedCIDRs prometheus.Gauge
+	// hostThrottled conta os alvos reivindicados que o teto por host adiou.
+	hostThrottled prometheus.Counter
 
 	// vistos é o conjunto de alvos com série em duration. A reconciliação o
 	// confronta com o banco para apagar as séries de alvos que sumiram.
@@ -61,9 +63,14 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 			Name: "probe_blocked_cidrs",
 			Help: "Faixas da própria hospedagem que a sonda recusa (PROBE_BLOCKED_CIDRS); 0 é a lista vazia.",
 		}),
+		hostThrottled: prometheus.NewCounter(prometheus.CounterOpts{
+			Name: "prober_host_throttled_total",
+			Help: "Alvos reivindicados que o teto de requisições por host adiou, sem sonda.",
+		}),
 		vistos: map[uuid.UUID]struct{}{},
 	}
-	reg.MustRegister(m.duration, m.total, m.inflight, m.queueDepth, m.incidentsOpen, m.heartbeatEvents, m.blockedCIDRs)
+	reg.MustRegister(m.duration, m.total, m.inflight, m.queueDepth, m.incidentsOpen, m.heartbeatEvents, m.blockedCIDRs,
+		m.hostThrottled)
 	return m
 }
 
