@@ -4,6 +4,7 @@ import { enviar, erroDeRede, lerCorpo, lerErro, type Buscar, type Pedido } from 
 import {
   Alvo,
   CadastroTotp,
+  Convite,
   AgendamentoEditavel,
   Canal,
   ConfirmacaoTotp,
@@ -14,15 +15,18 @@ import {
   InicioDaTroca,
   ListaDeAlvos,
   ListaDeCanais,
+  ListaDeConvites,
   ListaDeEventos,
   ListaDeHeartbeats,
   ListaDeIncidentes,
   ListaDeIncidentesDeHeartbeat,
+  ListaDeMembros,
   ListaDePaginas,
   ListaDeProjetos,
   ListaDeSessoes,
   Incidente,
   Me,
+  Membro,
   PaginaDeStatus,
   Projeto,
   Resumo,
@@ -31,6 +35,7 @@ import {
   type RegraDeConteudo,
 } from './schemas'
 import type { Sessao } from './sessao'
+import type { PapelConhecido } from '@/lib/permissoes'
 
 // A regra do 401 (spec do Plano 6 §3.4; nota do Plano 5 §12; reconciliação,
 // item 3): só "401 unauthorized" FORA de /auth/* renova, e a requisição
@@ -94,6 +99,8 @@ export type PedidoDeRedefinicao = { email: string; turnstile_token: string }
 export type Redefinicao = { token: string; new_password: string }
 
 export type EntradaProjeto = { name: string }
+
+export type EntradaConvite = { email: string; role: PapelConhecido }
 
 export type TrocaDeSenha = { current_password: string; new_password: string; totp_code?: string }
 
@@ -202,6 +209,24 @@ function criarApiDoProjeto(get: Get, pedir: Pedir, projeto: string) {
     criarPagina: (e: EntradaPagina) => pedir({ metodo: 'POST', caminho: prefixo + '/status-pages', corpo: e }, PaginaDeStatus),
     alterarPagina: (id: string, e: Partial<EntradaPagina>) =>
       pedir({ metodo: 'PATCH', caminho: prefixo + caminho`/status-pages/${id}`, corpo: e }, PaginaDeStatus),
+
+    // A equipe (PR 4). Remover o próprio id é sair do projeto.
+    membros: (sinal?: AbortSignal) => get(prefixo + '/members', ListaDeMembros, sinal),
+    mudarPapel: (userId: string, role: PapelConhecido) =>
+      pedir({ metodo: 'PATCH', caminho: prefixo + caminho`/members/${userId}`, corpo: { role } }, Membro),
+    removerMembro: (userId: string) => pedir({ metodo: 'DELETE', caminho: prefixo + caminho`/members/${userId}` }, null),
+    renomear: (nome: string) => pedir({ metodo: 'PATCH', caminho: prefixo, corpo: { name: nome } }, Projeto),
+
+    // Member e viewer recebem 403 na lista de convites.
+    convites: (sinal?: AbortSignal) => get(prefixo + '/invitations', ListaDeConvites, sinal),
+    convidar: (e: EntradaConvite) => pedir({ metodo: 'POST', caminho: prefixo + '/invitations', corpo: e }, Convite),
+    revogarConvite: (id: string) => pedir({ metodo: 'DELETE', caminho: prefixo + caminho`/invitations/${id}` }, null),
+
+    // A titularidade: propor responde 202 sem corpo (só muda com o aceite).
+    proporTransferencia: (userId: string) =>
+      pedir({ metodo: 'POST', caminho: prefixo + '/titular-transfer', corpo: { user_id: userId } }, null),
+    aceitarTransferencia: () => pedir({ metodo: 'POST', caminho: prefixo + '/titular-transfer/accept' }, Projeto),
+    cancelarTransferencia: () => pedir({ metodo: 'DELETE', caminho: prefixo + '/titular-transfer' }, null),
   }
 }
 
@@ -332,6 +357,9 @@ export function criarApi(sessao: Sessao, buscar: Buscar, o: OpcoesDaApi = {}) {
     projetos: (sinal?: AbortSignal) => get('/projects', ListaDeProjetos, sinal),
     criarProjeto: (e: EntradaProjeto) => pedir({ metodo: 'POST', caminho: '/projects', corpo: e }, Projeto),
     doProjeto: (id: string): ApiDoProjeto => criarApiDoProjeto(get, pedir, id),
+    // O aceite é da conta: o projeto vem do convite do token.
+    aceitarConvite: (token: string) =>
+      pedir({ metodo: 'POST', caminho: '/invitations/accept', corpo: { token } }, Projeto),
 
     sessoes: (sinal?: AbortSignal) => get('/sessions', ListaDeSessoes, sinal),
     encerrarSessao: (id: string) => pedir({ metodo: 'DELETE', caminho: caminho`/sessions/${id}` }, null),

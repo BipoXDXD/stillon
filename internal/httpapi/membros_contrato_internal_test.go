@@ -19,8 +19,8 @@ import (
 // O acordo entre memberResponse e o painel, no molde de
 // projetos_contrato_internal_test.go: o JSON real, de toMemberResponse e
 // apierr.WriteJSON, tem de continuar igual a testdata/contrato-membros.json.
-// Mudou o DTO de propósito? Regrave com STILLON_REGRAVAR_CONTRATO=1. O painel
-// passa a ler este arquivo com a tela de membros (4.4).
+// Mudou o DTO de propósito? Regrave com STILLON_REGRAVAR_CONTRATO=1. O vitest
+// do painel lê este arquivo (schemas-contrato.test.ts): rode-o também.
 const arquivoDoContratoMembros = "contrato-membros.json"
 
 func TestMemberResponseKeepsThePanelContract(t *testing.T) {
@@ -73,6 +73,10 @@ func membrosDoContrato() []struct {
 		{"viewer", tenancy.MemberView{
 			UserID: uuid.MustParse("01900000-0000-7000-8000-000000000202"), Email: "leitor@exemplo.com",
 			Role: tenancy.RoleViewer, JoinedAt: time.Date(2026, 11, 27, 9, 30, 15, 123000000, time.UTC),
+		}},
+		{"owner com transferência proposta", tenancy.MemberView{
+			UserID: uuid.MustParse("01900000-0000-7000-8000-000000000203"), Email: "socia@exemplo.com",
+			Role: tenancy.RoleOwner, PendingTitular: true, JoinedAt: time.Date(2026, 11, 20, 8, 0, 0, 0, time.UTC),
 		}},
 	}
 }

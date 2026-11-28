@@ -106,7 +106,7 @@ func TestListProjectsReturnsOwnProjectsWithRole(t *testing.T) {
 	crus, _ := envelope["items"].([]any)
 	for i, item := range crus {
 		m, _ := item.(map[string]any)
-		if chaves := chavesDe(m); !slices.Equal(chaves, []string{"created_at", "id", "is_default", "limits", "name", "role"}) {
+		if chaves := chavesDe(m); !slices.Equal(chaves, []string{"created_at", "id", "is_default", "limits", "name", "pending_titular", "role"}) {
 			t.Errorf("o item %d tem as chaves %v", i, chaves)
 		}
 	}

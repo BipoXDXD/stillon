@@ -39,6 +39,12 @@ const porCodigo: Record<string, string> = {
   email_not_verified: 'Confirme seu e-mail para criar recursos. Use o link que enviamos ou peça outro.',
   turnstile_failed: 'A verificação de segurança falhou. Faça a verificação de novo e envie.',
   token_invalid: 'Link inválido ou vencido. Peça outro.',
+  // A equipe (PR 4). Texto provisório: o final sai com o design da tela.
+  titular_protected: 'O titular do projeto não sai nem perde o papel. Transfira a titularidade antes.',
+  member_limit_reached: 'Limite de membros deste projeto atingido. Convites pendentes também contam.',
+  already_member: 'Esta pessoa já faz parte do projeto.',
+  invitation_other_account: 'Este convite foi enviado para outro e-mail. Saia e entre com a conta desse e-mail.',
+  titular_transfer_target: 'A titularidade só vai para quem já é dono do projeto, e o projeto padrão não é transferível.',
 }
 
 function duracao(segundos: number): string {
@@ -115,6 +121,8 @@ const porCampo: Record<string, Record<string, string>> = {
     required: MARQUE_O_ACEITE,
     outdated: 'Os termos mudaram depois que esta página abriu. Recarregue a página, leia a versão nova e marque de novo.',
   },
+  role: { invalid: 'Escolha um papel.' },
+  user_id: { invalid: 'Escolha um dono do projeto.' },
   content_rule: { forbidden: 'Para verificar o conteúdo, use GET ou POST e tire os headers Accept-Encoding e Range.' },
   'content_rule.value': { too_long: LIMITE_DA_REGRA, invalid: CONTROLE_NA_REGRA },
   'content_rule.json_pointer': {

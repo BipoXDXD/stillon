@@ -2,6 +2,7 @@ import { keepPreviousData, onlineManager, useInfiniteQuery, useQuery } from '@ta
 import { useSyncExternalStore } from 'react'
 import { useApi, useSessao } from '@/app/contexto'
 import { useApiDoProjeto, useProjeto } from '@/app/projeto'
+import { usePode } from '@/lib/permissoes'
 import type { FiltroDoResumo } from './cliente'
 import type { Incidente, ItemDoResumo, ListaDeIncidentes } from './schemas'
 
@@ -39,6 +40,8 @@ export const chaves = {
       incidentesDoHeartbeat: (hb: string) => [...p, 'heartbeats', hb, 'incidents'] as const,
       canais: [...p, 'channels'] as const,
       paginas: [...p, 'status-pages'] as const,
+      membros: [...p, 'members'] as const,
+      convites: [...p, 'invitations'] as const,
     }
   },
 }
@@ -303,4 +306,17 @@ export function usePaginas() {
 export function useSessoes() {
   const api = useApi()
   return useQuery({ queryKey: chaves.sessoes, queryFn: ({ signal }) => api.sessoes(signal) })
+}
+
+export function useMembros() {
+  const { api, chave } = useDoProjeto()
+  return useQuery({ queryKey: chave.membros, queryFn: ({ signal }) => api.membros(signal) })
+}
+
+// Ver convites é de manager para cima: member e viewer receberiam 403, e a
+// consulta nem sai.
+export function useConvites() {
+  const { api, chave } = useDoProjeto()
+  const podeVer = usePode('invite_basic')
+  return useQuery({ queryKey: chave.convites, queryFn: ({ signal }) => api.convites(signal), enabled: podeVer })
 }

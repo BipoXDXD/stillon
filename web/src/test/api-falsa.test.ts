@@ -408,7 +408,7 @@ describe('projetos (projecthandlers do servidor)', () => {
   it('o teto conta os projetos de que o usuário é titular', async () => {
     const falsa = apiLogada()
     falsa.estado.limiteDeProjetos = 2
-    falsa.criarProjeto('Alheio').projeto.role = 'member'
+    falsa.definirPapel(falsa.criarProjeto('Alheio').projeto.id, 'member')
     expect((await pedir('POST', '/projects', { name: 'Segundo' })).status).toBe(201)
     const resposta = await pedir('POST', '/projects', { name: 'Terceiro' })
     expect(resposta.status).toBe(409)

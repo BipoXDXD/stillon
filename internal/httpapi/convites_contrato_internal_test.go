@@ -19,8 +19,8 @@ import (
 // O acordo entre invitationResponse e o painel, no molde de
 // membros_contrato_internal_test.go: o JSON real, de toInvitationResponse e
 // apierr.WriteJSON, tem de continuar igual a testdata/contrato-convites.json.
-// Mudou o DTO de propósito? Regrave com STILLON_REGRAVAR_CONTRATO=1. O painel
-// passa a ler este arquivo com a tela de membros (4.4).
+// Mudou o DTO de propósito? Regrave com STILLON_REGRAVAR_CONTRATO=1. O vitest
+// do painel lê este arquivo (schemas-contrato.test.ts): rode-o também.
 const arquivoDoContratoConvites = "contrato-convites.json"
 
 func TestInvitationResponseKeepsThePanelContract(t *testing.T) {

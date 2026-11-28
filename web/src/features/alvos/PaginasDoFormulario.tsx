@@ -2,16 +2,23 @@ import { useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { useNavigate, useParams } from 'react-router'
 import { useApiDoProjeto, useProjeto, useRotaDoProjeto } from '@/app/projeto'
+import { SemPermissao } from '@/app/SemPermissao'
 import { EstadoDaConsulta } from '@/components/EstadoDaConsulta'
 import { Titulo } from '@/components/Titulo'
 import { useAvisar } from '@/components/ui/avisos'
 import { Confirmar } from '@/components/ui/dialogo'
 import { useAlvo, useChavesDoProjeto } from '@/lib/api/consultas'
 import type { Alvo } from '@/lib/api/schemas'
+import { usePode } from '@/lib/permissoes'
 import { FormularioAlvo } from './FormularioAlvo'
 import { apagaOsHeaders, paraAlteracao, paraCriacao, valoresDe, valoresPadraoPara } from './esquema'
 
+// Sem edit_monitors (a URL digitada), o formulário nem monta: o envio daria 403.
 export function PaginaNovoAlvo() {
+  return usePode('edit_monitors') ? <NovoAlvo /> : <SemPermissao />
+}
+
+function NovoAlvo() {
   const api = useApiDoProjeto()
   const chave = useChavesDoProjeto()
   const qc = useQueryClient()
@@ -37,6 +44,10 @@ export function PaginaNovoAlvo() {
 }
 
 export function PaginaEditarAlvo() {
+  return usePode('edit_monitors') ? <EditarAlvo /> : <SemPermissao />
+}
+
+function EditarAlvo() {
   const { id = '' } = useParams()
   const consulta = useAlvo(id)
   return (

@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest'
 import { z } from 'zod'
 import { me, pagina } from '@/test/fixtures'
 import { textoDoErroDeCanal } from './mensagens'
-import { Canal, Me, PaginaDeStatus, Projeto, TiposConhecidosDeCanal } from './schemas'
+import { Canal, Convite, Me, Membro, PaginaDeStatus, Projeto, TiposConhecidosDeCanal } from './schemas'
 
 // O JSON real de channelResponse, escrito e conferido pelo teste Go
 // TestChannelResponseKeepsThePanelContract
@@ -113,16 +113,17 @@ describe('o schema Canal aceita o que a API devolve', () => {
   })
 })
 
+// Lê um contrato gravado pelo Go em internal/httpapi/testdata.
+function casosDoContrato(arquivo: string) {
+  return z
+    .array(z.strictObject({ caso: z.string().min(1), resposta: z.record(z.string(), z.unknown()) }))
+    .parse(JSON.parse(readFileSync(resolve(import.meta.dirname, '../../../../internal/httpapi/testdata', arquivo), 'utf8')))
+}
+
 // O JSON real de projectResponse, escrito e conferido pelo teste Go
 // TestProjectResponseKeepsThePanelContract
 // (internal/httpapi/projetos_contrato_internal_test.go).
-const ARQUIVO_DE_PROJETOS = resolve(
-  import.meta.dirname,
-  '../../../../internal/httpapi/testdata/contrato-projetos.json',
-)
-const CASOS_DE_PROJETOS = z
-  .array(z.strictObject({ caso: z.string().min(1), resposta: z.record(z.string(), z.unknown()) }))
-  .parse(JSON.parse(readFileSync(ARQUIVO_DE_PROJETOS, 'utf8')))
+const CASOS_DE_PROJETOS = casosDoContrato('contrato-projetos.json')
 const RESPOSTAS_DE_PROJETOS = CASOS_DE_PROJETOS.map((c) => [c.caso, c.resposta] as const)
 
 describe('o schema Projeto aceita o que a API devolve', () => {
@@ -140,8 +141,59 @@ describe('o schema Projeto aceita o que a API devolve', () => {
     expect(lida.success ? [] : lida.error.issues).toEqual([])
   })
 
-  it('os casos cobrem o projeto padrão e um criado pela API', () => {
+  it('os casos cobrem o projeto padrão, um criado pela API e os dois lados de pending_titular', () => {
     const projetos = CASOS_DE_PROJETOS.map((c) => Projeto.parse(c.resposta))
     expect(new Set(projetos.map((p) => p.is_default))).toEqual(new Set([true, false]))
+    expect(new Set(projetos.map((p) => p.pending_titular))).toEqual(new Set([true, false]))
+  })
+})
+
+// Os JSON reais de memberResponse e invitationResponse, escritos e conferidos
+// pelos testes Go TestMemberResponseKeepsThePanelContract e
+// TestInvitationResponseKeepsThePanelContract.
+const CASOS_DE_MEMBROS = casosDoContrato('contrato-membros.json')
+const RESPOSTAS_DE_MEMBROS = CASOS_DE_MEMBROS.map((c) => [c.caso, c.resposta] as const)
+const CASOS_DE_CONVITES = casosDoContrato('contrato-convites.json')
+const RESPOSTAS_DE_CONVITES = CASOS_DE_CONVITES.map((c) => [c.caso, c.resposta] as const)
+
+describe('o schema Membro aceita o que a API devolve', () => {
+  it.each(RESPOSTAS_DE_MEMBROS)('%s', (_caso, resposta) => {
+    const lido = Membro.safeParse(resposta)
+    expect(lido.success ? [] : lido.error.issues).toEqual([])
+  })
+
+  it.each(RESPOSTAS_DE_MEMBROS)('%s: traz exatamente os campos do schema', (_caso, resposta) => {
+    expect(Object.keys(resposta).sort()).toEqual(Object.keys(Membro.shape).sort())
+  })
+
+  it.each(RESPOSTAS_DE_MEMBROS)('%s: a data vem em RFC 3339', (_caso, resposta) => {
+    const lida = z.object({ joined_at: Rfc3339 }).safeParse(resposta)
+    expect(lida.success ? [] : lida.error.issues).toEqual([])
+  })
+
+  it('os casos cobrem os dois lados de is_titular e de pending_titular', () => {
+    const membros = CASOS_DE_MEMBROS.map((c) => Membro.parse(c.resposta))
+    expect(new Set(membros.map((m) => m.is_titular))).toEqual(new Set([true, false]))
+    expect(new Set(membros.map((m) => m.pending_titular))).toEqual(new Set([true, false]))
+  })
+})
+
+describe('o schema Convite aceita o que a API devolve', () => {
+  it('há casos gravados', () => {
+    expect(RESPOSTAS_DE_CONVITES.length).toBeGreaterThan(0)
+  })
+
+  it.each(RESPOSTAS_DE_CONVITES)('%s', (_caso, resposta) => {
+    const lido = Convite.safeParse(resposta)
+    expect(lido.success ? [] : lido.error.issues).toEqual([])
+  })
+
+  it.each(RESPOSTAS_DE_CONVITES)('%s: traz exatamente os campos do schema', (_caso, resposta) => {
+    expect(Object.keys(resposta).sort()).toEqual(Object.keys(Convite.shape).sort())
+  })
+
+  it.each(RESPOSTAS_DE_CONVITES)('%s: as datas vêm em RFC 3339', (_caso, resposta) => {
+    const lidas = z.object({ created_at: Rfc3339, expires_at: Rfc3339 }).safeParse(resposta)
+    expect(lidas.success ? [] : lidas.error.issues).toEqual([])
   })
 })

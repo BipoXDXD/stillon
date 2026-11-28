@@ -67,7 +67,7 @@ func TestCreateProjectReturns201AndListShowsIt(t *testing.T) {
 	if status != http.StatusCreated {
 		t.Fatalf("POST %s deu %d, queria 201: %s", rotaDeProjetos, status, corpo)
 	}
-	if chaves := chavesDe(decodificar(t, corpo)); !slices.Equal(chaves, []string{"created_at", "id", "is_default", "limits", "name", "role"}) {
+	if chaves := chavesDe(decodificar(t, corpo)); !slices.Equal(chaves, []string{"created_at", "id", "is_default", "limits", "name", "pending_titular", "role"}) {
 		t.Errorf("a resposta tem as chaves %v, queria as do item de GET %s", chaves, rotaDeProjetos)
 	}
 	var criado projetoJSON

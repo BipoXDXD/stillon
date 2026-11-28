@@ -405,50 +405,204 @@ Nunca Haiku.
 
 # 4.4: painel
 
+> **Revisado em 28/11 contra accb2fb4.** 4.1 (#464), 4.2 (#468) e 4.3 (00051, `pending_titular`) estão na main; o contrato HTTP acima vale como está, mais o `pending_titular` do item de membro (T11). Sem migration. Pré-voo: `.superpowers/sdd/2026-11-27-pr4-convites-papeis/preflight-4.4.md`.
+
+**Duas partes, dois PRs.**
+
+| Parte | Tarefas | Espera | PR |
+|---|---|---|---|
+| A, sem design | T10 (permissões por papel), T11 (cliente, esquemas, APIs falsas, textos de erro, `pending_titular` no Go) | nada | **4.4a**, publica sozinho: em produção ainda não há quem não seja owner, então esconder ações não muda a tela de ninguém |
+| B, com design | T12 (proposta e textos; **PARA**), T13 (página Equipe/Membros e transferência), T14 (aceite do convite) | D6 (T12) | **4.4b** |
+
+Regras que valem para as cinco tarefas:
+- Painel: `cd web && npm test && npm run typecheck && npm run lint`. Go (T11, T13): `go build ./... && go vet ./... && go test -race -count=1 -p 1 ./internal/httpapi/ ./internal/tenancy/... ./internal/account/`, e `make test` antes de abrir cada PR (Docker; um pesado por vez).
+- Toda ação escondida continua protegida no servidor (`TestEveryMutatingProjectRouteRefusesViewer`, T4). O painel só evita mostrar o que daria 403.
+- Os textos novos de A são **provisórios** e entram na lista que a T12 leva ao dono; a T13 aplica os aprovados.
+- Merge = deploy: depois de cada merge, `gh run list --workflow coolify.yml` do SHA e o `readyz`. Fora de 00:00–01:00 e 03:10–03:45 BRT.
+
 ### Task 10: permissões no painel e ações escondidas por papel
 
 **Files:**
-- Create: `web/src/lib/permissoes.json`, `web/src/lib/permissoes.ts` (+ teste); `internal/tenancy/matriz_painel_test.go`
-- Modify: telas que criam/editam (alvos, heartbeats, incidentes, canais, status page) e o `Layout.tsx` (item "Membros")
+- Create: `web/src/lib/permissoes.json`, `web/src/lib/permissoes.ts`, `web/src/lib/permissoes.test.ts`; `internal/tenancy/matriz_painel_test.go`; `web/src/app/SemPermissao.tsx`
+- Modify:
+  - `web/src/features/painel/PaginaPainel.tsx` (atalhos "Cadastrar heartbeat" e novo alvo, ~l. 60–63 e ~231);
+  - `web/src/features/alvos/PaginaDetalhe.tsx` (Editar, Pausar/Retomar, Apagar, ~l. 225–231);
+  - `web/src/features/alvos/FaixaDeEstado.tsx`, `web/src/features/incidentes/PaginaIncidentes.tsx`, `web/src/features/heartbeats/IncidentesDoHeartbeat.tsx` (Reconhecer);
+  - `web/src/features/heartbeats/PaginaHeartbeat.tsx` (Editar, Duplicar, Pausar/Retomar, Sinalizar agora, rotacionar a URL, limpar eventos);
+  - `web/src/features/canais/PaginaCanais.tsx` (Novo canal, Reenviar verificação, Pausar/Retomar, Apagar);
+  - `web/src/features/statuspage/PaginaStatusPage.tsx` (Criar status page/Salvar);
+  - `web/src/features/alvos/PaginasDoFormulario.tsx`, `web/src/features/heartbeats/PaginasDoFormulario.tsx` (rota direta sem permissão);
+  - `web/src/test/api-falsa.ts` (`definirPapel(projetoId, papel)` no objeto devolvido, ao lado de `chamadas`).
+- **Fica para a T13:** a entrada "Equipe/Membros" na navegação (onde ela fica é a pergunta D6-1).
 
 **Interfaces:**
-- Produces: `permissoes.json` = `{ "viewer": ["read"], "member": [...], ... }` com os nomes `read`, `edit_monitors`, `manage_channels`, `manage_status_page`, `invite_basic`, `manage_members`, `manage_project`; `function pode(papel: Papel, p: Permissao): boolean`; `function usePode(p: Permissao): boolean` (lê `useProjeto().papel`).
-- [ ] **Step 1:** `TestPainelPermissionsMatchDomain` (Go lê `web/src/lib/permissoes.json` e compara com `Role.Can` para todo par, por nome); `permissoes.test.ts` (viewer não edita; manager convida member e não manager). Testes de tela: com papel viewer, "Novo alvo", "Novo heartbeat", "Reconhecer", "Novo canal" e "Publicar página" não aparecem; com member, canais e status page aparecem só para leitura.
-- [ ] **Step 2–4:** ver falhar (sabotagem: troque um valor do JSON), implementar, ver passar. As ações escondidas continuam protegidas pelo servidor (T4).
+- `permissoes.json` (os nomes são os das constantes de `internal/tenancy/role.go`, em snake_case):
+  ```json
+  {
+    "viewer": ["read"],
+    "member": ["read", "edit_monitors"],
+    "manager": ["read", "edit_monitors", "manage_channels", "manage_status_page", "invite_basic"],
+    "owner": ["read", "edit_monitors", "manage_channels", "manage_status_page", "invite_basic", "manage_members", "manage_project"]
+  }
+  ```
+- `permissoes.ts`: `type Permissao = 'read' | 'edit_monitors' | 'manage_channels' | 'manage_status_page' | 'invite_basic' | 'manage_members' | 'manage_project'`; `type PapelConhecido = 'owner' | 'manager' | 'member' | 'viewer'`; `function pode(papel: Papel, p: Permissao): boolean` (`'desconhecido'` só tem `read`: está na lista de projetos, então lê); `function podeConvidarComo(papel: Papel, alvo: PapelConhecido): boolean` (member/viewer pedem `invite_basic`, manager/owner pedem `manage_members`, como `tenancy.AuthorizeInvite`); `function usePode(p: Permissao): boolean` (lê `useProjeto().papel`). O JSON é importado como o `versao.json` do cadastro.
+- `SemPermissao`: título "Sem permissão" e o texto provisório "Seu papel neste projeto não permite esta ação." A rota direta de criar/editar alvo ou heartbeat sem `edit_monitors` mostra isto e não monta o formulário.
+- Membro sem `manage_channels` vê a lista de canais sem ações. Sem `manage_status_page`, o formulário da status page fica num `<fieldset disabled>` e sem o botão de enviar; a prévia continua.
+
+- [ ] **Step 1: testes que falham**
+  - Go, `TestPainelPermissionsMatchDomain` (pacote `tenancy_test`): lê `../../web/src/lib/permissoes.json`; as chaves são exatamente os quatro papéis (`ParseRole` em cada); para todo papel e todo nome do mapa do teste (`read`→`PermRead` … `manage_project`→`PermManageProject`), o nome está na lista ⇔ `Role.Can`; e, para `p` de 1 a 255, se algum papel tem `p`, `p` tem nome no mapa (uma permissão nova no Go sem nome no JSON falha). Sabotagens: tirar `edit_monitors` de member no JSON; pôr `invite_basic` em member; renomear `manage_project` para `manage_projects`.
+  - `permissoes.test.ts`: `pode('viewer','edit_monitors') === false`; `pode('member','edit_monitors') === true`; `pode('manager','invite_basic') === true`; `pode('manager','manage_members') === false`; `pode('desconhecido','read') === true`; `pode('desconhecido','edit_monitors') === false`; `podeConvidarComo('manager','member')` e `('manager','viewer')` true; `('manager','manager')` false; `('owner','owner')` true; `('member','viewer')` false.
+  - Telas (Vitest + MSW, com `definirPapel`):
+    - viewer no painel: sem os links de cadastrar alvo e heartbeat;
+    - viewer no detalhe do alvo: sem Editar, Pausar, Apagar; member: os três aparecem;
+    - viewer: sem Reconhecer na faixa do alvo, nos incidentes e nos incidentes do heartbeat; member: aparece;
+    - viewer no heartbeat: sem Editar, Duplicar, Pausar, Sinalizar agora, rotacionar e limpar; member: aparecem;
+    - member nos canais: a lista aparece sem Novo canal, Reenviar verificação, Pausar e Apagar; manager: aparecem;
+    - member na status page: campos desabilitados e sem "Salvar"/"Criar status page"; manager: habilitados;
+    - viewer em `/projects/{id}/targets/new` e `/heartbeats/new`: "Sem permissão", e `chamadas('POST /targets')` continua 0.
+  - Sabotagem das telas: trocar o `usePode(...)` de cada uma por `true`.
+- [ ] **Step 2:** rodar e ver falhar (`go test ./internal/tenancy/ -run PainelPermissions` e os arquivos de teste das telas).
+- [ ] **Step 3:** implementar.
+- [ ] **Step 4:** ver passar, com as sabotagens revertidas; suíte do painel inteira.
 - [ ] **Step 5:** commit `feat(painel): ações por papel com a matriz do servidor`
 
 ### Task 11: cliente, esquemas e APIs falsas
 
-**Files:** `web/src/lib/api/{schemas,cliente,mensagens}.ts` (+ testes de contrato), `web/src/test/api-falsa.ts`, `web/src/test/fixtures.ts`, `web/e2e/api-imitada.ts`
+**Files:**
+- Go:
+  - `internal/httpapi/projecthandlers.go` (tira o `omitempty` de `PendingTitular` e o comentário que o explica: Minor 5 da revisão do 4.3);
+  - `internal/httpapi/projetos_contrato_internal_test.go` (caso novo e a chave `pending_titular` em `TestProjectContractListsLimits`), `testdata/contrato-projetos.json` (regravado);
+  - `internal/storage/queries/members.sql` (`ListProjectMembers` e `GetProjectMember` ganham `(m.user_id = p.pending_titular_id) IS TRUE AS pending_titular`), `internal/storage/db/` (`make generate`);
+  - `internal/tenancy/members.go` (`MemberView.PendingTitular bool`), `internal/tenancy/pgstore/members.go` (o mapeamento, ~l. 248);
+  - `internal/httpapi/memberhandlers.go` (`memberResponse.PendingTitular bool \`json:"pending_titular"\``), `membros_contrato_internal_test.go` (caso novo), `testdata/contrato-membros.json` (regravado); os comentários de `membros_contrato_internal_test.go` e `convites_contrato_internal_test.go` passam a dizer que o vitest lê o arquivo.
+- Painel:
+  - `web/src/lib/api/schemas.ts`, `cliente.ts`, `consultas.ts`, `mensagens.ts` e os testes `schemas-contrato.test.ts`, `cliente.test.ts`, `mensagens.test.ts`;
+  - `web/src/app/projeto.tsx` (`ProjetoAtual.transferenciaPendente`);
+  - `web/src/test/api-falsa.ts`, `web/src/test/fixtures.ts`, `web/e2e/api-imitada.ts`.
 
 **Interfaces:**
-- Produces: esquemas `Membro`, `ListaDeMembros`, `Convite`, `ListaDeConvites` (zod, não estritos); em `ApiDoProjeto`: `membros()`, `mudarPapel(userId, papel)`, `removerMembro(userId)`, `renomear(nome)`, `convites()`, `convidar({email, papel})`, `revogarConvite(id)`, e (4.3) `proporTransferencia`, `aceitarTransferencia`, `cancelarTransferencia`; na API da conta: `aceitarConvite(token)`; chaves de cache por projeto (`chaves.membros(projeto)`, `chaves.convites(projeto)`), no molde de `chaves-do-projeto.ts`; textos de erro dos códigos novos em `mensagens.ts`.
-- [ ] Passos TDD com os testes de contrato existentes (`schemas-contrato.test.ts`, `chaves-do-projeto.test.ts`) estendidos; commit `feat(painel): cliente de membros e convites`.
+- Esquemas (zod, não estritos):
+  - `Projeto.pending_titular: z.boolean().optional()`: o binário do 4.3, ainda no ar durante o release, só o manda quando é true;
+  - `Membro = { user_id: id, email: z.string(), role: Papel, is_titular: z.boolean(), pending_titular: z.boolean().optional(), joined_at: instante }`, `ListaDeMembros = { items: Membro[] }`;
+  - `Convite = { id, email: z.string(), role: Papel, created_at: instante, expires_at: instante }`, `ListaDeConvites`.
+- `ApiDoProjeto` ganha:
+  - `membros(sinal)`, `mudarPapel(userId, role)` (PATCH → `Membro`), `removerMembro(userId)` (DELETE → `null`; o próprio id = sair), `renomear(nome)` (PATCH `/projects/{id}` → `Projeto`);
+  - `convites(sinal)`, `convidar({ email, role })` (POST → `Convite`), `revogarConvite(id)`;
+  - `proporTransferencia(userId)` (POST, 202 → `null`), `aceitarTransferencia()` (POST → `Projeto`), `cancelarTransferencia()` (DELETE → `null`).
+- `Api` (conta) ganha `aceitarConvite(token)`: POST `/invitations/accept` → `Projeto`.
+- `chaves.doProjeto(id)` ganha `membros: [...p, 'members']` e `convites: [...p, 'invitations']`. Os hooks são `useMembros()` e `useConvites()`, este com `enabled: usePode('invite_basic')`: member e viewer recebem 403 e não pedem.
+- `ProjetoAtual.transferenciaPendente = projeto.pending_titular ?? false`.
+- `mensagens.ts` (texto provisório; o final sai da T12):
+  - `titular_protected`: "O titular do projeto não sai nem perde o papel. Transfira a titularidade antes.";
+  - `member_limit_reached`: "Limite de membros deste projeto atingido. Convites pendentes também contam.";
+  - `already_member`: "Esta pessoa já faz parte do projeto.";
+  - `invitation_other_account`: "Este convite foi enviado para outro e-mail. Saia e entre com a conta desse e-mail.";
+  - `titular_transfer_target`: "A titularidade só vai para quem já é dono do projeto, e o projeto padrão não é transferível.";
+  - `porCampo.role = { invalid: 'Escolha um papel.' }` e `porCampo.user_id = { invalid: 'Escolha um dono do projeto.' }`.
+- A API falsa espelha o servidor:
+  - `ProjetoFalso` ganha `membros`, `convites` e `pendente: string | null`;
+  - as 11 rotas (membros 3, renomear, convites 3, aceite, transferência 3) usam `estrita([...])` com os campos de cada DTO, a permissão por `pode`/`podeConvidarComo` e `exigeEmailConfirmado` no POST de convite e no aceite da transferência, que passam por `criacao`;
+  - erros: `titular_protected` (mexer no titular, ou ele sair); `member_limit_reached` (membros − 1 + convites ≥ `limits.members_per_project`, ou 3 sem `limits`); `already_member`; `titular_transfer_target` (alvo não owner, ou projeto padrão); `token_invalid`; `invitation_other_account` (e-mail do convite ≠ o da conta);
+  - rebaixar ou remover o pendente limpa `pendente`, como o `ClearTitularTransferTo` do 4.3; reconvidar o mesmo e-mail troca o pendente (mesma vaga);
+  - ajudantes para os testes: `adicionarMembro`, `adicionarConvite` (devolve o token) e `proporTransferenciaA`.
+- `api-imitada.ts`: GET de membros (titular e um viewer) e de convites (um pendente) no `NO_PROJETO`, para o axe da T13.
+
+- [ ] **Step 1: testes que falham**
+  - Go:
+    - `TestProjectContractListsLimits` passa a querer a chave `pending_titular` (falha com o `omitempty`);
+    - caso novo do contrato de projetos, "proposto a quem pede" (`PendingTitular: true`);
+    - `TestListMembersShowsPendingTitular` (pgstore, integração): o titular propõe a B (owner); `ListMembers` dá `PendingTitular` true só para B; depois de cancelar, false para todos. Sabotagem: a coluna devolve `false` fixo;
+    - caso novo do contrato de membros, "owner com transferência proposta".
+  - Painel:
+    - `schemas-contrato.test.ts` lê `contrato-membros.json` e `contrato-convites.json` como já lê o de projetos: o schema aceita; exatamente as chaves do schema; datas RFC 3339; os casos cobrem `is_titular` e `pending_titular` true e false. No de projetos, os casos cobrem `pending_titular` true e false. Sabotagem: tirar `pending_titular` de `Membro`;
+    - `cliente.test.ts`: cada método novo com método HTTP, caminho (ids com `caminho\`\``), corpo exato, `X-Requested-With` nas mutações e o esquema da resposta. O 202 de `proporTransferencia` resolve `undefined`. Sabotagem: `mudarPapel` mandando `{ papel }`;
+    - `mensagens.test.ts`: todo código de `ERROS_DO_SERVIDOR` tem texto próprio, ou seja, `mensagemDe(new ApiError(status, code, …))` é diferente de "Não foi possível concluir.". Sabotagem: apagar `already_member` de `porCodigo`;
+    - `web/src/test/api-falsa.membros.test.ts`: corpo com campo a mais dá 400; viewer em POST de convite dá 403; manager convidando manager dá 403; o 4º além do titular dá 409 `member_limit_reached`; aceite com outro e-mail dá 403 `invitation_other_account`; o token já usado dá 400 `token_invalid`; rebaixar o pendente limpa `pendente`. Sabotagem: tirar a conta de convites pendentes do teto.
+- [ ] **Step 2:** ver falhar.
+- [ ] **Step 3:** implementar. Regravar os contratos com `STILLON_REGRAVAR_CONTRATO=1` e conferir o `git diff` dos dois JSON.
+- [ ] **Step 4:** ver passar (Go e painel).
+- [ ] **Step 5:** `make test`; commit `feat(painel): cliente de membros, convites e transferência`. Abrir o **PR 4.4a** (T10 + T11), revisão final da branch e merge na vez.
 
 ### Task 12: proposta de design e textos (PARA para o dono)
 
-- [ ] **Step 1:** com as skills de design, propor **duas** opções para: página "Membros" (lista, papel, titular, convidar, pendentes, sair, renomear), página de aceite, rótulos em português dos quatro papéis com uma linha do que cada um pode, e o texto do e-mail de convite (T7). Mostrar em capturas do Storybook-equivalente local ou num HTML estático na pasta de rascunho, sem publicar.
-- [ ] **Step 2:** **parar** e pedir a decisão D6. Registrar a escolha no ledger.
+Skills: `frontend-design:frontend-design`, `design-skills:ux-writing`, `design-skills:interaction-design`, `design-skills:design-systems` (reusar `web/src/components/ui`: `Botao` em pirâmide, `Campo`/`Selecao`/`Opcao`, `Dialogo`/`Confirmar`, `Menu`, `ControleSegmentado`, `useAvisar`), `design-skills:accessibility-audit` (WCAG 2.2 AA). Dentro da spec do redesign ([`2026-10-14-redesign-painel-design.md`](../specs/2026-10-14-redesign-painel-design.md), § Sistema e § Componentes base): Fraunces 600 nos títulos, Inter no resto, índigo `oklch(0.47 0.15 270)` (claro) e `oklch(0.76 0.11 270)` (escuro), raio 8 px, selos em pílula, 44 px de alvo de toque, destrutivo terciário até a confirmação, espaçamento 4/8/12/16/24/32/48/64.
+
+- [ ] **Step 1: maquetes.** HTML estático com os tokens reais de `web/src/index.css`, em `.superpowers/brainstorm/pr4-4-membros/` do repositório principal (fora do Git, como as do redesign), a 400 e 1280 px, nos temas claro e escuro. O dono abre numa guia nova do Chrome já aberto. Nada é publicado. Duas opções onde a pergunta pede. Telas:
+  1. **Equipe** (owner): nome do projeto com renomear; lista (e-mail, papel, selo "Titular", ações por linha); "Convidar" e o diálogo (e-mail e papel, uma linha do que cada papel pode); convites pendentes (e-mail, papel, "vence em", Reenviar, Revogar); vagas (ex.: "2 de 3"); "Sair do projeto" para quem não é titular. Variações: manager (convida só os dois papéis de baixo, sem mudar papel); member e viewer (só a lista e Sair). Estados: só o titular, teto atingido, carregando e erro.
+  2. **Transferência**:
+     - do titular: escolher um dono, confirmação dizendo que os monitores passam a contar na cota de quem recebe, estado "proposta a …" com Cancelar;
+     - de quem recebe: o pedido com Aceitar e Recusar, e os erros de cota de quem recebe. O aceite confere projetos, alvos, heartbeats, canais, regras por host e, por último, o teto de membros; uma recusa por vez.
+  3. **Aceite do convite** (`/invite/accept`): pronto ("Você está entrando como ana@…"), enviando, inválido ou vencido, outra conta (com Sair) e sem token. Sem prévia do projeto: a API não tem rota de espiar o convite (pergunta 8).
+  4. **Sem permissão** (rota direta, T10) e as telas da T10 em modo leitura (canais e status page para member).
+- [ ] **Step 2: textos.** Uma tabela com todo texto novo da 4.4a e da 4.4b: botões, títulos, confirmações, vazios, os 5 erros de `mensagens.ts`, os erros de cota no contexto de quem recebe a transferência, os rótulos dos quatro papéis com uma linha cada e o selo do titular. Mais o e-mail do convite como está hoje (`account.EmailDeConvite`, com o rascunho `rotulosDosPapeis` dono/gerente/membro/leitor), para aprovar ou trocar.
+- [ ] **Step 3: perguntas ao dono (D6).** Cada uma com opções e recomendação:
+
+  | # | Pergunta | Opções | Recomendo |
+  |---|---|---|---|
+  | D6-1 | Onde fica a entrada da Equipe | (A) item "Equipe e projeto" no menu do seletor de projeto; a barra do celular fica com 5 abas. (B) 6ª aba, com grade de 6 no celular (~60 px por aba a 360 px). (C) dentro da aba Conta | (A): a tela é rara e as 5 abas são do redesign aprovado |
+  | D6-2 | Uma página para o projeto ou duas | (A) uma página `/projects/:id/members`, "Equipe e projeto": nome, equipe, convites, titularidade e, no 6.5, a zona de perigo "Excluir projeto". (B) Equipe separada de "Configurações do projeto" (renomear, transferir, excluir) | (A): menos rota, e o 6.5 só acrescenta uma seção |
+  | D6-3 | Rótulos dos papéis | (A) Proprietário, Gestor, Editor, Leitor. (B) Dono, Gerente, Membro, Leitor (o rascunho do e-mail). (C) os nomes em inglês | (A): "Membro" confunde, porque todo mundo da equipe é membro |
+  | D6-4 | Mudar papel e remover | (A) `Selecao` inline na linha, que muda na hora. (B) menu "⋯" por linha com "Mudar papel…" (diálogo) e "Remover" (confirmação) | (B): sem troca acidental, cabe no celular e segue a pirâmide |
+  | D6-5 | Moldura do aceite | (A) dentro do Layout, com abas, como Configurações. (B) cartão centrado sem abas, no estilo do login | (B): tarefa única e foco |
+  | D6-6 | Onde quem recebe vê a proposta de transferência | (A) faixa no topo das telas do projeto proposto. (B) só na página Equipe, com selo no seletor de projeto | (A): uma proposta parada não pode passar despercebida |
+  | D6-7 | Mostrar as vagas | (A) sempre ("2 de 3 vagas", de `limits.members_per_project`; some sem `limits`). (B) só ao chegar no teto | (A) |
+  | D6-8 | Prévia do convite antes de aceitar | (A) não: a tela mostra só o e-mail da conta. (B) rota nova que espia projeto e quem convidou pelo token: backend, balde e anti-enumeração novos | (A) agora |
+
+- [ ] **Step 4: rodada conjunta com o 6.5.** O D1 do PR 6 (Task 10: exportar, excluir conta e excluir projeto) para no design como esta task. "Excluir projeto" mora na mesma página da D6-2, e a exclusão bloqueada aponta para a transferência. Recomendo levar as duas maquetes numa rodada só. Se o 6.5 não estiver pronto, a 4.4 não espera.
+- [ ] **Step 5: PARAR.** Pedir D6 ao dono. Registrar no ledger cada resposta (`Ruling: D6-n = … (dono, data)`) e os textos aprovados. T13 e T14 só começam depois disso.
 
 ### Task 13: página Membros
 
-**Files:** `web/src/features/membros/PaginaMembros.tsx`, `ListaDeMembros.tsx`, `DialogoConvidar.tsx`, `ConvitesPendentes.tsx`, `RenomearProjeto.tsx` (+ testes); `web/src/app/rotas.tsx` (`projects/:projectId/members`)
+> Depende de D6. O texto abaixo segue as recomendações; o implementador ajusta ao que o dono decidir, sem mudar os testes de comportamento.
 
-- [ ] **Step 1: testes que falham** (Vitest + MSW): owner vê o seletor de papel e "Remover" em todos menos no titular; manager vê "Convidar" só com member/viewer no seletor; viewer vê só a lista; "Sair do projeto" pede confirmação e, ao sair, invalida `chaves.projetos` e navega para `/` (que escolhe outro projeto); 409 `member_limit_reached` mostra o texto do teto sem fechar o diálogo; reenviar um pendente chama `convidar` com o mesmo e-mail; renomear atualiza o seletor de projeto.
-- [ ] **Step 2–4:** ver falhar, implementar com os componentes de `web/src/components/ui`, ver passar; `e2e/a11y.spec.ts` ganha a página.
-- [ ] **Step 5:** commit `feat(painel): página de membros, convites e renomear projeto`
+**Files:**
+- Create: `web/src/features/membros/PaginaMembros.tsx`, `ListaDeMembros.tsx`, `DialogoConvidar.tsx`, `ConvitesPendentes.tsx`, `RenomearProjeto.tsx`, `Titularidade.tsx`, `rotulos.ts` (os rótulos aprovados dos papéis), com os testes; `web/src/features/membros/PedidoDeTransferencia.tsx` (D6-6)
+- Modify:
+  - `web/src/app/rotas.tsx` (`projects/:projectId/members`);
+  - `web/src/app/projeto.tsx` (`SECOES` ganha `/members`: trocar de projeto fica na Equipe);
+  - `web/src/app/SeletorDeProjeto.tsx` (D6-1 A) ou `Layout.tsx` (D6-1 B);
+  - `web/src/lib/api/mensagens.ts` (os textos aprovados);
+  - `internal/account/emails.go` (`rotulosDosPapeis` aprovados; saem os comentários "Rascunho até a T12") e `internal/account/convite_email_test.go`;
+  - `web/e2e/a11y.spec.ts` (`ROTAS` ganha `${P}/members`; o diálogo aberto também passa no axe), `web/e2e/abas.spec.ts` se a navegação mudar.
+
+- [ ] **Step 1: testes que falham** (Vitest + MSW, com os ajudantes da T11)
+  1. Owner vê "Mudar papel" e "Remover" em todos, menos no titular. A linha do titular tem o selo e nenhuma ação. Sabotagem: tirar o filtro `!is_titular`.
+  2. Manager vê "Convidar", e o diálogo oferece só os dois papéis de baixo; não vê "Mudar papel" nem "Remover" de outros; vê os pendentes. Sabotagem: listar os quatro papéis.
+  3. Member e viewer veem só a lista e "Sair do projeto"; `chamadas('GET /projects/:projectId/invitations')` é 0. Sabotagem: `useConvites` sem o `enabled`.
+  4. O titular não vê "Sair".
+  5. "Sair" pede confirmação; confirmar faz DELETE em `/members/{meu id}`, invalida `chaves.projetos` e navega para `/`. Sabotagem: não invalidar (o seletor ainda mostra o projeto).
+  6. 409 `member_limit_reached` mostra o texto dentro do diálogo, que continua aberto com o e-mail digitado; o mesmo para `already_member`.
+  7. "Reenviar" num pendente faz POST `/invitations` com `{ email, role }` iguais aos do pendente.
+  8. "Revogar" pede confirmação e faz DELETE em `/invitations/{id}`.
+  9. Renomear faz PATCH `{ name }`, e o seletor de projeto mostra o nome novo. 400 `name: too_long` mostra o erro no campo.
+  10. Titularidade (titular): só owners não titulares são destino; no projeto padrão a seção não oferece transferir; propor faz POST `{ user_id }`; depois, a linha do pendente diz "transferência proposta" e "Cancelar" faz DELETE. Sabotagem: oferecer managers.
+  11. Quem recebe (`pending_titular: true`): vê o pedido; Aceitar faz POST `/titular-transfer/accept` e invalida projetos e membros; 409 `target_limit_reached` mostra o texto de quem recebe; Recusar faz DELETE.
+  12. Rebaixar o pendente: a lista relida não mostra mais a pendência.
+- [ ] **Step 2–4:** ver falhar, implementar com `web/src/components/ui`, ver passar; axe e passada de teclado (`a11y.spec.ts`) nos dois temas e a 400 px.
+- [ ] **Step 5:** `go test ./internal/account/`; commit `feat(painel): página de equipe, convites, renomear e transferência`
 
 ### Task 14: aceite do convite
 
-**Files:** `web/src/features/convites/CapturaDoConvite.tsx`, `PaginaAceitarConvite.tsx` (+ testes); `web/src/app/rotas.tsx`
+> Depende de D6 (D6-5, D6-8 e os textos).
+
+**Files:** `web/src/features/convites/CapturaDoConvite.tsx`, `PaginaAceitarConvite.tsx` (+ testes); `web/src/app/rotas.tsx`; `web/e2e/projetos.spec.ts`, `web/e2e/a11y.spec.ts`, `web/e2e/api-imitada.ts`
 
 **Interfaces:**
-- `/invite` fica **fora** de `ExigirSessao`: lê `#token=`, guarda em `sessionStorage['stillon.convite']`, limpa a barra com `history.replaceState` e navega para `/invite/accept`, que fica **dentro** de `ExigirSessao`. Assim o `?next=/invite/accept` do login devolve a pessoa sem perder o token, que nunca vai para a query.
-- `/invite/accept`: botão "Aceitar convite" (sem POST automático); sucesso apaga o token guardado, invalida `chaves.projetos` e navega para `/projects/{id}/`; `token_invalid` mostra "convite inválido ou vencido; peça outro"; `invitation_other_account` mostra "este convite foi enviado para outro e-mail; saia e entre com a conta dele", com o botão de sair. Sem token guardado: a mesma tela do inválido.
-- Sem sessão e com o cadastro ligado (`signup-config`), a tela de login já oferece "Criar conta" (PR 3b); nada novo aqui.
-- [ ] **Step 1: testes que falham:** o token nunca aparece em `location.search` nem em pedido GET; recarregar `/invite/accept` mantém o token; o duplo clique em "Aceitar" faz um POST só; os dois erros mostram os textos aprovados na T12.
-- [ ] **Step 2–4:** ver falhar, implementar, ver passar; jornada em `web/e2e/projetos.spec.ts` com `api-imitada.ts` (convidar, sair, entrar como convidado, aceitar, ver o projeto) e axe.
-- [ ] **Step 5:** `cd web && npm test && npm run typecheck && npm run lint`; Playwright das specs afetadas; commit `feat(painel): aceite de convite pelo link`. Abrir o PR 4.4.
+- `/invite` fica **fora** de `ExigirSessao`, ao lado de `/confirm-email`. Ele lê `#token=`, guarda em `sessionStorage['stillon.convite']` (com try/catch: sem storage, segue com o token em memória e avisa que recarregar perde o link), limpa a barra com `history.replaceState` e navega para `/invite/accept`.
+- `/invite/accept` fica **dentro** de `ExigirSessao`, fora do `Layout` se D6-5 = B. O `?next=/invite/accept` do login (o `destinoSeguro` já aceita) devolve a pessoa sem perder o token, que nunca vai para a query.
+- A tela tem o botão "Aceitar convite", sem POST automático. No sucesso, apaga o token guardado, invalida `chaves.projetos` e navega para `/projects/{id}/`. Mostra `token_invalid`, `invitation_other_account` (com o botão Sair) e 429 com os textos aprovados. Sem token guardado, mostra a mesma tela do inválido.
+
+- [ ] **Step 1: testes que falham**
+  1. `/invite#token=abc` deixa `sessionStorage['stillon.convite'] === 'abc'`, `location.hash === ''` e o caminho em `/invite/accept`.
+  2. Anônimo em `/invite#token=abc` cai no login com `?next=%2Finvite%2Faccept`, e "abc" não aparece em `location.search`.
+  3. Recarregar `/invite/accept` mantém o token.
+  4. Duplo clique em "Aceitar" faz um POST só (`chamadas('POST /invitations/accept') === 1`). Sabotagem: tirar a trava de envio único (`useEnvioUnico`).
+  5. No sucesso, o token sai do storage e a pessoa navega para o projeto.
+  6. `token_invalid` e `invitation_other_account` mostram os textos aprovados; o Sair chama `sessao.sair`.
+  7. Sem token, a tela do inválido aparece e nenhum POST sai.
+  8. Nenhum pedido da sessão leva "abc" na URL (espião do MSW em todo `request.url`).
+- [ ] **Step 2–4:** ver falhar, implementar, ver passar. A jornada em `web/e2e/projetos.spec.ts` com `api-imitada.ts`: o owner convida, o convidado abre o link, entra, aceita e vê o projeto. O axe roda nos estados da tela.
+- [ ] **Step 5:** `cd web && npm test && npm run typecheck && npm run lint`; Playwright das specs afetadas (um pesado por vez); `make test`; commit `feat(painel): aceite de convite pelo link`. Abrir o **PR 4.4b** (T13 + T14).
 
 ---
 

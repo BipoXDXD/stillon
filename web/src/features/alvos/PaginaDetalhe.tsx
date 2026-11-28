@@ -17,6 +17,7 @@ import { naoEncontrado } from '@/lib/api/http'
 import { mensagemDe, textoDoErroDeCheck } from '@/lib/api/mensagens'
 import type { Serie } from '@/lib/api/schemas'
 import { ATRASO_DO_SINAL_MS, useAposUmTempo } from '@/lib/atraso'
+import { usePode } from '@/lib/permissoes'
 import { dataHora, fuso, milissegundos, porcento } from '@/lib/format'
 import { NavegacaoDaLista } from '@/features/painel/NavegacaoDaLista'
 import { CertificadoDoAlvo } from './CertificadoDoAlvo'
@@ -116,6 +117,7 @@ function DetalheDoAlvo({ id }: { id: string }) {
   const chave = useChavesDoProjeto()
   const qc = useQueryClient()
   const navegar = useNavigate()
+  const podeEditar = usePode('edit_monitors')
   const noProjeto = useRotaDoProjeto()
   const avisar = useAvisar()
   const alvo = useAlvo(id)
@@ -220,17 +222,19 @@ function DetalheDoAlvo({ id }: { id: string }) {
                 </p>
                 <ListaDeTags tags={a.tags} />
               </div>
-              <div className="flex flex-wrap gap-2">
-                <Botao tipo="secundario" asChild>
-                  <Link to={noProjeto(`/targets/${id}/edit`)}>Editar</Link>
-                </Botao>
-                <Botao tipo="terciario" aria-disabled={alternando || undefined} onClick={() => void alternar(!a.enabled)}>
-                  {a.enabled ? 'Pausar' : 'Retomar'}
-                </Botao>
-                <Botao tipo="terciario" onClick={() => setApagando(true)}>
-                  Apagar
-                </Botao>
-              </div>
+              {podeEditar && (
+                <div className="flex flex-wrap gap-2">
+                  <Botao tipo="secundario" asChild>
+                    <Link to={noProjeto(`/targets/${id}/edit`)}>Editar</Link>
+                  </Botao>
+                  <Botao tipo="terciario" aria-disabled={alternando || undefined} onClick={() => void alternar(!a.enabled)}>
+                    {a.enabled ? 'Pausar' : 'Retomar'}
+                  </Botao>
+                  <Botao tipo="terciario" onClick={() => setApagando(true)}>
+                    Apagar
+                  </Botao>
+                </div>
+              )}
             </div>
           </div>
           <ErroDoFormulario>{erro}</ErroDoFormulario>

@@ -14,7 +14,7 @@ import {
   TOTP_OK,
 } from '@/test/api-falsa'
 import versaoDosTermos from '@/features/legal/versao.json'
-import { alvo, canal } from '@/test/fixtures'
+import { alvo, canal, convite, membro, projeto } from '@/test/fixtures'
 import { buscarDoTeste, novaSessao, usarApiFalsa } from '@/test/ambiente'
 import { servidor } from '@/test/setup'
 import { ApiError, type Buscar } from './http'
@@ -881,6 +881,10 @@ describe('o id hostil vai codificado em toda rota com id', () => {
     ['reenviarVerificacao', (a) => a.doProjeto('p').reenviarVerificacao(ID), `POST /api/v1/projects/p/channels/${SEG}/verify/resend`],
     ['pausarCanal', (a) => a.doProjeto('p').pausarCanal(ID, true), `PATCH /api/v1/projects/p/channels/${SEG}`],
     ['alterarPagina', (a) => a.doProjeto('p').alterarPagina(ID, {}), `PATCH /api/v1/projects/p/status-pages/${SEG}`],
+    ['mudarPapel', (a) => a.doProjeto('p').mudarPapel(ID, 'viewer'), `PATCH /api/v1/projects/p/members/${SEG}`],
+    ['removerMembro', (a) => a.doProjeto('p').removerMembro(ID), `DELETE /api/v1/projects/p/members/${SEG}`],
+    ['revogarConvite', (a) => a.doProjeto('p').revogarConvite(ID), `DELETE /api/v1/projects/p/invitations/${SEG}`],
+    ['renomear', (a) => a.doProjeto(ID).renomear('Loja'), `PATCH /api/v1/projects/${SEG}`],
     ['encerrarSessao', (a) => a.encerrarSessao(ID), `DELETE /api/v1/sessions/${SEG}`],
   ]
 
@@ -1033,4 +1037,140 @@ describe('recursos vão para o projeto', () => {
     const { api } = await logado()
     await expect(api.doProjeto('nao-existe').alvos()).rejects.toMatchObject({ code: 'not_found' })
   })
+})
+
+// A equipe (PR 4): método, caminho, corpo exato e o esquema da resposta.
+// Sabotagem: mudarPapel mandando { papel } → o corpo não bate.
+describe('a equipe e a titularidade', () => {
+  type Api = ReturnType<typeof novaSessao>['api']
+  const M = membro({ user_id: 'u2', role: 'manager' })
+  const C = convite({ id: 'c1' })
+  const P = projeto({ id: 'p1', is_default: false })
+
+  const casos: {
+    nome: string
+    chamar: (api: Api) => Promise<unknown>
+    rota: string
+    corpo?: unknown
+    resposta: { status: number; json?: unknown }
+    devolve: unknown
+  }[] = [
+    {
+      nome: 'membros',
+      chamar: (a) => a.doProjeto('p1').membros(),
+      rota: 'GET /api/v1/projects/p1/members',
+      resposta: { status: 200, json: { items: [M] } },
+      devolve: { items: [M] },
+    },
+    {
+      nome: 'mudarPapel',
+      chamar: (a) => a.doProjeto('p1').mudarPapel('u2', 'manager'),
+      rota: 'PATCH /api/v1/projects/p1/members/u2',
+      corpo: { role: 'manager' },
+      resposta: { status: 200, json: M },
+      devolve: M,
+    },
+    {
+      nome: 'removerMembro',
+      chamar: (a) => a.doProjeto('p1').removerMembro('u2'),
+      rota: 'DELETE /api/v1/projects/p1/members/u2',
+      resposta: { status: 204 },
+      devolve: undefined,
+    },
+    {
+      nome: 'renomear',
+      chamar: (a) => a.doProjeto('p1').renomear('Loja'),
+      rota: 'PATCH /api/v1/projects/p1',
+      corpo: { name: 'Loja' },
+      resposta: { status: 200, json: P },
+      devolve: P,
+    },
+    {
+      nome: 'convites',
+      chamar: (a) => a.doProjeto('p1').convites(),
+      rota: 'GET /api/v1/projects/p1/invitations',
+      resposta: { status: 200, json: { items: [C] } },
+      devolve: { items: [C] },
+    },
+    {
+      nome: 'convidar',
+      chamar: (a) => a.doProjeto('p1').convidar({ email: 'x@exemplo.com', role: 'viewer' }),
+      rota: 'POST /api/v1/projects/p1/invitations',
+      corpo: { email: 'x@exemplo.com', role: 'viewer' },
+      resposta: { status: 201, json: C },
+      devolve: C,
+    },
+    {
+      nome: 'revogarConvite',
+      chamar: (a) => a.doProjeto('p1').revogarConvite('c1'),
+      rota: 'DELETE /api/v1/projects/p1/invitations/c1',
+      resposta: { status: 204 },
+      devolve: undefined,
+    },
+    {
+      nome: 'proporTransferencia',
+      chamar: (a) => a.doProjeto('p1').proporTransferencia('u2'),
+      rota: 'POST /api/v1/projects/p1/titular-transfer',
+      corpo: { user_id: 'u2' },
+      resposta: { status: 202 },
+      devolve: undefined,
+    },
+    {
+      nome: 'aceitarTransferencia',
+      chamar: (a) => a.doProjeto('p1').aceitarTransferencia(),
+      rota: 'POST /api/v1/projects/p1/titular-transfer/accept',
+      resposta: { status: 200, json: P },
+      devolve: P,
+    },
+    {
+      nome: 'cancelarTransferencia',
+      chamar: (a) => a.doProjeto('p1').cancelarTransferencia(),
+      rota: 'DELETE /api/v1/projects/p1/titular-transfer',
+      resposta: { status: 204 },
+      devolve: undefined,
+    },
+    {
+      nome: 'aceitarConvite',
+      chamar: (a) => a.aceitarConvite('tok'),
+      rota: 'POST /api/v1/invitations/accept',
+      corpo: { token: 'tok' },
+      resposta: { status: 200, json: P },
+      devolve: P,
+    },
+  ]
+
+  function capturar(resposta: { status: number; json?: unknown }) {
+    const pedidos: { rota: string; init: RequestInit }[] = []
+    const buscar = (entrada: string, init: RequestInit) => {
+      pedidos.push({ rota: `${init.method ?? 'GET'} ${entrada}`, init })
+      return Promise.resolve(
+        resposta.json === undefined ? new Response(null, { status: resposta.status }) : Response.json(resposta.json, { status: resposta.status }),
+      )
+    }
+    return { pedidos, ...novaSessao({ buscar }) }
+  }
+
+  it.each(casos)('$nome: método, caminho, corpo e cabeçalho', async ({ chamar, rota, corpo, resposta }) => {
+    const { pedidos, api } = capturar(resposta)
+    await chamar(api)
+    expect(pedidos.map((p) => p.rota)).toEqual([rota])
+    const init = pedidos[0]!.init
+    expect(init.body === undefined ? undefined : JSON.parse(String(init.body))).toEqual(corpo)
+    const xrw = new Headers(init.headers).get('X-Requested-With')
+    expect(xrw).toBe(rota.startsWith('GET ') ? null : 'stillon')
+  })
+
+  it.each(casos)('$nome: devolve a resposta lida pelo esquema', async ({ chamar, resposta, devolve }) => {
+    const { api } = capturar(resposta)
+    await expect(chamar(api)).resolves.toEqual(devolve)
+  })
+
+  // A resposta fora do esquema falha alto; o 202 e os 204 não leem corpo.
+  it.each(casos.filter((c) => c.resposta.json !== undefined))(
+    '$nome: resposta fora do esquema é unexpected',
+    async ({ chamar, resposta }) => {
+      const { api } = capturar({ status: resposta.status, json: { outra: 'coisa' } })
+      await expect(chamar(api)).rejects.toMatchObject({ code: 'unexpected' })
+    },
+  )
 })

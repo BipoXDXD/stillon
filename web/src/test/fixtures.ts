@@ -2,12 +2,14 @@ import type { z } from 'zod'
 import type {
   Alvo,
   Canal,
+  Convite,
   EventoDeHeartbeat,
   Heartbeat,
   Incidente,
   IncidenteDeHeartbeat,
   ItemDoResumo,
   Me,
+  Membro,
   PaginaDeStatus,
   Projeto,
   Sessao,
@@ -163,4 +165,27 @@ export function pagina(p: Partial<z.input<typeof PaginaDeStatus>> = {}): z.input
 
 export function projeto(p: Partial<z.input<typeof Projeto>> = {}): z.input<typeof Projeto> {
   return { id: 'proj-padrao', name: 'Padrão', is_default: true, role: 'owner', created_at: '2026-09-01T10:00:00Z', ...p }
+}
+
+export function membro(p: Partial<z.input<typeof Membro>> = {}): z.input<typeof Membro> {
+  return {
+    user_id: 'usr-1',
+    email: 'pessoa@exemplo.com',
+    role: 'viewer',
+    is_titular: false,
+    pending_titular: false,
+    joined_at: '2026-09-10T10:00:00Z',
+    ...p,
+  }
+}
+
+export function convite(p: Partial<z.input<typeof Convite>> = {}): z.input<typeof Convite> {
+  return {
+    id: 'conv-1',
+    email: 'convidada@exemplo.com',
+    role: 'member',
+    created_at: '2026-09-20T10:00:00Z',
+    expires_at: '2026-09-27T10:00:00Z',
+    ...p,
+  }
 }

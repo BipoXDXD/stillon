@@ -88,11 +88,42 @@ export const Projeto = z.object({
   role: Papel,
   created_at: instante,
   limits: LimitesDoProjeto.optional(),
+  // A titularidade foi proposta a quem pede (PR 4.3). Opcional: o binário do
+  // 4.3, ainda no ar durante o release, só o manda quando é true.
+  pending_titular: z.boolean().optional(),
 })
 export type Projeto = z.infer<typeof Projeto>
 
 export const ListaDeProjetos = z.object({ items: z.array(Projeto) })
 export type ListaDeProjetos = z.infer<typeof ListaDeProjetos>
+
+// Um membro do projeto (memberResponse). pending_titular: a titularidade foi
+// proposta a ele; opcional pelo mesmo release do Projeto.
+export const Membro = z.object({
+  user_id: id,
+  email: z.string(),
+  role: Papel,
+  is_titular: z.boolean(),
+  pending_titular: z.boolean().optional(),
+  joined_at: instante,
+})
+export type Membro = z.infer<typeof Membro>
+
+export const ListaDeMembros = z.object({ items: z.array(Membro) })
+export type ListaDeMembros = z.infer<typeof ListaDeMembros>
+
+// Um convite pendente (invitationResponse). O token só vai no e-mail.
+export const Convite = z.object({
+  id,
+  email: z.string(),
+  role: Papel,
+  created_at: instante,
+  expires_at: instante,
+})
+export type Convite = z.infer<typeof Convite>
+
+export const ListaDeConvites = z.object({ items: z.array(Convite) })
+export type ListaDeConvites = z.infer<typeof ListaDeConvites>
 
 export const RegraDeConteudo = z.object({
   mode: z.enum(['contains', 'not_contains', 'json_equals']),

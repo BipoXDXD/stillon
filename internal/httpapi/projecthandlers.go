@@ -34,11 +34,8 @@ type projectResponse struct {
 	Role      string         `json:"role"`
 	CreatedAt time.Time      `json:"created_at"`
 	Limits    limitsResponse `json:"limits"`
-	// PendingTitular: a titularidade foi proposta a quem pede (PR 4.3). Só
-	// sai quando true: o schema Projeto do painel ainda não tem o campo, e o
-	// teste de contrato dele exige exatamente as chaves do schema (o 4.4 o
-	// acrescenta).
-	PendingTitular bool `json:"pending_titular,omitempty"`
+	// PendingTitular: a titularidade foi proposta a quem pede (PR 4.3).
+	PendingTitular bool `json:"pending_titular"`
 }
 
 // limitsResponse são as cotas do titular do projeto (tenancy.Limites): o
