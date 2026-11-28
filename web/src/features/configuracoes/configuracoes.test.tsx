@@ -1,6 +1,6 @@
 import { fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { http, HttpResponse } from 'msw'
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, onTestFinished, vi } from 'vitest'
 import { CODIGOS_NOVOS, RECUPERACAO_OK, rotacao, SEGREDO_NOVO, TOTP_NOVO, TOTP_OK } from '@/test/api-falsa'
 import { sessao as familia, me } from '@/test/fixtures'
 import { renderizarPainel, SENHA } from '@/test/renderizar'
@@ -1039,6 +1039,28 @@ describe('envio em voo nos diálogos do 2FA', () => {
     return { ...p, estado }
   }
 
+  // O prazo de rede vem de AbortSignal.timeout. O teste decide quando o
+  // sinal vence e preserva os prazos das outras requisições.
+  const PRAZO_CONTROLADO_MS = 100
+  function segurarAteOPrazo(caminho: string) {
+    const chegou = portao()
+    servidor.use(http.post(`*/api/v1${caminho}`, () => {
+      chegou.soltar()
+      return new Promise<never>(() => {})
+    }))
+    const prazo = new AbortController()
+    const timeoutNativo = AbortSignal.timeout.bind(AbortSignal)
+    const timeout = vi.spyOn(AbortSignal, 'timeout').mockImplementation(
+      (ms) => ms === PRAZO_CONTROLADO_MS ? prazo.signal : timeoutNativo(ms),
+    )
+    const expirar = () => prazo.abort(new DOMException('Prazo vencido.', 'TimeoutError'))
+    onTestFinished(() => {
+      expirar()
+      timeout.mockRestore()
+    })
+    return { chegou: chegou.aberto, expirar }
+  }
+
   async function abrirTroca(r: Awaited<ReturnType<typeof renderizarPainel>>) {
     await r.usuario.click(await screen.findByRole('button', { name: 'Trocar autenticador' }))
     const dialogo = await screen.findByRole('dialog', { name: 'Trocar o autenticador' })
@@ -1208,19 +1230,22 @@ describe('envio em voo nos diálogos do 2FA', () => {
     ['do app', TOTP_OK, false],
     ['de recuperação', RECUPERACAO_OK, true],
   ] as const)('troca: rotate que não responde no prazo destrava o diálogo (código %s)', async (_, codigo, gasto) => {
-    const r = await renderizarPainel('/settings', { prazoDoConfirmMs: 100 })
+    const r = await renderizarPainel('/settings', { prazoDoConfirmMs: PRAZO_CONTROLADO_MS })
     r.falsa.estado.totpLigado = true
     await r.cliente.refetchQueries()
-    servidor.use(http.post('*/api/v1/auth/totp/rotate', () => new Promise<never>(() => {})))
     await r.usuario.click(await screen.findByRole('button', { name: 'Trocar autenticador' }))
     const dialogo = await screen.findByRole('dialog', { name: 'Trocar o autenticador' })
     await r.usuario.type(within(dialogo).getByLabelText('Sua senha'), SENHA)
     await r.usuario.type(within(dialogo).getByLabelText('Código do autenticador'), codigo)
-    await r.usuario.click(within(dialogo).getByRole('button', { name: 'Continuar' }))
-    await tique()
-    // Travado enquanto espera: o Esc não fecha.
+    const prazo = segurarAteOPrazo('/auth/totp/rotate')
+    const continuar = within(dialogo).getByRole('button', { name: 'Continuar' })
+    await r.usuario.click(continuar)
+    await prazo.chegou
+    expect(continuar).toHaveAttribute('aria-disabled', 'true')
     await r.usuario.keyboard('{Escape}')
     expect(screen.getByRole('dialog')).toBe(dialogo)
+
+    prazo.expirar()
     const alerta = await within(dialogo).findByRole('alert', {}, { timeout: 3000 })
     expect(alerta).toHaveTextContent('Sem conexão com o servidor')
     expect(alerta.textContent?.includes('pode ter sido consumido')).toBe(gasto)
@@ -1233,7 +1258,7 @@ describe('envio em voo nos diálogos do 2FA', () => {
   // perdida da ativação → "Sem conexão…"; tirar o sinal do totpConfirmar →
   // o diálogo continua travado.
   it('ativação: confirm sem rede ou sem resposta no prazo diz que não se sabe se ativou', async () => {
-    const r = await renderizarPainel('/settings', { prazoDoConfirmMs: 100 })
+    const r = await renderizarPainel('/settings', { prazoDoConfirmMs: PRAZO_CONTROLADO_MS })
     await r.usuario.click(await screen.findByRole('button', { name: 'Ativar' }))
     const dialogo = await screen.findByRole('dialog')
     await r.usuario.type(within(dialogo).getByLabelText('Sua senha'), SENHA)
@@ -1242,15 +1267,16 @@ describe('envio em voo nos diálogos do 2FA', () => {
     servidor.use(http.post('*/api/v1/auth/totp/confirm', () => HttpResponse.error(), { once: true }))
     await r.usuario.click(within(dialogo).getByRole('button', { name: 'Ativar' }))
     expect(await within(dialogo).findByRole('alert')).toHaveTextContent(ATIVACAO_INCERTA)
-    servidor.use(http.post('*/api/v1/auth/totp/confirm', () => new Promise<never>(() => {})))
-    await r.usuario.click(within(dialogo).getByRole('button', { name: 'Ativar' }))
-    await tique()
-    // Travado enquanto espera: o Esc não fecha.
+    const prazo = segurarAteOPrazo('/auth/totp/confirm')
+    const ativar = within(dialogo).getByRole('button', { name: 'Ativar' })
+    await r.usuario.click(ativar)
+    await prazo.chegou
+    expect(ativar).toHaveAttribute('aria-disabled', 'true')
     await r.usuario.keyboard('{Escape}')
     expect(screen.getByRole('dialog')).toBe(dialogo)
-    await waitFor(() => expect(within(dialogo).getByRole('button', { name: 'Ativar' })).not.toHaveAttribute('aria-disabled'), {
-      timeout: 3000,
-    })
+
+    prazo.expirar()
+    await waitFor(() => expect(ativar).not.toHaveAttribute('aria-disabled'), { timeout: 3000 })
     expect(within(dialogo).getByRole('alert')).toHaveTextContent(ATIVACAO_INCERTA)
     await r.usuario.keyboard('{Escape}')
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())

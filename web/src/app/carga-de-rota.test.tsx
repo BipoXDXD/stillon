@@ -203,15 +203,28 @@ describe('espera por uma rota sob demanda', () => {
       // Sem resposta, o MSW passa ao handler da falsa, que responde.
       antes: () => servidor.use(http.get('*/api/v1/projects', async () => { await projetosPresos })),
     })
-    void r.router.navigate('/settings')
-    await waitFor(() => expect(r.router.state.navigation.state).toBe('loading'))
-    soltarProjetos()
-    await waitFor(() => expect(r.falsa.chamadas('GET /projects')).toBe(1))
-    // Um tempo para o redirecionamento, se fosse disparar, disparar.
-    await act(() => new Promise((resolve) => setTimeout(resolve, 100)))
-    soltarChunk()
-    await waitFor(() => expect(r.router.state.navigation.state).toBe('idle'))
-    expect(r.router.state.location.pathname).toBe('/settings')
+    try {
+      await screen.findByRole('button', { name: 'Projeto: carregando' })
+      const conta = await aba('Conta')
+      await r.usuario.click(conta)
+      // O destaque confirma que o painel já renderizou a navegação pendente.
+      await waitFor(() => expect(conta).toHaveClass('bg-primaria-100'))
+      expect(r.router.state.location.pathname).toBe('/')
+
+      soltarProjetos()
+      // O seletor mostra a lista recebida enquanto o chunk continua preso.
+      await screen.findByRole('button', { name: 'Projeto: Padrão' })
+      expect(r.falsa.chamadas('GET /projects')).toBe(1)
+      expect(r.router.state.location.pathname).toBe('/')
+      expect(r.router.state.navigation).toMatchObject({ state: 'loading', location: { pathname: '/settings' } })
+
+      soltarChunk()
+      await screen.findByRole('heading', { name: 'Configurações', level: 1 })
+      expect(r.router.state.location.pathname).toBe('/settings')
+    } finally {
+      soltarProjetos()
+      soltarChunk()
+    }
   })
 
   // O atraso em si está em lib/atraso.test.ts. Sabotagem: tirar o filete, ou

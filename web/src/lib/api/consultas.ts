@@ -1,6 +1,6 @@
 import { keepPreviousData, onlineManager, useInfiniteQuery, useQuery } from '@tanstack/react-query'
 import { useSyncExternalStore } from 'react'
-import { useApi } from '@/app/contexto'
+import { useApi, useSessao } from '@/app/contexto'
 import { useApiDoProjeto, useProjeto } from '@/app/projeto'
 import type { FiltroDoResumo } from './cliente'
 import type { Incidente, ItemDoResumo, ListaDeIncidentes } from './schemas'
@@ -10,6 +10,8 @@ const MS_DA_PREVIA = 60_000
 // As chaves e os intervalos de atualização (spec §11.4).
 export const chaves = {
   me: ['me'] as const,
+  // GET /auth/signup-config: pública, a mesma com e sem sessão.
+  configDoCadastro: ['signup-config'] as const,
   sessoes: ['sessions'] as const,
   // A lista de projetos é da conta, e fica fora de qualquer projeto.
   projetos: ['projects'] as const,
@@ -80,6 +82,20 @@ export function useProjetos() {
 export function useMe() {
   const api = useApi()
   return useQuery({ queryKey: chaves.me, queryFn: ({ signal }) => api.me(signal), staleTime: Infinity })
+}
+
+// Se o cadastro público está ligado, e a site key do Turnstile. Só depois do
+// boot da sessão: quando ele termina anônimo, o cache inteiro é limpo
+// (LimparAoEncerrar), e uma config buscada antes sumiria com a tela aberta,
+// levando junto o formulário e o widget.
+export function useConfigDoCadastro() {
+  const api = useApi()
+  const { estado } = useSessao()
+  return useQuery({
+    queryKey: chaves.configDoCadastro,
+    queryFn: ({ signal }) => api.configDoCadastro(signal),
+    enabled: estado !== 'verificando',
+  })
 }
 
 export function useResumo() {

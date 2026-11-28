@@ -222,11 +222,16 @@ func (p *Painel) servirIndex(w http.ResponseWriter, r *http.Request) {
 // só para estilo: não há script inline, e nonce em script-src seria uma porta
 // a mais. Sem style-src-attr: React, Radix e Recharts escrevem estilo pelo
 // CSSOM, que a CSP não governa; só <style> injetado precisa do nonce.
+// A única origem de fora é a do Turnstile (o api.js e o iframe do desafio, no
+// cadastro e no "esqueci a senha"). Ela vale em todas as rotas: o painel é
+// SPA, e ir de /login para /signup não busca o HTML de novo.
 func Politica(nonce string) string {
-	return "default-src 'none'; script-src 'self'; style-src 'self' 'nonce-" + nonce + "'; " +
+	return "default-src 'none'; script-src 'self' " + origemDoTurnstile + "; style-src 'self' 'nonce-" + nonce + "'; " +
 		"img-src 'self'; font-src 'self'; connect-src 'self'; manifest-src 'self'; " +
-		"base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+		"frame-src " + origemDoTurnstile + "; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
 }
+
+const origemDoTurnstile = "https://challenges.cloudflare.com"
 
 func (p *Painel) servirArquivo(w http.ResponseWriter, r *http.Request, nome, cache string) {
 	a, ok := p.arquivos[nome]

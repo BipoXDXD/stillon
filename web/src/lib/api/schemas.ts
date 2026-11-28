@@ -43,8 +43,20 @@ export const RespostaLogin = z.union([
 ])
 export type RespostaLogin = z.infer<typeof RespostaLogin>
 
-export const Me = z.object({ id, email: z.string(), totp_enabled: z.boolean(), created_at: instante })
+export const Me = z.object({
+  id,
+  email: z.string(),
+  totp_enabled: z.boolean(),
+  // false enquanto o e-mail do cadastro público não for confirmado: o
+  // servidor recusa criar recursos com 403 email_not_verified.
+  email_verified: z.boolean(),
+  created_at: instante,
+})
 export type Me = z.infer<typeof Me>
+
+// GET /auth/signup-config: a site key vem vazia com o cadastro desligado.
+export const ConfigDoCadastro = z.object({ enabled: z.boolean(), turnstile_site_key: z.string() })
+export type ConfigDoCadastro = z.infer<typeof ConfigDoCadastro>
 
 // O papel de quem pede no projeto (projectResponse.role). Um papel de uma
 // versão posterior do servidor vira 'desconhecido', no molde do

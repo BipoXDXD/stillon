@@ -8,6 +8,8 @@ import {
   rotacao,
   SEGREDO_NOVO,
   SENHA,
+  SITE_KEY_DO_TURNSTILE,
+  TOKEN_DO_TURNSTILE,
   TOTP_NOVO,
   TOTP_OK,
 } from '@/test/api-falsa'
@@ -894,6 +896,72 @@ describe('o id hostil vai codificado em toda rota com id', () => {
     const { api } = novaSessao({ buscar })
     await chamar(api).catch(() => undefined)
     expect(pedidos).toEqual([esperada])
+  })
+})
+
+// As rotas públicas do cadastro dispensam as credenciais da sessão.
+// Se a API responder 401, o cliente devolve o erro sem renovar a sessão.
+describe('o cadastro público', () => {
+  it('cadastrar envia o corpo exato sem credenciais da sessão', async () => {
+    const falsa = usarApiFalsa()
+    const cabecalhos: Headers[] = []
+    const buscar = vi.fn<Buscar>((entrada, init) => {
+      cabecalhos.push(new Headers(init.headers))
+      return buscarDoTeste(entrada, init)
+    })
+    const { sessao, api } = novaSessao({ buscar })
+    // Com uma sessão aberta: o token existe, e mesmo assim não vai.
+    await sessao.entrar(EMAIL, SENHA)
+    const entrada = { email: 'nova@exemplo.com', password: SENHA, turnstile_token: TOKEN_DO_TURNSTILE }
+
+    await expect(api.cadastrar(entrada)).resolves.toBeUndefined()
+
+    expect(falsa.corpos('POST /auth/signup')).toEqual([entrada])
+    const doCadastro = cabecalhos.at(-1)!
+    expect(doCadastro.has('Authorization')).toBe(false)
+    expect(buscar.mock.lastCall?.[1].credentials).toBe('omit')
+    expect(doCadastro.get('X-Requested-With')).toBe('stillon')
+  })
+
+  it('confirmarEmail com token_invalid rejeita com ApiError code token_invalid', async () => {
+    const falsa = usarApiFalsa()
+    const { api } = novaSessao()
+
+    const e = await api.confirmarEmail('token-que-nao-existe', SENHA).catch((x: unknown) => x)
+
+    expect(e).toBeInstanceOf(ApiError)
+    expect(e).toMatchObject({ status: 400, code: 'token_invalid' })
+    expect(falsa.corpos('POST /auth/email/confirm')).toEqual([{ token: 'token-que-nao-existe', password: SENHA }])
+    expect(falsa.chamadas('POST /auth/refresh')).toBe(0)
+  })
+
+  it('confirmarEmail com senha errada rejeita com invalid_credentials sem tentar o refresh', async () => {
+    const falsa = usarApiFalsa()
+    falsa.estado.cadastro.tokens.set('token-1', 'confirm_email')
+    const { api } = novaSessao()
+
+    const e = await api.confirmarEmail('token-1', 'outra senha qualquer').catch((x: unknown) => x)
+
+    expect(e).toBeInstanceOf(ApiError)
+    expect(e).toMatchObject({ status: 401, code: 'invalid_credentials' })
+    expect(falsa.chamadas('POST /auth/refresh')).toBe(0)
+  })
+
+  it('me aceita email_verified', async () => {
+    const { falsa, api } = await logado()
+    falsa.estado.emailConfirmado = false
+    await expect(api.me()).resolves.toMatchObject({ email_verified: false })
+    falsa.estado.emailConfirmado = true
+    await expect(api.me()).resolves.toMatchObject({ email_verified: true })
+  })
+
+  it('configDoCadastro lê enabled e a site key', async () => {
+    const falsa = usarApiFalsa()
+    const { api } = novaSessao()
+
+    await expect(api.configDoCadastro()).resolves.toEqual({ enabled: true, turnstile_site_key: SITE_KEY_DO_TURNSTILE })
+    falsa.estado.cadastro.habilitado = false
+    await expect(api.configDoCadastro()).resolves.toEqual({ enabled: false, turnstile_site_key: '' })
   })
 })
 
