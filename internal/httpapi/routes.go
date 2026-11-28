@@ -324,6 +324,13 @@ func Routes(ctx context.Context, cfg *config.Config, d Deps) http.Handler {
 	mux.Handle("GET /api/v1/projects/{projectID}/members", noProjeto(mh.List))
 	mux.Handle("PATCH /api/v1/projects/{projectID}/members/{userID}", noProjeto(mh.ChangeRole))
 	mux.Handle("DELETE /api/v1/projects/{projectID}/members/{userID}", noProjeto(mh.Remove))
+	// Transferência de titularidade (PR 4.3), em noProjeto: o não membro
+	// recebe o 404 de projeto inexistente. Aceitar passa pela trava de e-mail
+	// confirmado (criacao): quem recebe ganha um projeto na própria cota, como
+	// quem cria. Propor e cancelar não criam nada para ninguém.
+	mux.Handle("POST /api/v1/projects/{projectID}/titular-transfer", noProjeto(ph.ProposeTransfer))
+	mux.Handle("POST /api/v1/projects/{projectID}/titular-transfer/accept", noProjeto(criacao(ph.AcceptTransfer)))
+	mux.Handle("DELETE /api/v1/projects/{projectID}/titular-transfer", noProjeto(ph.CancelTransfer))
 	// Convites: listar e revogar em noProjeto. Convidar manda um e-mail:
 	// balde próprio por usuário (3 de uma vez, depois 1 a cada 30 min), antes
 	// da consulta de sessão, e a trava de e-mail confirmado (criacao). O

@@ -82,3 +82,18 @@ func (s *Service) Rename(ctx context.Context, actorID, projectID uuid.UUID, name
 	}
 	return s.repo.Rename(ctx, actorID, projectID, nome)
 }
+
+// ProposeTransfer propõe a titularidade do projeto a targetID.
+func (s *Service) ProposeTransfer(ctx context.Context, actorID, projectID, targetID uuid.UUID) error {
+	return s.repo.ProposeTransfer(ctx, actorID, projectID, targetID)
+}
+
+// AcceptTransfer faz de userID, a quem a titularidade foi proposta, o titular.
+func (s *Service) AcceptTransfer(ctx context.Context, userID, projectID uuid.UUID) (ProjectSummary, error) {
+	return s.repo.AcceptTransfer(ctx, userID, projectID, s.clk.Now())
+}
+
+// CancelTransfer desfaz a proposta (o titular cancela, o pendente recusa).
+func (s *Service) CancelTransfer(ctx context.Context, userID, projectID uuid.UUID) error {
+	return s.repo.CancelTransfer(ctx, userID, projectID)
+}

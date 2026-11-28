@@ -94,6 +94,8 @@ export const ERROS_DO_SERVIDOR = {
   member_limit_reached: 409,
   already_member: 409,
   invitation_other_account: 403,
+  // O código da transferência de titularidade (PR 4.3).
+  titular_transfer_target: 409,
 } as const
 
 type ErrosDoServidor = typeof ERROS_DO_SERVIDOR

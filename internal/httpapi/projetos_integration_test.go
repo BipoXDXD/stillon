@@ -210,6 +210,9 @@ var corpoDaGemea = map[string]any{
 	"DELETE /api/v1/projects/{projectID}/members/{userID}":                          nil,
 	"POST /api/v1/projects/{projectID}/invitations":                                 map[string]any{"email": "convidado@exemplo.com", "role": "viewer"},
 	"DELETE /api/v1/projects/{projectID}/invitations/{invitationID}":                nil,
+	"POST /api/v1/projects/{projectID}/titular-transfer":                            map[string]any{"user_id": "01900000-0000-7000-8000-000000000999"},
+	"POST /api/v1/projects/{projectID}/titular-transfer/accept":                     nil,
+	"DELETE /api/v1/projects/{projectID}/titular-transfer":                          nil,
 }
 
 // rotasGemeas separa, das rotas registradas, as gêmeas de leitura e as de
