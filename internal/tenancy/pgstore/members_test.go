@@ -333,3 +333,22 @@ func esperarAlguemNaTrava(t *testing.T, admin *pgxpool.Pool) {
 	}
 	t.Fatal("ninguém chegou a esperar a trava dos membros")
 }
+
+func TestRenameReturnsTitularLimits(t *testing.T) {
+	pool := testdb.New(t)
+	ctx := context.Background()
+	e := novaEquipe(t, pool)
+	st := pgstore.New(pool)
+
+	p, err := st.Rename(ctx, e.a, e.pa, "Com limites")
+	if err != nil || p.Limites != tenancy.LimitesDe(false) {
+		t.Errorf("renomear: limites %+v, %v; queria os do plano grátis", p.Limites, err)
+	}
+	if _, err := testdb.Admin(t).Exec(ctx, `UPDATE users SET is_operator = true WHERE id = $1`, e.a); err != nil {
+		t.Fatal(err)
+	}
+	p, err = st.Rename(ctx, e.a, e.pa, "Do operador")
+	if err != nil || p.Limites != tenancy.LimitesDe(true) {
+		t.Errorf("renomear projeto do operador: limites %+v, %v; queria os do operador", p.Limites, err)
+	}
+}

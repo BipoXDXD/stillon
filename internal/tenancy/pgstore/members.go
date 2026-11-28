@@ -106,7 +106,16 @@ func (s *Store) Rename(ctx context.Context, actorID, projectID uuid.UUID, name s
 		if err != nil {
 			return fmt.Errorf("renomear projeto: %w", err)
 		}
-		out = tenancy.ProjectSummary{ID: l.ID, Name: l.Name, IsDefault: l.IsDefault, Role: sc.Role, CreatedAt: l.CreatedAt}
+		// Os limites são os do titular, como em ListForUser: o 200 é o mesmo
+		// item de GET /api/v1/projects.
+		operador, err := q.TitularIsOperator(ctx, projectID)
+		if err != nil {
+			return fmt.Errorf("ler o titular do projeto: %w", err)
+		}
+		out = tenancy.ProjectSummary{
+			ID: l.ID, Name: l.Name, IsDefault: l.IsDefault, Role: sc.Role, CreatedAt: l.CreatedAt,
+			Limites: tenancy.LimitesDe(operador),
+		}
 		return nil
 	})
 	if err != nil {

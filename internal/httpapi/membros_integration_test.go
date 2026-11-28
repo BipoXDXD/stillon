@@ -2,6 +2,7 @@ package httpapi_test
 
 import (
 	"net/http"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -166,11 +167,24 @@ func TestRenameProjectRoute(t *testing.T) {
 		t.Fatalf("PATCH do projeto pelo owner deu %d, queria 200: %s", status, corpo)
 	}
 	item := decodificar(t, corpo)
-	if chaves := chavesDe(item); !slices.Equal(chaves, []string{"created_at", "id", "is_default", "name", "role"}) {
+	if chaves := chavesDe(item); !slices.Equal(chaves, []string{"created_at", "id", "is_default", "limits", "name", "role"}) {
 		t.Errorf("o item tem as chaves %v, queria as de GET /api/v1/projects", chaves)
 	}
 	if item["id"] != e.projeto || item["name"] != "Renomeado" || item["is_default"] != true || item["role"] != "owner" {
 		t.Errorf("o item devolvido = %v", item)
+	}
+	// Os tetos são os do titular, iguais aos que a lista traz para o projeto.
+	_, lista := lerCru(t, a, http.MethodGet, "/api/v1/projects", e.tTitular, nil)
+	itens, _ := decodificar(t, lista)["items"].([]any)
+	var daLista map[string]any
+	for _, x := range itens {
+		if m, _ := x.(map[string]any); m["id"] == e.projeto {
+			daLista = m
+		}
+	}
+	limites, _ := item["limits"].(map[string]any)
+	if daLista == nil || !reflect.DeepEqual(limites, daLista["limits"]) || limites["projects"] == float64(0) {
+		t.Errorf("limits do renomear = %v, queria os da lista %v (não zerados)", limites, daLista["limits"])
 	}
 
 	conferirCasos(t, a, []casoDeRota{
