@@ -14,6 +14,10 @@ const prefixoDaGemea = "/api/v1/projects/{projectID}/"
 // deles tem a gêmea por projeto, e toda gêmea tem a rota antiga.
 var recursosDeProjeto = []string{"targets", "incidents", "heartbeats", "channels", "status-pages"}
 
+// recursosSoDoProjeto nasceram com o projeto e não têm rota antiga: a equipe
+// é de um projeto, e o Projeto padrão não tem por que ser exceção.
+var recursosSoDoProjeto = []string{"members"}
+
 // TestEveryLegacyResourceRouteHasAProjectTwin lê as rotas registradas nos
 // fontes e exige o par: METODO /api/v1/<recurso>/resto e METODO
 // /api/v1/projects/{projectID}/<recurso>/resto. Uma rota nova registrada só de
@@ -24,7 +28,9 @@ func TestEveryLegacyResourceRouteHasAProjectTwin(t *testing.T) {
 	for _, rota := range rotasRegistradas(t) {
 		metodo, caminho, _ := strings.Cut(rota, " ")
 		if resto, ok := strings.CutPrefix(caminho, prefixoDaGemea); ok {
-			gemeas = append(gemeas, metodo+" "+resto)
+			if recurso, _, _ := strings.Cut(resto, "/"); !slices.Contains(recursosSoDoProjeto, recurso) {
+				gemeas = append(gemeas, metodo+" "+resto)
+			}
 			continue
 		}
 		resto, ok := strings.CutPrefix(caminho, "/api/v1/")

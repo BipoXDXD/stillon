@@ -47,6 +47,7 @@ const (
 	CodeProjectLimit        ErrorCode = "project_limit_reached"
 	CodeEmailNotVerified    ErrorCode = "email_not_verified"
 	CodeTurnstileFailed     ErrorCode = "turnstile_failed"
+	CodeTitularProtected    ErrorCode = "titular_protected"
 	// #nosec G101 -- o regex do gosec bate no NOME da constante ("Token"); o valor é um código de erro da API, não um segredo.
 	CodeTokenInvalid ErrorCode = "token_invalid"
 )
@@ -103,6 +104,10 @@ var errorTable = map[ErrorCode]struct {
 	// Token de confirmação ou de redefinição inexistente, já usado ou vencido:
 	// a mesma resposta para os três.
 	CodeTokenInvalid: {http.StatusBadRequest, "Link inválido ou expirado."},
+	// O titular é sempre owner (FK da 00048): não sai, não é removido e não
+	// perde o papel. Conflito com o estado do projeto; a troca de titular é
+	// a transferência, em dois passos.
+	CodeTitularProtected: {http.StatusConflict, "O titular do projeto não pode sair nem perder o papel de owner."},
 }
 
 // FieldError aponta o campo culpado de um 400. Field e Reason vêm de

@@ -12,20 +12,27 @@ import (
 	"github.com/BipoXDXD/stillon/internal/storage/testdb"
 )
 
-// inserirProjeto grava um projeto com SQL cru no escopo de quem o cria.
+// inserirProjeto grava, com SQL cru no escopo de quem o cria, um projeto e o
+// vínculo de owner do titular, na mesma transação: a FK adiável da 00048 (o
+// titular é sempre owner) recusa no commit o projeto sem esse vínculo.
 func inserirProjeto(t *testing.T, pool *pgxpool.Pool, escopo, titular uuid.UUID, padrao bool) (uuid.UUID, error) {
 	t.Helper()
 	id := novoID()
 	err := emEscopo(t, pool, "app.user_id", escopo.String(), func(tx pgx.Tx) error {
-		_, err := tx.Exec(context.Background(),
+		if _, err := tx.Exec(context.Background(),
 			`INSERT INTO projects (id, name, titular_id, is_default, created_at) VALUES ($1, 'Projeto', $2, $3, $4)`,
-			id, titular, padrao, agora)
+			id, titular, padrao, agora); err != nil {
+			return err
+		}
+		_, err := tx.Exec(context.Background(),
+			`INSERT INTO project_members (project_id, user_id, role, created_at) VALUES ($1, $2, 'owner', $3)`,
+			id, titular, agora)
 		return err
 	})
 	return id, err
 }
 
-// novoProjeto cria um projeto do titular, no escopo dele, sem o vínculo.
+// novoProjeto cria um projeto do titular, no escopo dele, com o vínculo de owner.
 func novoProjeto(t *testing.T, pool *pgxpool.Pool, titular uuid.UUID, padrao bool) uuid.UUID {
 	t.Helper()
 	id, err := inserirProjeto(t, pool, titular, titular, padrao)
@@ -35,24 +42,10 @@ func novoProjeto(t *testing.T, pool *pgxpool.Pool, titular uuid.UUID, padrao boo
 	return id
 }
 
-// inserirVinculo grava um vínculo com SQL cru no escopo de quem o cria.
-func inserirVinculo(t *testing.T, pool *pgxpool.Pool, escopo, projeto, membro uuid.UUID, papel string) error {
-	t.Helper()
-	return emEscopo(t, pool, "app.user_id", escopo.String(), func(tx pgx.Tx) error {
-		_, err := tx.Exec(context.Background(),
-			`INSERT INTO project_members (project_id, user_id, role, created_at) VALUES ($1, $2, $3, $4)`,
-			projeto, membro, papel, agora)
-		return err
-	})
-}
-
 func TestProjectsVisibleOnlyToMembersAndTitular(t *testing.T) {
 	pool := testdb.New(t)
 	a, b := novoUsuario(t, pool), novoUsuario(t, pool)
-	pa := novoProjeto(t, pool, a, true)
-	if err := inserirVinculo(t, pool, a, pa, a, "owner"); err != nil {
-		t.Fatalf("A não conseguiu se vincular como owner ao próprio projeto: %v", err)
-	}
+	novoProjeto(t, pool, a, true)
 
 	if n := contarComEscopo(t, pool, a, "projects"); n != 1 {
 		t.Errorf("A vê %d projetos, queria 1", n)
@@ -70,11 +63,15 @@ func TestProjectsVisibleOnlyToMembersAndTitular(t *testing.T) {
 
 func TestMemberCannotJoinAnotherTitularsProject(t *testing.T) {
 	pool := testdb.New(t)
+	ctx := context.Background()
 	a, b := novoUsuario(t, pool), novoUsuario(t, pool)
-	// Sem o vínculo de A ainda: cada recusa abaixo só pode vir da política, e
-	// não da chave primária (project_id, user_id).
-	pa := novoProjeto(t, pool, a, true)
 
+	// Tudo numa transação só, no escopo de A, com o projeto ainda sem o
+	// vínculo dele: cada recusa abaixo só pode vir da política, e não da
+	// chave primária (project_id, user_id). Cada caso roda num savepoint com
+	// o escopo do caso; a FK adiável da 00048 só confere no commit, e o
+	// controle no fim grava o vínculo de owner antes dele.
+	pa := novoID()
 	casos := []struct {
 		nome           string
 		escopo, membro uuid.UUID
@@ -84,13 +81,40 @@ func TestMemberCannotJoinAnotherTitularsProject(t *testing.T) {
 		{"A inclui B (convite é do PR 4)", a, b, "viewer"},
 		{"A entra no próprio projeto sem ser owner", a, a, "manager"},
 	}
-	for _, c := range casos {
-		t.Run(c.nome, func(t *testing.T) {
-			err := inserirVinculo(t, pool, c.escopo, pa, c.membro, c.papel)
-			if codigoPG(err) != "42501" {
-				t.Errorf("deu %v, queria 42501 (RLS)", err)
-			}
-		})
+	err := emEscopo(t, pool, "app.user_id", a.String(), func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx,
+			`INSERT INTO projects (id, name, titular_id, is_default, created_at) VALUES ($1, 'Projeto', $2, true, $3)`,
+			pa, a, agora); err != nil {
+			t.Fatalf("criar projeto: %v", err)
+		}
+		for _, c := range casos {
+			t.Run(c.nome, func(t *testing.T) {
+				if _, err := tx.Exec(ctx, `SAVEPOINT caso`); err != nil {
+					t.Fatal(err)
+				}
+				_, err := tx.Exec(ctx, `SELECT set_config('app.user_id', $1, true)`, c.escopo.String())
+				if err == nil {
+					_, err = tx.Exec(ctx,
+						`INSERT INTO project_members (project_id, user_id, role, created_at) VALUES ($1, $2, $3, $4)`,
+						pa, c.membro, c.papel, agora)
+				}
+				if codigoPG(err) != "42501" {
+					t.Errorf("deu %v, queria 42501 (RLS)", err)
+				}
+				if _, err := tx.Exec(ctx, `ROLLBACK TO SAVEPOINT caso`); err != nil {
+					t.Fatal(err)
+				}
+			})
+		}
+		// Controle: o caminho legítimo passa, então as recusas acima vieram
+		// das regras que cada caso quebra, e não de outra coisa.
+		_, err := tx.Exec(ctx,
+			`INSERT INTO project_members (project_id, user_id, role, created_at) VALUES ($1, $2, 'owner', $3)`,
+			pa, a, agora)
+		return err
+	})
+	if err != nil {
+		t.Fatalf("A não conseguiu se vincular como owner ao próprio projeto: %v", err)
 	}
 
 	t.Run("B cria projeto em nome de A", func(t *testing.T) {
@@ -99,22 +123,16 @@ func TestMemberCannotJoinAnotherTitularsProject(t *testing.T) {
 			t.Errorf("deu %v, queria 42501 (RLS)", err)
 		}
 	})
-
-	// Controle: o caminho legítimo passa, então as recusas acima vieram das
-	// regras que cada caso quebra, e não de outra coisa.
-	if err := inserirVinculo(t, pool, a, pa, a, "owner"); err != nil {
-		t.Fatalf("A não conseguiu se vincular como owner ao próprio projeto: %v", err)
-	}
 }
 
 func TestProjectMemberRoleCheckRejectsUnknownRole(t *testing.T) {
 	pool := testdb.New(t)
-	a := novoUsuario(t, pool)
+	a, b := novoUsuario(t, pool), novoUsuario(t, pool)
 	pa := novoProjeto(t, pool, a, true)
 
 	_, err := testdb.Admin(t).Exec(context.Background(),
 		`INSERT INTO project_members (project_id, user_id, role, created_at) VALUES ($1, $2, 'admin', $3)`,
-		pa, a, agora)
+		pa, b, agora)
 	if !violaCheck(err) {
 		t.Errorf("role 'admin' deu %v, queria violação de CHECK (23514)", err)
 	}

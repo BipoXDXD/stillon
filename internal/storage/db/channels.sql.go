@@ -64,6 +64,28 @@ func (q *Queries) DeleteChannel(ctx context.Context, arg DeleteChannelParams) (i
 	return result.RowsAffected(), nil
 }
 
+const disableEmailChannelsCreatedBy = `-- name: DisableEmailChannelsCreatedBy :execrows
+UPDATE notif_channels SET enabled = false
+ WHERE project_id = $1 AND user_id = $2
+   AND kind = 'email' AND enabled
+`
+
+type DisableEmailChannelsCreatedByParams struct {
+	ProjectID *uuid.UUID
+	UserID    uuid.UUID
+}
+
+// Membro removido (ou que sai) do projeto: os canais de e-mail que ele criou
+// ali param de avisar, porque o endereço é dele (decisão 5 do 2b). Os de
+// outros tipos e os de outros projetos ficam como estão.
+func (q *Queries) DisableEmailChannelsCreatedBy(ctx context.Context, arg DisableEmailChannelsCreatedByParams) (int64, error) {
+	result, err := q.db.Exec(ctx, disableEmailChannelsCreatedBy, arg.ProjectID, arg.UserID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const findChannelByVerification = `-- name: FindChannelByVerification :one
 SELECT id, verified_at, verify_expires_at FROM notif_channels
  WHERE verify_token_hash = $1

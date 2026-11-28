@@ -211,3 +211,36 @@ func (q *Queries) ProjectTitular(ctx context.Context, projectID uuid.UUID) (uuid
 	err := row.Scan(&titular_id)
 	return titular_id, err
 }
+
+const renameProject = `-- name: RenameProject :one
+UPDATE projects SET name = $1
+ WHERE id = $2
+RETURNING id, name, is_default, created_at
+`
+
+type RenameProjectParams struct {
+	Name      string
+	ProjectID uuid.UUID
+}
+
+type RenameProjectRow struct {
+	ID        uuid.UUID
+	Name      string
+	IsDefault bool
+	CreatedAt time.Time
+}
+
+// Renomear (PR 4.1): sob InProjectTx, projects_do_projeto_update (00048) só
+// alcança o projeto do escopo, e o gatilho guard_projects_imutavel recusa
+// mudar qualquer coluna além do nome.
+func (q *Queries) RenameProject(ctx context.Context, arg RenameProjectParams) (RenameProjectRow, error) {
+	row := q.db.QueryRow(ctx, renameProject, arg.Name, arg.ProjectID)
+	var i RenameProjectRow
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.IsDefault,
+		&i.CreatedAt,
+	)
+	return i, err
+}

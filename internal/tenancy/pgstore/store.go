@@ -46,12 +46,11 @@ func (s *Store) Membership(ctx context.Context, userID, projectID uuid.UUID) (te
 // EnsureDefault devolve o escopo no Projeto padrão de userID, criando-o se
 // preciso. As rotas antigas chamam isto a cada requisição, então o caminho
 // rápido só lê: achou o padrão, o escopo sai de Membership, que aplica as
-// regras de suspensão. Um padrão sem owner não se repara aqui (Membership o
-// recusaria), mas isso é inalcançável: o padrão nasce com o owner na mesma
-// transação, e o app não tem UPDATE nem DELETE em projects e
-// project_members. Sem padrão, o caminho lento cria o projeto e o vínculo
-// de owner na mesma transação (o banco não garante que todo projeto tenha
-// owner). O índice único parcial faz a chamada concorrente não criar outro: o
+// regras de suspensão. Um padrão sem o titular como owner é inalcançável: a
+// FK adiável projects_titular_e_owner (00048) recusa no commit o projeto sem
+// esse vínculo, e também rebaixar o titular ou apagar o vínculo dele. Sem
+// padrão, o caminho lento cria o projeto e o vínculo de owner na mesma
+// transação. O índice único parcial faz a chamada concorrente não criar outro: o
 // ON CONFLICT espera a primeira transação e, em READ COMMITTED, o SELECT
 // seguinte já enxerga o projeto dela.
 func (s *Store) EnsureDefault(ctx context.Context, userID uuid.UUID, now time.Time) (tenancy.ProjectScope, error) {
@@ -115,8 +114,8 @@ func (s *Store) ListForUser(ctx context.Context, userID uuid.UUID) ([]tenancy.Pr
 // Create grava o projeto e o vínculo owner do titular numa só transação, no
 // escopo dele. A trava stillon.projects:<titular> vem antes da contagem: sem
 // ela, duas criações simultâneas contariam o mesmo total e passariam do teto.
-// O vínculo vai na mesma transação porque o banco não garante que todo
-// projeto tenha owner (Membership recusaria um projeto órfão).
+// O vínculo vai na mesma transação: a FK adiável projects_titular_e_owner
+// (00048) confere no commit que o titular é owner.
 func (s *Store) Create(ctx context.Context, p tenancy.NewProject) (tenancy.ProjectSummary, error) {
 	var (
 		linha    db.InsertProjectRow

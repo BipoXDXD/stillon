@@ -159,6 +159,7 @@ func Routes(ctx context.Context, cfg *config.Config, d Deps) http.Handler {
 	sp := NewStatusPageHandlers(d.StatusPages, cfg.PublicBaseURL)
 	ah := NewAccountHandlers(d.Accounts, proxiesDe(cfg), secureCookie, provas)
 	ph := NewProjectHandlers(d.Projects)
+	mh := NewMemberHandlers(d.Projects)
 	cad := NewCadastroHandlers(d.Cadastro, d.Recuperacao, d.Turnstile, d.CadastroPublico, proxiesDe(cfg), cfg.IPHashKey, d.Clock)
 	authn := middleware.Authn(cfg.JWTSecret, d.Clock)
 	// criacao é a trava "sem e-mail confirmado não cria" (403
@@ -300,6 +301,13 @@ func Routes(ctx context.Context, cfg *config.Config, d Deps) http.Handler {
 	porProjetoNovo := middleware.RateLimitUserEvery(ctx, d.Clock, projetoNovoACada, projetoNovoBurst)
 	criacaoDeProjeto := func(fn http.HandlerFunc) http.Handler { return authn(porUsuario(porProjetoNovo(viva(fn)))) }
 	mux.Handle("POST /api/v1/projects", criacaoDeProjeto(criacao(ph.Create)))
+	// Renomear e a equipe são de um projeto: noProjeto, para o não membro
+	// receber o 404 de projeto inexistente. Membros só existem por projeto,
+	// sem rota antiga (TestEveryLegacyResourceRouteHasAProjectTwin).
+	mux.Handle("PATCH /api/v1/projects/{projectID}", noProjeto(ph.Rename))
+	mux.Handle("GET /api/v1/projects/{projectID}/members", noProjeto(mh.List))
+	mux.Handle("PATCH /api/v1/projects/{projectID}/members/{userID}", noProjeto(mh.ChangeRole))
+	mux.Handle("DELETE /api/v1/projects/{projectID}/members/{userID}", noProjeto(mh.Remove))
 	// O reenvio da confirmação é da conta, com sessão, e manda um e-mail: balde
 	// próprio por usuário (3 de uma vez, depois 1 a cada 10 min), antes da
 	// consulta de sessão. Sem a trava de e-mail, claro: é para quem não
