@@ -211,6 +211,7 @@ func TestTickIgnoresTargetsNotDueOrDisabled(t *testing.T) {
 func TestNextRunIsJitteredWithinTenPercent(t *testing.T) {
 	srv, client := servidorLiberado(t, func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
 	b := novaBancada(t, client, MaxInFlight)
+	SemTetoPorHost(b.s)
 	const total = 50
 	alvos := make([]uuid.UUID, total)
 	for i := range alvos {
@@ -306,6 +307,8 @@ func TestTwoSchedulersNeverProbeTheSameTarget(t *testing.T) {
 	b := novaBancada(t, client, MaxInFlight)
 	outro := newScheduler(b.pool, b.box, b.clk, NewMetrics(prometheus.NewRegistry()), client, MaxInFlight)
 	t.Cleanup(func() { outro.Stop(esperaMaxima) })
+	SemTetoPorHost(b.s)
+	SemTetoPorHost(outro)
 
 	const total = 40
 	// Um caminho por alvo, para o servidor contar as batidas de cada um.

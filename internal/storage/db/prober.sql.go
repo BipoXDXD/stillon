@@ -229,6 +229,25 @@ func (q *Queries) LockTargetProbeSpec(ctx context.Context, id uuid.UUID) (LockTa
 	return i, err
 }
 
+const postponeTarget = `-- name: PostponeTarget :exec
+UPDATE targets SET next_run_at = LEAST(next_run_at, $1::timestamptz)
+ WHERE id = $2
+`
+
+type PostponeTargetParams struct {
+	NextRunAt time.Time
+	ID        uuid.UUID
+}
+
+// Adiamento pelo teto por host (prober.tetoPorHost): o alvo reivindicado que
+// não coube no teto volta para quando a ficha do host chega, e não um
+// intervalo inteiro depois. LEAST: se o dono mexeu no alvo entre a
+// reivindicação e aqui e o next_run_at ficou mais cedo, ele vale.
+func (q *Queries) PostponeTarget(ctx context.Context, arg PostponeTargetParams) error {
+	_, err := q.db.Exec(ctx, postponeTarget, arg.NextRunAt, arg.ID)
+	return err
+}
+
 const saveTargetTLS = `-- name: SaveTargetTLS :exec
 INSERT INTO target_tls (target_id, not_after, observed_at)
 VALUES ($1, $2, $3)

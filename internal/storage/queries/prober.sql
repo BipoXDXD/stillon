@@ -53,6 +53,14 @@ RETURNING t.id, t.project_id, t.url, t.method, t.timeout_ms, t.expected_status,
           t.headers_enc, t.degraded_threshold_ms, t.interval_sec,
           t.content_mode, t.content_value, t.content_json_pointer;
 
+-- Adiamento pelo teto por host (prober.tetoPorHost): o alvo reivindicado que
+-- não coube no teto volta para quando a ficha do host chega, e não um
+-- intervalo inteiro depois. LEAST: se o dono mexeu no alvo entre a
+-- reivindicação e aqui e o next_run_at ficou mais cedo, ele vale.
+-- name: PostponeTarget :exec
+UPDATE targets SET next_run_at = LEAST(next_run_at, sqlc.arg(next_run_at)::timestamptz)
+ WHERE id = sqlc.arg(id);
+
 -- name: CountDueTargets :one
 SELECT count(*) FROM targets
  WHERE enabled AND next_run_at <= sqlc.arg(now)::timestamptz;
