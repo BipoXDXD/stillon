@@ -469,7 +469,7 @@ func Routes(ctx context.Context, cfg *config.Config, d Deps) http.Handler {
 	// nem /verify/. Antes do painel, "/" era a API; agora a API tem de ser
 	// nomeada, inclusive os dois health checks, que ficam fora de /api/.
 	// A exportação é a mesma cadeia com o prazo dela: o padrão com método e
-	// caminho completo vence "/api/" (e casa também o HEAD, que o mux recusa).
+	// caminho completo vence "/api/" (e casa também o HEAD, que o semHead recusa).
 	raiz := http.NewServeMux()
 	raiz.Handle("GET /api/v1/me/export", cadeiaAPI(mux, prazoDaExportacao, cfg.CORSOrigin, limitadorIP))
 	raiz.Handle("/api/", handler)
