@@ -31,6 +31,7 @@ import (
 	"github.com/BipoXDXD/stillon/internal/storage"
 	"github.com/BipoXDXD/stillon/internal/targets"
 	"github.com/BipoXDXD/stillon/internal/tenancy"
+	"github.com/BipoXDXD/stillon/internal/tenancy/convitemail"
 	"github.com/BipoXDXD/stillon/internal/tenancy/pgstore"
 	"github.com/BipoXDXD/stillon/internal/turnstile"
 )
@@ -244,12 +245,16 @@ func run(ctx context.Context, cfg *config.Config) error {
 			Pings:           heartbeat.NewPingService(pool, clk),
 			Heartbeats:      heartbeat.NewService(pool, clk),
 			Projects:        tenancy.NewService(pgstore.New(pool), clk),
-			Clock:           clk,
-			LimitesIP:       limitesIP,
-			Ready:           pool.Ping,
-			Cadastro:        account.NewCadastro(pool, clk, mailerDeConta(enviador), links),
-			Recuperacao:     account.NewRecuperacao(pool, clk, mailerDeConta(enviador), links),
-			Turnstile:       novoTurnstile(crypto.Secret(cfg.TurnstileSecretKey), cfg.HostDoTurnstile()),
+			// O e-mail do convite sai pelo mesmo enviador dos e-mails de conta
+			// (balde do destinatário e teto diário); sem envio, SemEnvio.
+			Invitations: tenancy.NewInvitations(pgstore.NewInvitations(pool),
+				convitemail.New(pool, clk, mailerDeConta(enviador), links), clk),
+			Clock:       clk,
+			LimitesIP:   limitesIP,
+			Ready:       pool.Ping,
+			Cadastro:    account.NewCadastro(pool, clk, mailerDeConta(enviador), links),
+			Recuperacao: account.NewRecuperacao(pool, clk, mailerDeConta(enviador), links),
+			Turnstile:   novoTurnstile(crypto.Secret(cfg.TurnstileSecretKey), cfg.HostDoTurnstile()),
 			// Desligado (sem o par do Turnstile ou sem e-mail), signup e
 			// forgot dão 404; a confirmação e a redefinição seguem no ar.
 			CadastroPublico: httpapi.ConfigCadastro{Habilitado: cfg.SignupEnabled(), SiteKey: cfg.TurnstileSiteKey},

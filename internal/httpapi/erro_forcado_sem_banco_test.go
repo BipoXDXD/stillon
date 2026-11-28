@@ -85,6 +85,7 @@ func apiSemBanco(t *testing.T) (*httptest.Server, *clock.Fake) {
 		Pings:           heartbeat.NewPingService(pool, clk),
 		Heartbeats:      heartbeat.NewService(pool, clk),
 		Projects:        tenancy.NewService(pgstore.New(pool), clk),
+		Invitations:     tenancy.NewInvitations(pgstore.NewInvitations(pool), nil, clk),
 		EmailConfirmado: conferidorQueConfirma{},
 		// Os serviços reais, sobre o banco fora: as rotas públicas da conta
 		// param antes, no limite por IP, mas se um dia passarem a chegar a

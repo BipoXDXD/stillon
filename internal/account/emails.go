@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"strings"
+	"unicode"
 )
 
 // ResultadoDoEnvio é a resposta do transporte ou o descarte antes da entrega.
@@ -64,6 +65,11 @@ func (l Links) RedefinirSenha(token string) string {
 	return l.base() + "/reset-password#token=" + token
 }
 
+// AceitarConvite é o link do convite para um projeto.
+func (l Links) AceitarConvite(token string) string {
+	return l.base() + "/invite#token=" + token
+}
+
 // EsqueciASenha é a página que pede o link de redefinição.
 func (l Links) EsqueciASenha() string {
 	return l.base() + "/forgot-password"
@@ -103,5 +109,44 @@ func emailDeRedefinicao(link string) (assunto, corpo string) {
 			link + "\n\n" +
 			"O link vale por 1 hora e funciona uma vez. Ao salvar a senha nova, todas as sessões abertas são encerradas.\n\n" +
 			"Se não foi você, ignore esta mensagem. Sua senha continua a mesma.\n\n" +
+			"StillOn\n"
+}
+
+// rotulosDosPapeis são os nomes dos papéis no e-mail do convite. Rascunho:
+// o texto final é do dono (T12 do PR 4).
+var rotulosDosPapeis = map[string]string{
+	"owner":   "dono",
+	"manager": "gerente",
+	"member":  "membro",
+	"viewer":  "leitor",
+}
+
+// semControle troca quebras de linha e outros caracteres de controle por
+// nada: um nome de projeto antigo (anterior a ParseProjectName) não quebra o
+// assunto nem o corpo.
+func semControle(s string) string {
+	return strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return -1
+		}
+		return r
+	}, s)
+}
+
+// EmailDeConvite é o e-mail do convite para um projeto. O texto é o mesmo
+// exista ou não conta com o endereço do destinatário: nada nele depende
+// disso. Rascunho até a T12 do PR 4.
+func EmailDeConvite(projeto, quemConvidou, papel, link string) (assunto, corpo string) {
+	projeto, quemConvidou = semControle(projeto), semControle(quemConvidou)
+	rotulo, ok := rotulosDosPapeis[papel]
+	if !ok {
+		rotulo = "integrante"
+	}
+	return "Convite para o projeto " + projeto + " no StillOn",
+		"Olá,\n\n" +
+			quemConvidou + " convidou você para o projeto " + projeto + " no StillOn, como " + rotulo + ". Para aceitar, abra o link:\n\n" +
+			link + "\n\n" +
+			"O convite vale por 7 dias e só pode ser usado uma vez. Para aceitar, entre no StillOn com este e-mail.\n\n" +
+			"Se não esperava este convite, ignore esta mensagem.\n\n" +
 			"StillOn\n"
 }

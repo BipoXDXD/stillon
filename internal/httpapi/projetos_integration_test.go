@@ -143,6 +143,7 @@ func TestListProjectsReturnsOwnProjectsWithRole(t *testing.T) {
 type recursosDoDono struct {
 	projeto, titular                                  string
 	alvo, incidente, hb, incidenteDoHB, canal, pagina string
+	convite                                           string
 }
 
 // dados são o que a resposta a outro usuário não pode trazer.
@@ -166,6 +167,7 @@ func (r recursosDoDono) caminho(t *testing.T, rota, projeto string) string {
 	}
 	trocas := map[string]string{
 		"{projectID}": projeto, "{id}": ids[recurso], "{incident_id}": r.incidenteDoHB, "{userID}": r.titular,
+		"{invitationID}": r.convite,
 	}
 	caminho := curinga.ReplaceAllStringFunc(molde, func(c string) string {
 		valor := trocas[c]
@@ -206,6 +208,8 @@ var corpoDaGemea = map[string]any{
 	"PATCH /api/v1/projects/{projectID}/status-pages/{id}":                          map[string]any{"title": "alterado"},
 	"PATCH /api/v1/projects/{projectID}/members/{userID}":                           map[string]any{"role": "viewer"},
 	"DELETE /api/v1/projects/{projectID}/members/{userID}":                          nil,
+	"POST /api/v1/projects/{projectID}/invitations":                                 map[string]any{"email": "convidado@exemplo.com", "role": "viewer"},
+	"DELETE /api/v1/projects/{projectID}/invitations/{invitationID}":                nil,
 }
 
 // rotasGemeas separa, das rotas registradas, as gêmeas de leitura e as de
@@ -257,6 +261,11 @@ func prepararDono(t *testing.T, a *api, dono string) recursosDoDono {
 		t.Fatalf("criar a status page do dono deu %d: %s", status, corpo)
 	}
 	r.pagina, _ = decodificar(t, corpo)["id"].(string)
+	testdb.Convite(t, uuid.MustParse(r.projeto), "convite-do-dono@exemplo.com", "member")
+	if err := testdb.Admin(t).QueryRow(ctx,
+		`SELECT id::text FROM project_invitations WHERE project_id = $1`, r.projeto).Scan(&r.convite); err != nil {
+		t.Fatal(err)
+	}
 	return r
 }
 
@@ -337,8 +346,9 @@ func TestNilProjectIDIsIndistinguishableFromMissing(t *testing.T) {
 
 // O viewer do projeto do dono lê, mas não escreve: toda gêmea de leitura,
 // de coleção ou por {id}, dá 200 com o mesmo corpo que o dono lê (a política
-// é por projeto, não por quem criou a linha); toda gêmea de escrita dá 403
-// forbidden, e nada do dono muda.
+// é por projeto, não por quem criou a linha), menos as leituras de gestão
+// (os convites), que dão 403; toda gêmea de escrita dá 403 forbidden, e nada
+// do dono muda.
 func TestViewerGetsForbiddenOnEveryMutatingProjectRoute(t *testing.T) {
 	a := newAPI(t)
 	dono := tokenDe(t, a, a.userID)
@@ -354,6 +364,12 @@ func TestViewerGetsForbiddenOnEveryMutatingProjectRoute(t *testing.T) {
 		esperarVagaNoLimite(a)
 		caminho := r.caminho(t, rota, r.projeto)
 		status, corpo := lerCru(t, a, http.MethodGet, caminho, viewer, nil)
+		if leituraDeGestao(rota) {
+			if codigo, _ := erroDe(t, corpo); status != http.StatusForbidden || codigo != "forbidden" {
+				t.Errorf("%s do viewer deu %d, queria 403 forbidden: %s", rota, status, corpo)
+			}
+			continue
+		}
 		if status != http.StatusOK {
 			t.Errorf("%s do viewer deu %d, queria 200: %s", rota, status, corpo)
 			continue

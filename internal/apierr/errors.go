@@ -48,6 +48,9 @@ const (
 	CodeEmailNotVerified    ErrorCode = "email_not_verified"
 	CodeTurnstileFailed     ErrorCode = "turnstile_failed"
 	CodeTitularProtected    ErrorCode = "titular_protected"
+	CodeMemberLimit         ErrorCode = "member_limit_reached"
+	CodeAlreadyMember       ErrorCode = "already_member"
+	CodeInvitationOther     ErrorCode = "invitation_other_account"
 	// #nosec G101 -- o regex do gosec bate no NOME da constante ("Token"); o valor é um código de erro da API, não um segredo.
 	CodeTokenInvalid ErrorCode = "token_invalid"
 )
@@ -108,6 +111,14 @@ var errorTable = map[ErrorCode]struct {
 	// perde o papel. Conflito com o estado do projeto; a troca de titular é
 	// a transferência, em dois passos.
 	CodeTitularProtected: {http.StatusConflict, "O titular do projeto não pode sair nem perder o papel de owner."},
+	// O teto de membros do titular, contando os convites pendentes.
+	CodeMemberLimit: {http.StatusConflict, "Limite de membros atingido."},
+	// Convidar quem já está na equipe: quem convida já vê a lista de membros,
+	// então o código não enumera ninguém.
+	CodeAlreadyMember: {http.StatusConflict, "Este e-mail já é membro do projeto."},
+	// O link é válido, mas o convite é de outro e-mail. Só sai depois de o
+	// token se provar válido, e o texto não mostra o e-mail do convite.
+	CodeInvitationOther: {http.StatusForbidden, "Este convite é de outra conta. Entre com o e-mail que recebeu o convite."},
 }
 
 // FieldError aponta o campo culpado de um 400. Field e Reason vêm de

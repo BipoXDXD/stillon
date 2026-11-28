@@ -64,3 +64,13 @@ SELECT titular_id FROM projects WHERE id = sqlc.arg(project_id);
 UPDATE projects SET name = sqlc.arg(name)
  WHERE id = sqlc.arg(project_id)
 RETURNING id, name, is_default, created_at;
+
+-- O projeto em que user_id acabou de entrar por convite, como na lista: roda
+-- no escopo do aceite (app.user_id), em que project_members_own_select e
+-- projects_member_select já mostram o vínculo novo da própria transação.
+-- name: GetMyProject :one
+SELECT p.id, p.name, p.is_default, m.role, p.created_at, t.is_operator AS titular_is_operator
+  FROM project_members m
+  JOIN projects p ON p.id = m.project_id
+  JOIN users t ON t.id = p.titular_id
+ WHERE m.user_id = sqlc.arg(user_id) AND p.id = sqlc.arg(project_id);
