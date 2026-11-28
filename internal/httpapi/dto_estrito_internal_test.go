@@ -19,6 +19,7 @@ import (
 	"github.com/BipoXDXD/stillon/internal/auth"
 	"github.com/BipoXDXD/stillon/internal/clock"
 	"github.com/BipoXDXD/stillon/internal/httpapi/middleware"
+	"github.com/BipoXDXD/stillon/internal/legal"
 )
 
 // corpoEstrito é um handler que lê corpo JSON. valido é um corpo que passa
@@ -70,7 +71,7 @@ func corposEstritos() map[string]corpoEstrito {
 		"AuthHandlers.TOTPRotate":         {handler: sessao.TOTPRotate, valido: `{"password":"x","code":"1"}`},
 		"AuthHandlers.TOTPRotateConfirm":  {handler: sessao.TOTPRotateConfirm, valido: `{"code":"1","rotation":"x"}`},
 		"CadastroHandlers.Signup": {handler: cadastro.Signup,
-			valido: `{"email":"a@exemplo.com","password":"uma-senha-bem-comprida","turnstile_token":"x"}`},
+			valido: `{"email":"a@exemplo.com","password":"uma-senha-bem-comprida","turnstile_token":"x","accepted_terms_version":"` + legal.VersaoAtual + `"}`},
 		"CadastroHandlers.ConfirmarEmail": {handler: cadastro.ConfirmarEmail, valido: `{"token":"x","password":"y"}`},
 		"CadastroHandlers.EsqueciASenha":  {handler: cadastro.EsqueciASenha, valido: `{"email":"a@exemplo.com","turnstile_token":"x"}`},
 		"CadastroHandlers.RedefinirSenha": {handler: cadastro.RedefinirSenha,

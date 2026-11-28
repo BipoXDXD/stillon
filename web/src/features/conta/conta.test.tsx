@@ -1,6 +1,7 @@
 import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { http, HttpResponse } from 'msw'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import versaoDosTermos from '@/features/legal/versao.json'
 import { chaves } from '@/lib/api/consultas'
 import { EMAIL, SENHA, SITE_KEY_DO_TURNSTILE, TOKEN_DO_TURNSTILE } from '@/test/api-falsa'
 import { renderizarPainel } from '@/test/renderizar'
@@ -61,10 +62,20 @@ afterEach(() => {
 const SENHA_NOVA = 'uma senha nova bem comprida'
 const NOVO = 'nova@exemplo.com'
 
-async function preencherCadastro(usuario: Awaited<ReturnType<typeof renderizarPainel>>['usuario'], senha = SENHA_NOVA) {
+// O nome exato, curto: o aviso de aba nova fica só nos links. Sabotagem
+// prevista: voltar os links para dentro do rótulo (o aviso entra no nome
+// duas vezes).
+const ACEITE = 'Li e aceito os Termos de Uso e a Política de Privacidade'
+
+async function preencherCadastro(
+  usuario: Awaited<ReturnType<typeof renderizarPainel>>['usuario'],
+  senha = SENHA_NOVA,
+  { aceitar = true } = {},
+) {
   await screen.findByRole('heading', { name: 'Criar conta no StillOn' })
   await usuario.type(await screen.findByLabelText('E-mail'), NOVO)
   await usuario.type(screen.getByLabelText('Senha'), senha)
+  if (aceitar) await usuario.click(screen.getByRole('checkbox', { name: ACEITE }))
 }
 
 describe('cadastro', () => {
@@ -92,7 +103,12 @@ describe('cadastro', () => {
     const titulo = await screen.findByRole('heading', { name: 'Confira seu e-mail' })
     expect(titulo).toHaveFocus()
     expect(falsa.corpos('POST /auth/signup')).toEqual([
-      { email: NOVO, password: SENHA_NOVA, turnstile_token: TOKEN_DO_TURNSTILE },
+      {
+        email: NOVO,
+        password: SENHA_NOVA,
+        turnstile_token: TOKEN_DO_TURNSTILE,
+        accepted_terms_version: versaoDosTermos.versao,
+      },
     ])
     const main = screen.getByRole('main')
     expect(main).toHaveTextContent(`Enviamos um link para ${NOVO}, se ele puder receber mensagens do StillOn.`)
@@ -157,6 +173,95 @@ describe('cadastro', () => {
     expect(screen.queryByText('Carregando…')).not.toBeInTheDocument()
     expect(falsa.chamadas('GET /auth/signup-config')).toBe(1)
     expect(turnstile.render).toHaveBeenCalledTimes(1)
+  })
+
+  // Sabotagem prevista: tirar a exigência do aceite do esquema.
+  it('cadastro exige marcar o aceite', async () => {
+    const { usuario, falsa } = await renderizarPainel('/signup', { logado: false })
+    await preencherCadastro(usuario, SENHA_NOVA, { aceitar: false })
+    await turnstile.resolver()
+    await usuario.click(screen.getByRole('button', { name: 'Criar conta' }))
+    const aceite = screen.getByRole('checkbox', { name: ACEITE })
+    await waitFor(() => expect(aceite).toHaveAttribute('aria-invalid', 'true'))
+    expect(aceite).toHaveAccessibleDescription('Marque para aceitar os Termos de Uso e a Política de Privacidade.')
+    expect(aceite).toHaveFocus()
+    expect(falsa.chamadas('POST /auth/signup')).toBe(0)
+
+    await usuario.click(aceite)
+    await waitFor(() => expect(aceite).not.toHaveAttribute('aria-invalid'))
+  })
+
+  // O valor literal, e não o do versao.json: o teste pega o painel que
+  // mandasse outra versão fixa. Sabotagem prevista: enviar uma versão errada.
+  it('cadastro envia a versão aceita', async () => {
+    const { usuario, falsa } = await renderizarPainel('/signup', { logado: false })
+    await preencherCadastro(usuario)
+    await turnstile.resolver()
+    await usuario.click(screen.getByRole('button', { name: 'Criar conta' }))
+    await screen.findByRole('heading', { name: 'Confira seu e-mail' })
+    expect(falsa.corpos('POST /auth/signup')).toEqual([
+      expect.objectContaining({ accepted_terms_version: '2026-11-28' }),
+    ])
+  })
+
+  // Os termos mudaram com a página aberta: o servidor recusa a versão velha, e
+  // só recarregar traz a nova. Sabotagem prevista: não mapear o campo
+  // accepted_terms_version (o motivo vira o genérico "Confira os campos").
+  it('cadastro mostra o erro de versão desatualizada', async () => {
+    const { usuario, falsa } = await renderizarPainel('/signup', { logado: false })
+    falsa.estado.forcar.set('POST /auth/signup', {
+      status: 400,
+      code: 'validation_failed',
+      fields: [{ field: 'accepted_terms_version', reason: 'outdated' }],
+    })
+    await preencherCadastro(usuario)
+    await turnstile.resolver()
+    await usuario.click(screen.getByRole('button', { name: 'Criar conta' }))
+    const aceite = screen.getByRole('checkbox', { name: ACEITE })
+    await waitFor(() => expect(aceite).toHaveAttribute('aria-invalid', 'true'))
+    expect(aceite).toHaveAccessibleDescription(
+      'Os termos mudaram depois que esta página abriu. Recarregue a página, leia a versão nova e marque de novo.',
+    )
+    expect(aceite).toHaveFocus()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
+  // O painel em cache tem o versao.json velho, e o servidor já exige a versão
+  // nova: o cadastro avisa antes, em vez de enviar uma versão que seria
+  // recusada. Sabotagem prevista: ignorar o terms_version da config.
+  it('cadastro pede para recarregar quando a versão dos termos do servidor é outra', async () => {
+    const { falsa } = await renderizarPainel('/signup', {
+      logado: false,
+      antes: () =>
+        servidor.use(
+          http.get('*/api/v1/auth/signup-config', () =>
+            HttpResponse.json({ enabled: true, turnstile_site_key: SITE_KEY_DO_TURNSTILE, terms_version: '2099-01-01' }),
+          ),
+        ),
+    })
+    await screen.findByRole('heading', { name: 'Criar conta no StillOn' })
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Os termos mudaram. Recarregue a página para ler a versão nova antes de criar a conta.',
+    )
+    expect(screen.queryByRole('checkbox', { name: ACEITE })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Criar conta' })).not.toBeInTheDocument()
+    expect(turnstile.render).not.toHaveBeenCalled()
+    expect(falsa.chamadas('POST /auth/signup')).toBe(0)
+  })
+
+  // Abrir os textos não pode levar embora o que já foi digitado.
+  it('a caixa de aceite abre os textos em aba nova', async () => {
+    const { usuario } = await renderizarPainel('/signup', { logado: false })
+    await preencherCadastro(usuario, SENHA_NOVA, { aceitar: false })
+    for (const [nome, href] of [
+      [/^Termos de Uso ?\(abre em nova aba\)$/, '/termos'],
+      [/^Política de Privacidade ?\(abre em nova aba\)$/, '/privacidade'],
+    ] as const) {
+      const link = screen.getByRole('link', { name: nome })
+      expect(link).toHaveAttribute('href', href)
+      expect(link).toHaveAttribute('target', '_blank')
+      expect(link).toHaveAttribute('rel', 'noopener')
+    }
   })
 
   it('mostrar senha alterna o tipo do campo e o estado do botão', async () => {
@@ -465,6 +570,7 @@ describe('envio dos formulários públicos', () => {
       acao: 'Criar conta',
       enviando: 'Criando conta…',
       campos: [{ rotulo: 'E-mail', valor: NOVO }, { rotulo: 'Senha', valor: SENHA_NOVA }],
+      aceite: true,
       desafio: true,
       via: 'enter',
       mostrarSenha: true,
@@ -501,7 +607,7 @@ describe('envio dos formulários públicos', () => {
       mostrarSenha: false,
     },
   ])('$rota bloqueia os controles enquanto envia e recupera os valores e o foco na falha', async ({
-    rota, endpoint, acao, enviando, campos, desafio, via, mostrarSenha, moverFocoPara,
+    rota, endpoint, acao, enviando, campos, aceite, desafio, via, mostrarSenha, moverFocoPara,
   }) => {
     let liberar!: () => void
     const resposta = new Promise<void>((resolve) => { liberar = resolve })
@@ -520,6 +626,8 @@ describe('envio dos formulários públicos', () => {
       await usuario.type(entrada, valor)
       preenchidos.push({ entrada, valor })
     }
+    const caixas = aceite ? [screen.getByRole('checkbox', { name: ACEITE })] : []
+    for (const caixa of caixas) await usuario.click(caixa)
     if (desafio) await turnstile.resolver()
 
     const botao = screen.getByRole('button', { name: acao })
@@ -541,6 +649,7 @@ describe('envio dos formulários públicos', () => {
         expect(entrada).toBeDisabled()
       }
       for (const mostrar of botoesDeSenha) expect(mostrar).toBeDisabled()
+      for (const caixa of caixas) expect(caixa).toBeDisabled()
       expect(turnstile.render).toHaveBeenCalledTimes(desafio ? 1 : 0)
 
       // O jsdom pode manter o foco num controle recém-desabilitado.
@@ -557,6 +666,10 @@ describe('envio dos formulários públicos', () => {
       expect(entrada).toBeEnabled()
     }
     for (const mostrar of botoesDeSenha) expect(mostrar).toBeEnabled()
+    for (const caixa of caixas) {
+      expect(caixa).toBeEnabled()
+      expect(caixa).toBeChecked()
+    }
     expect(focoExterno ?? primeiroCampo).toHaveFocus()
     expect(botao.matches(':disabled')).toBe(desafio)
     if (desafio) await turnstile.resolver()

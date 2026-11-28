@@ -76,6 +76,12 @@ const porMotivo: Record<string, string> = {
 
 export const CARACTERE_INVISIVEL = 'Tem um caractere que não pode ser mostrado'
 
+// O erro da caixa de aceite do cadastro, igual no cliente e no servidor.
+export const MARQUE_O_ACEITE = 'Marque para aceitar os Termos de Uso e a Política de Privacidade.'
+// A config do cadastro traz outra versão dos termos que a deste painel: o
+// painel em cache é de antes da mudança.
+export const TERMOS_DESATUALIZADOS = 'Os termos mudaram. Recarregue a página para ler a versão nova antes de criar a conta.'
+
 export const LIMITE_DA_REGRA = 'Até 256 caracteres.'
 export const CONTROLE_NA_REGRA = 'Sem tab, quebra de linha ou outro caractere de controle.'
 
@@ -103,6 +109,12 @@ const porCampo: Record<string, Record<string, string>> = {
   slug: { invalid: 'De 3 a 40 caracteres: letras minúsculas, números e hífens, sem hífen nas pontas.' },
   password: { too_short: 'Mínimo de 15 caracteres.', too_long: 'Máximo de 128 caracteres.' },
   new_password: { too_short: 'Mínimo de 15 caracteres.', too_long: 'Máximo de 128 caracteres.' },
+  // O aceite do cadastro. outdated: os termos mudaram com a página aberta, e só
+  // recarregar traz o versao.json novo.
+  accepted_terms_version: {
+    required: MARQUE_O_ACEITE,
+    outdated: 'Os termos mudaram depois que esta página abriu. Recarregue a página, leia a versão nova e marque de novo.',
+  },
   content_rule: { forbidden: 'Para verificar o conteúdo, use GET ou POST e tire os headers Accept-Encoding e Range.' },
   'content_rule.value': { too_long: LIMITE_DA_REGRA, invalid: CONTROLE_NA_REGRA },
   'content_rule.json_pointer': {

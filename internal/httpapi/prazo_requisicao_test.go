@@ -114,7 +114,9 @@ func (conferidorQueConfirma) EmailConfirmado(context.Context, uuid.UUID) (bool, 
 // token é inválido, e o resto falha como o repositório falso.
 type contaPublicaFalsa struct{}
 
-func (contaPublicaFalsa) Cadastrar(context.Context, string, string) error { return errRepoFalso }
+func (contaPublicaFalsa) Cadastrar(context.Context, string, string, string) error {
+	return errRepoFalso
+}
 func (contaPublicaFalsa) ConfirmarEmail(context.Context, string, string, []byte) error {
 	return account.ErrTokenInvalido
 }

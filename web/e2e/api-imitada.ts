@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+import path from 'node:path'
 import type { Page, Route } from '@playwright/test'
 import type { z } from 'zod'
 import type { ConfigDoCadastro, ConfirmacaoTotp, InicioDaTroca, Projeto, Serie } from '../src/lib/api/schemas'
@@ -16,6 +18,12 @@ import {
   SITE_KEY_DO_TURNSTILE,
   TOKEN_DO_TURNSTILE,
 } from '../src/test/fixtures'
+
+// A versão dos termos que o painel envia no cadastro (a mesma do servidor,
+// conferida pelo TestVersaoDosTermosIgualAoPainel).
+export const VERSAO_DOS_TERMOS: string = JSON.parse(
+  readFileSync(path.resolve(import.meta.dirname, '../src/features/legal/versao.json'), 'utf8'),
+).versao
 
 // A API do painel respondida pelo próprio teste (page.route): o a11y.spec.ts
 // e o roteiro de captura (capturas.spec.ts) veem os mesmos dados. As
@@ -122,7 +130,11 @@ respostas['POST /auth/totp/rotate/confirm'] = codigosNovos
 
 // O cadastro público (contrato HTTP do PR 3): ligado, e as mutações aceitas
 // sem corpo, como o servidor.
-const configDoCadastro: z.input<typeof ConfigDoCadastro> = { enabled: true, turnstile_site_key: SITE_KEY_DO_TURNSTILE }
+const configDoCadastro: z.input<typeof ConfigDoCadastro> = {
+  enabled: true,
+  turnstile_site_key: SITE_KEY_DO_TURNSTILE,
+  terms_version: VERSAO_DOS_TERMOS,
+}
 respostas['GET /auth/signup-config'] = configDoCadastro
 const semCorpo: Record<string, number> = {
   'POST /auth/signup': 202,

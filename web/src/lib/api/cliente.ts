@@ -89,7 +89,7 @@ export type EntradaPagina = {
   items: { target_id: string; display_name: string }[]
 }
 
-export type EntradaCadastro = { email: string; password: string; turnstile_token: string }
+export type EntradaCadastro = { email: string; password: string; turnstile_token: string; accepted_terms_version: string }
 export type PedidoDeRedefinicao = { email: string; turnstile_token: string }
 export type Redefinicao = { token: string; new_password: string }
 

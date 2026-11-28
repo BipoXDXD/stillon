@@ -13,6 +13,7 @@ import {
   TOTP_NOVO,
   TOTP_OK,
 } from '@/test/api-falsa'
+import versaoDosTermos from '@/features/legal/versao.json'
 import { alvo, canal } from '@/test/fixtures'
 import { buscarDoTeste, novaSessao, usarApiFalsa } from '@/test/ambiente'
 import { servidor } from '@/test/setup'
@@ -912,7 +913,12 @@ describe('o cadastro público', () => {
     const { sessao, api } = novaSessao({ buscar })
     // Com uma sessão aberta: o token existe, e mesmo assim não vai.
     await sessao.entrar(EMAIL, SENHA)
-    const entrada = { email: 'nova@exemplo.com', password: SENHA, turnstile_token: TOKEN_DO_TURNSTILE }
+    const entrada = {
+      email: 'nova@exemplo.com',
+      password: SENHA,
+      turnstile_token: TOKEN_DO_TURNSTILE,
+      accepted_terms_version: versaoDosTermos.versao,
+    }
 
     await expect(api.cadastrar(entrada)).resolves.toBeUndefined()
 
@@ -955,13 +961,18 @@ describe('o cadastro público', () => {
     await expect(api.me()).resolves.toMatchObject({ email_verified: true })
   })
 
-  it('configDoCadastro lê enabled e a site key', async () => {
+  it('configDoCadastro lê enabled, a site key e a versão dos termos', async () => {
     const falsa = usarApiFalsa()
     const { api } = novaSessao()
+    const terms_version = versaoDosTermos.versao
 
-    await expect(api.configDoCadastro()).resolves.toEqual({ enabled: true, turnstile_site_key: SITE_KEY_DO_TURNSTILE })
+    await expect(api.configDoCadastro()).resolves.toEqual({
+      enabled: true,
+      turnstile_site_key: SITE_KEY_DO_TURNSTILE,
+      terms_version,
+    })
     falsa.estado.cadastro.habilitado = false
-    await expect(api.configDoCadastro()).resolves.toEqual({ enabled: false, turnstile_site_key: '' })
+    await expect(api.configDoCadastro()).resolves.toEqual({ enabled: false, turnstile_site_key: '', terms_version })
   })
 })
 

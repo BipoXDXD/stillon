@@ -292,4 +292,6 @@ type User struct {
 	IsOperator               bool
 	EmailVerifiedAt          *time.Time
 	SuspendedAt              *time.Time
+	TermsVersion             *string
+	TermsAcceptedAt          *time.Time
 }
