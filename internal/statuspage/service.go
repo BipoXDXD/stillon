@@ -70,6 +70,9 @@ func (s *Service) Create(ctx context.Context, scope tenancy.ProjectScope, in Inp
 	if verr := validate(&in); verr != nil {
 		return Page{}, verr
 	}
+	if slugReservado(in.Slug) {
+		return Page{}, ErrSlugTaken
+	}
 	id, err := uuid.NewV7()
 	if err != nil {
 		return Page{}, err
@@ -114,6 +117,11 @@ func (s *Service) Update(ctx context.Context, scope tenancy.ProjectScope, id uui
 		in := aplicarPatch(antes, patch)
 		if verr := validate(&in); verr != nil {
 			return verr
+		}
+		// A página que já tem um slug hoje reservado fica com ele; só a
+		// troca para um reservado é recusada.
+		if in.Slug != antes.Slug && slugReservado(in.Slug) {
+			return ErrSlugTaken
 		}
 		if err := regravar(ctx, q, atual.ProjectID, id, in, patch.Items); err != nil {
 			return err
