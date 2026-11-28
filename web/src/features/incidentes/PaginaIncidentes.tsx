@@ -23,6 +23,7 @@ import { useChavesDoProjeto, useHeartbeats, useIncidentes, useIncidentesAbertos 
 import { textoDaCausa } from '@/lib/api/mensagens'
 import type { Heartbeat, Incidente } from '@/lib/api/schemas'
 import { dataHora } from '@/lib/format'
+import { usePode } from '@/lib/permissoes'
 import { cn } from '@/lib/utils'
 import { agruparIncidentes, destinoDepoisDeCarregar, resumoDosAbertos } from './agrupamento'
 import { useReconhecer } from './reconhecer'
@@ -56,7 +57,8 @@ function Cartao({
   i: Incidente
   agora: Date
   reconhecendo: boolean
-  aoReconhecer: (id: string) => void
+  // null: o papel não reconhece (edit_monitors), e o botão não aparece.
+  aoReconhecer: ((id: string) => void) | null
 }) {
   const noProjeto = useRotaDoProjeto()
   const situacao = situacaoDoIncidente(i)
@@ -97,7 +99,7 @@ function Cartao({
           </p>
         )}
       </div>
-      {situacao === 'em-andamento' && (
+      {aoReconhecer && situacao === 'em-andamento' && (
         <Botao
           tipo="secundario"
           // aria-disabled, e não disabled: o botão desabilitado perderia o
@@ -179,6 +181,7 @@ export function PaginaIncidentes() {
   const api = useApiDoProjeto()
   const chave = useChavesDoProjeto()
   const avisar = useAvisar()
+  const podeReconhecer = usePode('edit_monitors')
   const [erro, setErro] = useState<string | null>(null)
   // O incidente cujo Reconhecer acabou de ser usado. Se o botão sumiu (o ack
   // valeu), o foco iria ao <body>: vai ao "Reconhecido em" da linha, ou ao
@@ -233,7 +236,7 @@ export function PaginaIncidentes() {
       i={i}
       agora={agora}
       reconhecendo={reconhecendo.has(i.id)}
-      aoReconhecer={(id) => void reconhecer(id)}
+      aoReconhecer={podeReconhecer ? (id) => void reconhecer(id) : null}
     />
   )
 
@@ -263,7 +266,7 @@ export function PaginaIncidentes() {
           const grupos = agruparIncidentes(itens)
           return (
             <div className="space-y-8">
-              {grupos.abertos.some((i) => i.acknowledged_at === null) && (
+              {podeReconhecer && grupos.abertos.some((i) => i.acknowledged_at === null) && (
                 <p id={ID_AJUDA_ACK} className="text-sm text-suave">
                   Reconhecer interrompe os lembretes; não resolve o incidente.
                 </p>

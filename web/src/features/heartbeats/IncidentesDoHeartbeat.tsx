@@ -7,6 +7,7 @@ import { useChavesDoProjeto, useIncidentesDoHeartbeat } from '@/lib/api/consulta
 import { textoDaCausa } from '@/lib/api/mensagens'
 import type { IncidenteDeHeartbeat } from '@/lib/api/schemas'
 import { dataHora } from '@/lib/format'
+import { usePode } from '@/lib/permissoes'
 import { ListaPaginadaDoHeartbeat } from './ListaPaginadaDoHeartbeat'
 
 const ID_AJUDA = 'ajuda-reconhecer-heartbeat'
@@ -27,6 +28,7 @@ export function IncidentesDoHeartbeat({
   const chave = useChavesDoProjeto()
   const consulta = useIncidentesDoHeartbeat(id)
   const titulo = useRef<HTMLHeadingElement>(null)
+  const podeReconhecer = usePode('edit_monitors')
 
   const { reconhecendo, reconhecer } = useReconhecer({
     enviar: (incidente) => api.reconhecerDoHeartbeat(id, incidente),
@@ -47,7 +49,7 @@ export function IncidentesDoHeartbeat({
           if (itens.length === 0) return <p className="text-suave">Nenhum incidente.</p>
           return (
             <>
-              {itens.some((i) => situacaoDoIncidente(i) === 'em-andamento') && (
+              {podeReconhecer && itens.some((i) => situacaoDoIncidente(i) === 'em-andamento') && (
                 <p id={ID_AJUDA} className="text-sm text-suave">
                   Reconhecer interrompe os lembretes; não resolve o incidente.
                 </p>
@@ -56,7 +58,7 @@ export function IncidentesDoHeartbeat({
                 {itens.map((i) => (
                   <li key={i.id} className="flex flex-wrap items-center justify-between gap-3 py-3">
                     <Descricao incidente={i} agora={agora} />
-                    {situacaoDoIncidente(i) === 'em-andamento' && (
+                    {podeReconhecer && situacaoDoIncidente(i) === 'em-andamento' && (
                       <BotaoQueSome
                         tipo="secundario"
                         tamanho="pequeno"

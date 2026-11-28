@@ -1133,6 +1133,13 @@ export function criarApiFalsa() {
     // Um projeto novo, vazio, de que o usuário é dono.
     criarProjeto,
     chamadas: (rotaChave: string) => st.chamadas.get(rotaChave) ?? 0,
+    // O papel do usuário num projeto da lista (projectResponse.role). Só o
+    // painel o lê: as rotas desta falsa não conferem o papel.
+    definirPapel(projetoId: string, papel: string) {
+      const p = st.projetos.find((x) => x.projeto.id === projetoId)
+      if (!p) throw new Error(`projeto ${projetoId} não existe na falsa`)
+      p.projeto.role = papel
+    },
     corpos: (rotaChave: string) => st.corpos.get(rotaChave) ?? [],
     // O navegador tem um refresh válido no pote: o boot entra sozinho.
     logado() {

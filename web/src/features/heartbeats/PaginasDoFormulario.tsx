@@ -2,18 +2,25 @@ import { useQueryClient } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router'
 import { useApiDoProjeto, useRotaDoProjeto } from '@/app/projeto'
+import { SemPermissao } from '@/app/SemPermissao'
 import { EstadoDaConsulta } from '@/components/EstadoDaConsulta'
 import { Titulo } from '@/components/Titulo'
 import { useAvisar } from '@/components/ui/avisos'
 import { useChavesDoProjeto, useHeartbeat } from '@/lib/api/consultas'
+import { usePode } from '@/lib/permissoes'
 import { DialogoDaUrlDePing } from './DialogoDaUrlDePing'
 import { comoEditavel, paraAlteracao, paraCriacao, valoresDe, valoresPadrao, type HeartbeatEditavel } from './esquema'
 import { AGENDAMENTO_NAO_SUPORTADO } from './estado'
 import { FormularioHeartbeat } from './FormularioHeartbeat'
 
+// Sem edit_monitors (a URL digitada), o formulário nem monta: o envio daria 403.
+export function PaginaNovoHeartbeat() {
+  return usePode('edit_monitors') ? <NovoHeartbeat /> : <SemPermissao />
+}
+
 // A resposta do POST fica só aqui, no estado da tela: nada de cache, de URL nem
 // de estado do router, que vai para o history.state.
-export function PaginaNovoHeartbeat() {
+function NovoHeartbeat() {
   const api = useApiDoProjeto()
   const chave = useChavesDoProjeto()
   const qc = useQueryClient()
@@ -52,6 +59,10 @@ export function PaginaNovoHeartbeat() {
 }
 
 export function PaginaEditarHeartbeat() {
+  return usePode('edit_monitors') ? <EditarHeartbeat /> : <SemPermissao />
+}
+
+function EditarHeartbeat() {
   const { id = '' } = useParams()
   const consulta = useHeartbeat(id)
   return (

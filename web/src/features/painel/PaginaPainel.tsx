@@ -9,6 +9,7 @@ import { Botao, BotaoQueSome, TITULO_DA_TELA } from '@/components/ui/botao'
 import { estiloDeCartao } from '@/components/ui/cartao'
 import { useCanais, useHeartbeats, useIncidentesAbertos, useResolvidosRecentes, useResumo, useResumoFiltrado, useSemRede } from '@/lib/api/consultas'
 import { mensagemDe } from '@/lib/api/mensagens'
+import { usePode } from '@/lib/permissoes'
 import type { ItemDoResumo } from '@/lib/api/schemas'
 import { cn } from '@/lib/utils'
 import { avisosDosCanais } from './avisos-dos-canais'
@@ -33,6 +34,7 @@ import { anunciaveis, mapaDeEstados, transicoes } from './transicoes'
 
 export function PaginaPainel() {
   const noProjeto = useRotaDoProjeto()
+  const podeCadastrar = usePode('edit_monitors')
   const consulta = useResumo()
   const heartbeats = useHeartbeats()
   const semRede = useSemRede()
@@ -55,17 +57,19 @@ export function PaginaPainel() {
     <>
       <div className="flex flex-wrap items-center justify-between gap-4">
         <Titulo aba="Painel">Painel</Titulo>
-        <div className="flex flex-wrap gap-2">
-          <Botao tipo="secundario" asChild>
-            <Link to={noProjeto('/heartbeats/new')}>Cadastrar heartbeat</Link>
-          </Botao>
-          <Botao asChild>
-            <Link to={noProjeto('/targets/new')}>
-              <Plus aria-hidden="true" className="size-4" />
-              Cadastrar alvo
-            </Link>
-          </Botao>
-        </div>
+        {podeCadastrar && (
+          <div className="flex flex-wrap gap-2">
+            <Botao tipo="secundario" asChild>
+              <Link to={noProjeto('/heartbeats/new')}>Cadastrar heartbeat</Link>
+            </Botao>
+            <Botao asChild>
+              <Link to={noProjeto('/targets/new')}>
+                <Plus aria-hidden="true" className="size-4" />
+                Cadastrar alvo
+              </Link>
+            </Botao>
+          </div>
+        )}
       </div>
       <AvisoDeCanais />
       <EstadoDaConsulta consulta={consulta} esqueleto={<EsqueletoDoPainel />}>
@@ -219,6 +223,7 @@ function ResultadoDosFiltros({
 // A frase de estado no topo (spec do redesign, Telas > 1), em Fraunces.
 function Manchete({ itens, tarefas, atualizadoEm }: PropsDosMonitores) {
   const noProjeto = useRotaDoProjeto()
+  const podeCadastrar = usePode('edit_monitors')
   const conhecida = manchete(itens, tarefas)
   const m = useSemRede() ? mancheteSemRede(conhecida) : conhecida
   const resolvidos = useResolvidosRecentes(m.tipo === 'tudo-no-ar')
@@ -226,12 +231,14 @@ function Manchete({ itens, tarefas, atualizadoEm }: PropsDosMonitores) {
     return (
       <div className="space-y-2">
         <h2 className="text-2xl sm:text-3xl">{textoDaManchete(m)}</h2>
-        <p className="text-suave">
-          Cadastre um endereço para o StillOn vigiar.{' '}
-          <Link to={noProjeto('/targets/new')} className="alvo-de-toque font-semibold text-primaria underline underline-offset-4">
-            Cadastrar o primeiro alvo
-          </Link>
-        </p>
+        {podeCadastrar && (
+          <p className="text-suave">
+            Cadastre um endereço para o StillOn vigiar.{' '}
+            <Link to={noProjeto('/targets/new')} className="alvo-de-toque font-semibold text-primaria underline underline-offset-4">
+              Cadastrar o primeiro alvo
+            </Link>
+          </p>
+        )}
       </div>
     )
   }

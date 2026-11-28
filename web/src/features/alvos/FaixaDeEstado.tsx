@@ -9,6 +9,7 @@ import type { Incidente, ItemDoResumo } from '@/lib/api/schemas'
 import type { EstadoExibido } from '@/lib/estado'
 import { dataHora } from '@/lib/format'
 import { cn } from '@/lib/utils'
+import { usePode } from '@/lib/permissoes'
 import { faixaDoEstado } from './estado-do-alvo'
 
 // Forma (ícone), cor (fundo 100 e ícone) e texto (título), como o selo. O
@@ -36,6 +37,7 @@ type Props = {
 // secundário não tem 3:1 sobre os tons 100 do escuro.
 export function FaixaDeEstado({ item, incidentes, agora, aoSumir, aoErrar }: Props) {
   const api = useApiDoProjeto()
+  const podeReconhecer = usePode('edit_monitors')
   const chave = useChavesDoProjeto()
   const idDoTitulo = useId()
   const idDaAjuda = useId()
@@ -95,7 +97,7 @@ export function FaixaDeEstado({ item, incidentes, agora, aoSumir, aoErrar }: Pro
           </p>
         )}
       </div>
-      {aberto && !aberto.acknowledged_at && (
+      {podeReconhecer && aberto && !aberto.acknowledged_at && (
         <div className="max-w-xs space-y-2">
           <Botao
             ref={botao}

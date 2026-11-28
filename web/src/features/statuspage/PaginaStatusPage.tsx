@@ -19,6 +19,7 @@ import { ApiError, type ErroDeCampo, naoEncontrado } from '@/lib/api/http'
 import { mensagemDe, mensagemDoCampo } from '@/lib/api/mensagens'
 import type { Alvo, PaginaDeStatus } from '@/lib/api/schemas'
 import { MENSAGEM_INVISIVEL, temInvisivel } from '@/lib/rotulo'
+import { usePode } from '@/lib/permissoes'
 import { cn } from '@/lib/utils'
 import { PreviaDaPagina } from './PreviaDaPagina'
 
@@ -83,6 +84,7 @@ function Formulario({ pagina, alvos }: { pagina: PaginaDeStatus | null; alvos: A
   const qc = useQueryClient()
   const avisar = useAvisar()
   const resumo = useResumo()
+  const podeEditar = usePode('manage_status_page')
   const [erro, setErro] = useState<string | null>(null)
   const [escolhido, setEscolhido] = useState('')
   const f = useForm<Valores>({
@@ -152,131 +154,138 @@ function Formulario({ pagina, alvos }: { pagina: PaginaDeStatus | null; alvos: A
   return (
     <form noValidate className={cn(estiloDeCartao, 'max-w-2xl space-y-6')} onSubmit={f.handleSubmit(enviar)}>
       <ErroDoFormulario>{erro}</ErroDoFormulario>
-      <Campo rotulo="Título" erro={e.title?.message}>
-        {(a) => (
-          <Entrada
-            {...a}
-            {...f.register('title', {
-              onBlur: (ev: { target: { value: string } }) => {
-                if (f.getValues('slug')) return
-                const sugestao = sugerirSlug(ev.target.value)
-                // Sugestão vazia ou curta demais não acusa erro antes de a pessoa mexer no campo.
-                if (sugestao) f.setValue('slug', sugestao, { shouldValidate: sugestao.length >= 3 })
-              },
-            })}
-          />
-        )}
-      </Campo>
-      <Campo
-        rotulo="Endereço (slug)"
-        erro={e.slug?.message}
-        ajuda="De 3 a 40 caracteres: letras minúsculas, números e hífens."
-      >
-        {(a) => <Entrada {...a} autoCapitalize="none" spellCheck={false} {...f.register('slug')} />}
-      </Campo>
-      <CaixaDeMarcar {...f.register('published')}>Publicada (visível para qualquer pessoa com o link)</CaixaDeMarcar>
+      {/* Sem manage_status_page, os campos só leem e não há envio; a prévia
+          fica. disabled no fieldset desabilita todos os controles de dentro. */}
+      <fieldset disabled={!podeEditar} className="min-w-0 space-y-6">
+        <Campo rotulo="Título" erro={e.title?.message}>
+          {(a) => (
+            <Entrada
+              {...a}
+              {...f.register('title', {
+                onBlur: (ev: { target: { value: string } }) => {
+                  if (f.getValues('slug')) return
+                  const sugestao = sugerirSlug(ev.target.value)
+                  // Sugestão vazia ou curta demais não acusa erro antes de a pessoa mexer no campo.
+                  if (sugestao) f.setValue('slug', sugestao, { shouldValidate: sugestao.length >= 3 })
+                },
+              })}
+            />
+          )}
+        </Campo>
+        <Campo
+          rotulo="Endereço (slug)"
+          erro={e.slug?.message}
+          ajuda="De 3 a 40 caracteres: letras minúsculas, números e hífens."
+        >
+          {(a) => <Entrada {...a} autoCapitalize="none" spellCheck={false} {...f.register('slug')} />}
+        </Campo>
+        <CaixaDeMarcar {...f.register('published')}>Publicada (visível para qualquer pessoa com o link)</CaixaDeMarcar>
 
-      <fieldset ref={lista} className="space-y-3">
-        <legend className="text-sm font-semibold">
-          Alvos na página{itens.fields.length > 0 && ` (${itens.fields.length} de ${MAX_ITENS})`}
-        </legend>
-        {alvos.length === 0 && itens.fields.length === 0 && (
-          // Nova aba, porque salvar um alvo leva ao detalhe dele e não há volta
-          // para cá: o que já foi digitado neste formulário fica como está.
-          <div className="space-y-2">
-            <p className="text-sm text-suave">Você ainda não tem alvos para mostrar nesta página.</p>
-            {/* Na volta da nova aba, o alvo novo chega e o link some: o foco
-                vai ao seletor, que nasce no mesmo commit. */}
-            <BotaoQueSome tipo="secundario" tamanho="pequeno" asChild reserva={seletorDeAlvo}>
-              <Link to={noProjeto('/targets/new')} target="_blank" rel="noopener">
-                Cadastrar primeiro alvo (abre em nova aba)
-              </Link>
-            </BotaoQueSome>
-          </div>
-        )}
-        {itens.fields.map((it, i) => (
-          <div key={it.id} className="grid grid-cols-1 items-end gap-3 sm:grid-cols-[minmax(0,1fr)_auto] rounded-padrao border border-borda p-3">
-            <Campo
-              rotulo={`Nome de exibição de ${nomeDoAlvo.get(it.target_id) ?? 'alvo apagado'}`}
-              erro={e.items?.[i]?.display_name?.message}
-            >
-              {(a) => <Entrada {...a} {...f.register(`items.${i}.display_name`)} />}
-            </Campo>
-            {/* Ordem por botões, não arrastar: teclado e leitor de tela.
-                Reordenar é secundário; Tirar, que remove, é terciário.
-                aria-disabled, e não disabled, nas pontas:
-                o botão que leva o item à ponta está com o foco, e
-                desabilitado o perderia para o <body> (como o Reconhecer).
-                A guarda fica no clique. */}
-            <div className="flex flex-wrap items-center gap-2">
+        <fieldset ref={lista} className="space-y-3">
+          <legend className="text-sm font-semibold">
+            Alvos na página{itens.fields.length > 0 && ` (${itens.fields.length} de ${MAX_ITENS})`}
+          </legend>
+          {alvos.length === 0 && itens.fields.length === 0 && (
+            // Nova aba, porque salvar um alvo leva ao detalhe dele e não há volta
+            // para cá: o que já foi digitado neste formulário fica como está.
+            <div className="space-y-2">
+              <p className="text-sm text-suave">Você ainda não tem alvos para mostrar nesta página.</p>
+              {/* Na volta da nova aba, o alvo novo chega e o link some: o foco
+                  vai ao seletor, que nasce no mesmo commit. O link não se
+                  desabilita no fieldset: some com ele. */}
+              {podeEditar && (
+                <BotaoQueSome tipo="secundario" tamanho="pequeno" asChild reserva={seletorDeAlvo}>
+                  <Link to={noProjeto('/targets/new')} target="_blank" rel="noopener">
+                    Cadastrar primeiro alvo (abre em nova aba)
+                  </Link>
+                </BotaoQueSome>
+              )}
+            </div>
+          )}
+          {itens.fields.map((it, i) => (
+            <div key={it.id} className="grid grid-cols-1 items-end gap-3 sm:grid-cols-[minmax(0,1fr)_auto] rounded-padrao border border-borda p-3">
+              <Campo
+                rotulo={`Nome de exibição de ${nomeDoAlvo.get(it.target_id) ?? 'alvo apagado'}`}
+                erro={e.items?.[i]?.display_name?.message}
+              >
+                {(a) => <Entrada {...a} {...f.register(`items.${i}.display_name`)} />}
+              </Campo>
+              {/* Ordem por botões, não arrastar: teclado e leitor de tela.
+                  Reordenar é secundário; Tirar, que remove, é terciário.
+                  aria-disabled, e não disabled, nas pontas:
+                  o botão que leva o item à ponta está com o foco, e
+                  desabilitado o perderia para o <body> (como o Reconhecer).
+                  A guarda fica no clique. */}
+              <div className="flex flex-wrap items-center gap-2">
+                <Botao
+                  tipo="secundario"
+                  tamanho="icone"
+                  title="Subir"
+                  aria-disabled={i === 0 || undefined}
+                  onClick={() => {
+                    if (i > 0) itens.move(i, i - 1)
+                  }}
+                  aria-label={`Subir ${nomeDoAlvo.get(it.target_id) ?? 'item'}`}
+                >
+                  <ArrowUp aria-hidden="true" className="size-5" />
+                </Botao>
+                <Botao
+                  tipo="secundario"
+                  tamanho="icone"
+                  title="Descer"
+                  aria-disabled={i === itens.fields.length - 1 || undefined}
+                  onClick={() => {
+                    if (i < itens.fields.length - 1) itens.move(i, i + 1)
+                  }}
+                  aria-label={`Descer ${nomeDoAlvo.get(it.target_id) ?? 'item'}`}
+                >
+                  <ArrowDown aria-hidden="true" className="size-5" />
+                </Botao>
+                <Botao
+                  tipo="terciario"
+                  tamanho="pequeno"
+                  data-tirar=""
+                  onClick={() => {
+                    focarDepoisDeTirar.current = i
+                    itens.remove(i)
+                  }}
+                  aria-label={`Tirar ${nomeDoAlvo.get(it.target_id) ?? 'item'} da página`}
+                >
+                  Tirar
+                </Botao>
+              </div>
+            </div>
+          ))}
+          {(e.items?.message ?? e.items?.root?.message) && (
+            <p className="text-sm text-perigo">{e.items?.message ?? e.items?.root?.message}</p>
+          )}
+          {livres.length > 0 && itens.fields.length < MAX_ITENS && (
+            <div className="flex flex-wrap items-end gap-2">
+              <Campo rotulo="Acrescentar alvo">
+                {(a) => (
+                  <Selecao {...a} ref={seletorDeAlvo} value={escolhido} onChange={(ev) => setEscolhido(ev.target.value)}>
+                    <option value="">Escolha…</option>
+                    {livres.map((al) => (
+                      <option key={al.id} value={al.id}>
+                        {al.name}
+                      </option>
+                    ))}
+                  </Selecao>
+                )}
+              </Campo>
               <Botao
                 tipo="secundario"
-                tamanho="icone"
-                title="Subir"
-                aria-disabled={i === 0 || undefined}
+                disabled={!escolhido}
                 onClick={() => {
-                  if (i > 0) itens.move(i, i - 1)
+                  itens.append({ target_id: escolhido, display_name: nomeDoAlvo.get(escolhido) ?? '' })
+                  setEscolhido('')
                 }}
-                aria-label={`Subir ${nomeDoAlvo.get(it.target_id) ?? 'item'}`}
               >
-                <ArrowUp aria-hidden="true" className="size-5" />
-              </Botao>
-              <Botao
-                tipo="secundario"
-                tamanho="icone"
-                title="Descer"
-                aria-disabled={i === itens.fields.length - 1 || undefined}
-                onClick={() => {
-                  if (i < itens.fields.length - 1) itens.move(i, i + 1)
-                }}
-                aria-label={`Descer ${nomeDoAlvo.get(it.target_id) ?? 'item'}`}
-              >
-                <ArrowDown aria-hidden="true" className="size-5" />
-              </Botao>
-              <Botao
-                tipo="terciario"
-                tamanho="pequeno"
-                data-tirar=""
-                onClick={() => {
-                  focarDepoisDeTirar.current = i
-                  itens.remove(i)
-                }}
-                aria-label={`Tirar ${nomeDoAlvo.get(it.target_id) ?? 'item'} da página`}
-              >
-                Tirar
+                Acrescentar
               </Botao>
             </div>
-          </div>
-        ))}
-        {(e.items?.message ?? e.items?.root?.message) && (
-          <p className="text-sm text-perigo">{e.items?.message ?? e.items?.root?.message}</p>
-        )}
-        {livres.length > 0 && itens.fields.length < MAX_ITENS && (
-          <div className="flex flex-wrap items-end gap-2">
-            <Campo rotulo="Acrescentar alvo">
-              {(a) => (
-                <Selecao {...a} ref={seletorDeAlvo} value={escolhido} onChange={(ev) => setEscolhido(ev.target.value)}>
-                  <option value="">Escolha…</option>
-                  {livres.map((al) => (
-                    <option key={al.id} value={al.id}>
-                      {al.name}
-                    </option>
-                  ))}
-                </Selecao>
-              )}
-            </Campo>
-            <Botao
-              tipo="secundario"
-              disabled={!escolhido}
-              onClick={() => {
-                itens.append({ target_id: escolhido, display_name: nomeDoAlvo.get(escolhido) ?? '' })
-                setEscolhido('')
-              }}
-            >
-              Acrescentar
-            </Botao>
-          </div>
-        )}
+          )}
+        </fieldset>
       </fieldset>
 
       {escolhidos.length > 0 && (
@@ -290,9 +299,11 @@ function Formulario({ pagina, alvos }: { pagina: PaginaDeStatus | null; alvos: A
         />
       )}
 
-      <Botao type="submit" disabled={f.formState.isSubmitting}>
-        {pagina ? 'Salvar' : 'Criar status page'}
-      </Botao>
+      {podeEditar && (
+        <Botao type="submit" disabled={f.formState.isSubmitting}>
+          {pagina ? 'Salvar' : 'Criar status page'}
+        </Botao>
+      )}
     </form>
   )
 }

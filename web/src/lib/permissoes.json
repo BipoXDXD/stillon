@@ -1,0 +1,6 @@
+{
+  "viewer": ["read"],
+  "member": ["read", "edit_monitors"],
+  "manager": ["read", "edit_monitors", "manage_channels", "manage_status_page", "invite_basic"],
+  "owner": ["read", "edit_monitors", "manage_channels", "manage_status_page", "invite_basic", "manage_members", "manage_project"]
+}

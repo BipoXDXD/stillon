@@ -18,6 +18,7 @@ import { ApiError } from '@/lib/api/http'
 import { mensagemDe, mensagemDoCampo, textoDoErroDeCanal } from '@/lib/api/mensagens'
 import type { Canal } from '@/lib/api/schemas'
 import { dataHora } from '@/lib/format'
+import { usePode } from '@/lib/permissoes'
 import { assertUnreachable, cn } from '@/lib/utils'
 
 // 'desconhecido' é um tipo que uma versão posterior do servidor criou: a linha
@@ -175,6 +176,8 @@ export function PaginaCanais() {
   const consulta = useCanais()
   const api = useApiDoProjeto()
   const chave = useChavesDoProjeto()
+  // Sem manage_channels, a lista fica, sem as ações.
+  const podeGerir = usePode('manage_channels')
   const qc = useQueryClient()
   const avisar = useAvisar()
   const [criando, setCriando] = useState(false)
@@ -280,7 +283,7 @@ export function PaginaCanais() {
         <Titulo aba="Canais">Canais de notificação</Titulo>
         {/* Vazio é o que o servidor respondeu: carregando ou com erro, o botão
             fica. Com a lista vazia, a ação primária é a do bloco. */}
-        {consulta.data?.items.length !== 0 && (
+        {podeGerir && consulta.data?.items.length !== 0 && (
           <BotaoQueSome reserva={TITULO_DA_TELA} onClick={() => setCriando(true)}>
             Novo canal
           </BotaoQueSome>
@@ -295,9 +298,11 @@ export function PaginaCanais() {
                 <Bell aria-hidden="true" className="size-6" />
               </span>
               <p className="text-suave">Nenhum canal. Sem canal verificado, os incidentes não notificam ninguém.</p>
-              <BotaoQueSome reserva={TITULO_DA_TELA} onClick={() => setCriando(true)}>
-                Novo canal
-              </BotaoQueSome>
+              {podeGerir && (
+                <BotaoQueSome reserva={TITULO_DA_TELA} onClick={() => setCriando(true)}>
+                  Novo canal
+                </BotaoQueSome>
+              )}
             </div>
           ) : (
             <ul className="space-y-3">
@@ -315,45 +320,47 @@ export function PaginaCanais() {
                       </p>
                     )}
                   </div>
-                  <div className="flex flex-wrap gap-2">
-                    {c.kind !== 'desconhecido' && (c.status === 'pending' || c.status === 'expired') && (
+                  {podeGerir && (
+                    <div className="flex flex-wrap gap-2">
+                      {c.kind !== 'desconhecido' && (c.status === 'pending' || c.status === 'expired') && (
+                        <Botao
+                          tipo="secundario"
+                          tamanho="pequeno"
+                          disabled={reenviando.has(c.id)}
+                          onClick={() => void reenviar(c)}
+                          aria-label={`Reenviar verificação do canal ${nomeDoCanal(c)}`}
+                        >
+                          Reenviar verificação
+                        </Botao>
+                      )}
+                      {/* Um botão só, que muda de texto: o foco devolvido pelo
+                          Confirmar ("Pausar") cai no mesmo elemento, agora "Retomar". */}
                       <Botao
                         tipo="secundario"
                         tamanho="pequeno"
-                        disabled={reenviando.has(c.id)}
-                        onClick={() => void reenviar(c)}
-                        aria-label={`Reenviar verificação do canal ${nomeDoCanal(c)}`}
+                        // aria-disabled, e não disabled: o Retomar não abre
+                        // diálogo, e o botão desabilitado perderia o foco para o
+                        // <body>. A guarda contra o clique duplo é a de alternar().
+                        aria-disabled={alternando.has(c.id) || undefined}
+                        onClick={() => {
+                          if (emVoo.current.has(c.id)) return
+                          if (c.enabled) setPausar(c)
+                          else void alternar(c)
+                        }}
+                        aria-label={`${c.enabled ? 'Pausar' : 'Retomar'} o canal ${nomeDoCanal(c)}`}
                       >
-                        Reenviar verificação
+                        {c.enabled ? 'Pausar' : 'Retomar'}
                       </Botao>
-                    )}
-                    {/* Um botão só, que muda de texto: o foco devolvido pelo
-                        Confirmar ("Pausar") cai no mesmo elemento, agora "Retomar". */}
-                    <Botao
-                      tipo="secundario"
-                      tamanho="pequeno"
-                      // aria-disabled, e não disabled: o Retomar não abre
-                      // diálogo, e o botão desabilitado perderia o foco para o
-                      // <body>. A guarda contra o clique duplo é a de alternar().
-                      aria-disabled={alternando.has(c.id) || undefined}
-                      onClick={() => {
-                        if (emVoo.current.has(c.id)) return
-                        if (c.enabled) setPausar(c)
-                        else void alternar(c)
-                      }}
-                      aria-label={`${c.enabled ? 'Pausar' : 'Retomar'} o canal ${nomeDoCanal(c)}`}
-                    >
-                      {c.enabled ? 'Pausar' : 'Retomar'}
-                    </Botao>
-                    <Botao
-                      tipo="terciario"
-                      tamanho="pequeno"
-                      onClick={() => setApagar(c)}
-                      aria-label={`Apagar o canal ${nomeDoCanal(c)}`}
-                    >
-                      Apagar
-                    </Botao>
-                  </div>
+                      <Botao
+                        tipo="terciario"
+                        tamanho="pequeno"
+                        onClick={() => setApagar(c)}
+                        aria-label={`Apagar o canal ${nomeDoCanal(c)}`}
+                      >
+                        Apagar
+                      </Botao>
+                    </div>
+                  )}
                 </li>
               ))}
             </ul>

@@ -16,6 +16,7 @@ import { naoEncontrado } from '@/lib/api/http'
 import { mensagemDe, textoDaCausa } from '@/lib/api/mensagens'
 import type { Heartbeat } from '@/lib/api/schemas'
 import { dataHora } from '@/lib/format'
+import { usePode } from '@/lib/permissoes'
 import { NavegacaoDaLista } from '@/features/painel/NavegacaoDaLista'
 import { assertUnreachable } from '@/lib/utils'
 import { DialogoDaUrlDePing } from './DialogoDaUrlDePing'
@@ -41,6 +42,7 @@ function DetalheDoHeartbeat({ id }: { id: string }) {
   const qc = useQueryClient()
   const navegar = useNavigate()
   const noProjeto = useRotaDoProjeto()
+  const podeEditar = usePode('edit_monitors')
   const avisar = useAvisar()
   const consulta = useHeartbeat(id)
   // A mesma chave do log: o botão de limpar some quando ele está vazio.
@@ -171,45 +173,48 @@ function DetalheDoHeartbeat({ id }: { id: string }) {
                 <SeloDeEstado estado={estadoDoHeartbeat(hb.state)} texto={textoDoHeartbeat(hb.state)} />
                 <ListaDeTags tags={hb.tags} />
               </div>
-              <div className="flex flex-wrap gap-2">
-                <Botao tipo="secundario" aria-disabled={ocupado || undefined} onClick={() => void sinalizar()}>
-                  Sinalizar agora
-                </Botao>
-                {/* Num agendamento de versão posterior, todo PATCH e o clone são
-                    409 schedule_unsupported: editar, duplicar, pausar e retomar
-                    ficam de fora. Apagar, limpar e gerar nova URL seguem. */}
-                {comoEditavel(hb) !== null && (
-                  <>
-                    <Botao tipo="secundario" asChild>
-                      <Link to={noProjeto(`/heartbeats/${id}/edit`)}>Editar</Link>
-                    </Botao>
-                    <Botao tipo="secundario" aria-disabled={ocupado || undefined} onClick={() => void duplicar()}>
-                      Duplicar
-                    </Botao>
-                    {/* Um botão só, que muda de texto: o foco devolvido pelo
-                        Confirmar ("Pausar") cai no mesmo elemento, agora "Retomar". */}
-                    <Botao
-                      tipo="terciario"
-                      aria-disabled={ocupado || undefined}
-                      onClick={() => {
-                        if (ocupado) return
-                        if (hb.enabled) setConfirmando('pausar')
-                        else void alternar(true)
-                      }}
-                    >
-                      {hb.enabled ? 'Pausar' : 'Retomar'}
-                    </Botao>
-                  </>
-                )}
-                {temEventos && (
-                  <Botao tipo="terciario" onClick={() => setConfirmando('limpar')}>
-                    Limpar eventos
+              {/* Sem edit_monitors, nenhuma ação: todas mexem no heartbeat. */}
+              {podeEditar && (
+                <div className="flex flex-wrap gap-2">
+                  <Botao tipo="secundario" aria-disabled={ocupado || undefined} onClick={() => void sinalizar()}>
+                    Sinalizar agora
                   </Botao>
-                )}
-                <Botao tipo="terciario" onClick={() => setConfirmando('apagar')}>
-                  Apagar
-                </Botao>
-              </div>
+                  {/* Num agendamento de versão posterior, todo PATCH e o clone são
+                      409 schedule_unsupported: editar, duplicar, pausar e retomar
+                      ficam de fora. Apagar, limpar e gerar nova URL seguem. */}
+                  {comoEditavel(hb) !== null && (
+                    <>
+                      <Botao tipo="secundario" asChild>
+                        <Link to={noProjeto(`/heartbeats/${id}/edit`)}>Editar</Link>
+                      </Botao>
+                      <Botao tipo="secundario" aria-disabled={ocupado || undefined} onClick={() => void duplicar()}>
+                        Duplicar
+                      </Botao>
+                      {/* Um botão só, que muda de texto: o foco devolvido pelo
+                          Confirmar ("Pausar") cai no mesmo elemento, agora "Retomar". */}
+                      <Botao
+                        tipo="terciario"
+                        aria-disabled={ocupado || undefined}
+                        onClick={() => {
+                          if (ocupado) return
+                          if (hb.enabled) setConfirmando('pausar')
+                          else void alternar(true)
+                        }}
+                      >
+                        {hb.enabled ? 'Pausar' : 'Retomar'}
+                      </Botao>
+                    </>
+                  )}
+                  {temEventos && (
+                    <Botao tipo="terciario" onClick={() => setConfirmando('limpar')}>
+                      Limpar eventos
+                    </Botao>
+                  )}
+                  <Botao tipo="terciario" onClick={() => setConfirmando('apagar')}>
+                    Apagar
+                  </Botao>
+                </div>
+              )}
             </div>
             {hb.description !== '' && <p className="max-w-prose break-words whitespace-pre-wrap">{hb.description}</p>}
           </div>
@@ -217,7 +222,7 @@ function DetalheDoHeartbeat({ id }: { id: string }) {
           <Sinais hb={hb} agora={new Date(consulta.dataUpdatedAt)} />
           <IncidentesDoHeartbeat id={id} agora={new Date(consulta.dataUpdatedAt)} aoErrar={setErro} aoSumir={() => void sumiu()} />
           <EventosDoHeartbeat id={id} />
-          <UrlDePing aoGerar={() => setConfirmando('rotacionar')} />
+          {podeEditar && <UrlDePing aoGerar={() => setConfirmando('rotacionar')} />}
 
           <Confirmar
             aberto={confirmando === 'pausar'}
