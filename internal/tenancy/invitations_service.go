@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -28,6 +29,8 @@ func NewInvitations(repo InvitationRepository, mailer InvitationMailer, clk cloc
 // muda a resposta: o convite está gravado, aparece no painel e pode ser
 // reenviado; e a resposta não pode depender do envio.
 func (s *Invitations) Invite(ctx context.Context, actorID, projectID uuid.UUID, email, role string) (Invitation, error) {
+	// A coluna guarda o e-mail em caixa baixa e o aceite compara assim.
+	email = strings.ToLower(email)
 	papel, err := ParseRole(role)
 	if err != nil {
 		return Invitation{}, err

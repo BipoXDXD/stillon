@@ -101,6 +101,19 @@ func TestInviteSendsAfterCommitWithToken(t *testing.T) {
 	}
 }
 
+// A coluna guarda o e-mail em caixa baixa (CHECK da 00049) e o aceite compara
+// assim: o domínio baixa a caixa antes do repositório e do envio.
+func TestInviteLowercasesEmail(t *testing.T) {
+	svc, repo, mailer := novoServicoDeConvites(t)
+	if _, err := svc.Invite(context.Background(), uuid.New(), uuid.New(), "Novo@Exemplo.com", "viewer"); err != nil {
+		t.Fatal(err)
+	}
+	if repo.recebido.Email != "novo@exemplo.com" || mailer.recebido.To != "novo@exemplo.com" {
+		t.Errorf("repositório recebeu %q e o envio %q; queria novo@exemplo.com nos dois",
+			repo.recebido.Email, mailer.recebido.To)
+	}
+}
+
 // Dois convites nunca dividem o token.
 func TestInviteTokensAreFresh(t *testing.T) {
 	svc, _, mailer := novoServicoDeConvites(t)
