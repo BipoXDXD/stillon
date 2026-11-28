@@ -39,17 +39,28 @@ func TestHostThrottleAllowsBurstThenWaits(t *testing.T) {
 	}
 }
 
-// O balde é do host canônico (safedial.DialedHost): caixa não separa hosts.
+// O balde é do host canônico: caixa, ponto final e grafias do mesmo IP não
+// separam hosts. Os hosts chegam como url.URL.Hostname() os devolve (IPv6 sem
+// colchetes).
 func TestHostThrottleIsPerCanonicalHost(t *testing.T) {
-	teto := novoTetoPorHost(RequisicoesPorHostPorMinuto, RajadaPorHost)
-	for range RajadaPorHost {
-		teto.Reservar("Exemplo.COM", instanteDoTeto)
-	}
-	if _, ok := teto.Reservar("exemplo.com", instanteDoTeto); ok {
-		t.Error("exemplo.com ganhou balde próprio; devia dividir o de Exemplo.COM")
-	}
-	if _, ok := teto.Reservar("outro.com", instanteDoTeto); !ok {
-		t.Error("outro.com foi recusado pelo balde de exemplo.com")
+	for _, caso := range []struct{ nome, gasta, depois string }{
+		{"caixa", "Exemplo.COM", "exemplo.com"},
+		{"ponto final", "exemplo.com.", "exemplo.com"},
+		{"IPv6 com zeros", "2001:0db8::1", "2001:db8::1"},
+		{"IPv4 mapeado em IPv6", "::ffff:192.0.2.1", "192.0.2.1"},
+	} {
+		t.Run(caso.nome, func(t *testing.T) {
+			teto := novoTetoPorHost(RequisicoesPorHostPorMinuto, RajadaPorHost)
+			for range RajadaPorHost {
+				teto.Reservar(caso.gasta, instanteDoTeto)
+			}
+			if _, ok := teto.Reservar(caso.depois, instanteDoTeto); ok {
+				t.Errorf("%s ganhou balde próprio; devia dividir o de %s", caso.depois, caso.gasta)
+			}
+			if _, ok := teto.Reservar("outro.com", instanteDoTeto); !ok {
+				t.Errorf("outro.com foi recusado pelo balde de %s", caso.gasta)
+			}
+		})
 	}
 }
 

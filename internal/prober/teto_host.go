@@ -2,6 +2,8 @@ package prober
 
 import (
 	"math"
+	"net/netip"
+	"strings"
 	"sync"
 	"time"
 
@@ -21,8 +23,8 @@ const (
 // podaDosBaldes é de quanto em quanto tempo os baldes parados saem do mapa.
 const podaDosBaldes = time.Minute
 
-// tetoPorHost é um balde de fichas por host canônico (safedial.DialedHost):
-// Exemplo.COM e exemplo.com dividem o balde.
+// tetoPorHost é um balde de fichas por host canônico (hostCanonico):
+// Exemplo.COM, exemplo.com. e exemplo.com dividem o balde.
 type tetoPorHost struct {
 	mu        sync.Mutex
 	porSeg    float64 // fichas que chegam por segundo
@@ -48,8 +50,8 @@ func novoTetoPorHost(porMinuto, rajada int) *tetoPorHost {
 // próxima e não gasta nada. Host que não canonicaliza segue sem teto: a sonda
 // o recusa adiante, como antes do teto.
 func (t *tetoPorHost) Reservar(host string, agora time.Time) (espera time.Duration, ok bool) {
-	host, canonico := safedial.DialedHost(host)
-	if !canonico || host == "" {
+	host, canonico := hostCanonico(host)
+	if !canonico {
 		return 0, true
 	}
 	t.mu.Lock()
@@ -70,6 +72,26 @@ func (t *tetoPorHost) Reservar(host string, agora time.Time) (espera time.Durati
 	}
 	falta := (1 - b.fichas) / t.porSeg
 	return time.Duration(math.Ceil(falta * float64(time.Second))), false
+}
+
+// hostCanonico é a chave do balde: o nome que o safedial disca
+// (DialedHost: caixa e IDNA), sem o ponto final, e o IP literal na forma
+// curta e sem o mapeamento IPv4 em IPv6. Sem isso, exemplo.com. e
+// 2001:0db8::1 ganhariam balde próprio e furariam o teto do mesmo destino.
+// Recebe o host como url.URL.Hostname() o devolve, sem colchetes.
+func hostCanonico(host string) (string, bool) {
+	nome, ok := safedial.DialedHost(host)
+	if !ok {
+		return "", false
+	}
+	nome = strings.TrimSuffix(nome, ".")
+	if nome == "" {
+		return "", false
+	}
+	if ip, err := netip.ParseAddr(nome); err == nil {
+		return ip.Unmap().String(), true
+	}
+	return nome, true
 }
 
 // fichasEm é o saldo do balde em agora, com o reabastecimento desde a última
