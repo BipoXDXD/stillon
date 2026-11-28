@@ -52,6 +52,7 @@ var chamadoresDeInUserTx = map[string]string{
 	"internal/account/cadastro.go":      "emissão de confirmação do endereço da própria conta",
 	"internal/account/recuperacao.go":   "emissão de redefinição da senha da conta",
 	"internal/account/tokens.go":        "conclusão da entrega dos links da conta",
+	"internal/account/uso.go":           "relatório de uso do titular para o operador (CLI)",
 	"internal/auth/provas.go":           "provas de família de sessão (00029)",
 	"internal/exportacao/exportacao.go": "exportação: conta, sessões, auditoria e a lista de vínculos da pessoa; os projetos vão em InProjectTx",
 	"internal/tenancy/pgstore/store.go": "projects e project_members: a lista e o Projeto padrão da pessoa",
@@ -262,10 +263,12 @@ func achadosDeGUCDeProjeto(arquivo, sql string) []string {
 // ScopeToProject, que escrevem em app.project_id, e só para zerá-lo durante a
 // contagem e devolvê-lo ao valor que guardaram (nenhuma liga projeto novo). A
 // 00045 tem as do titular; a 00051, cota_do_receptor, a cota de quem recebe a
-// titularidade, que só o pendente da proposta chama (PR 4.3).
+// titularidade, que só o pendente da proposta chama (PR 4.3); a 00054,
+// uso_do_titular, o relatório de uso para o operador (PR 5.7).
 var migrationsDaCota = []string{
 	filepath.Join("migrations", "00045_contagem_de_cota_do_titular.sql"),
 	filepath.Join("migrations", "00051_transferencia_de_titular.sql"),
+	filepath.Join("migrations", "00054_uso_do_titular.sql"),
 }
 
 var (

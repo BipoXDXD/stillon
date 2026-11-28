@@ -333,7 +333,10 @@ func TestQuotaPoliciesAndFunctionsAreContained(t *testing.T) {
 			t.Errorf("a política %s cita app.cota_ com polcmd %q; queria só SELECT ('r')", p.nome, p.cmd)
 		}
 	}
-	quer := []string{"heartbeats_cota_select", "notif_channels_cota_select", "projects_cota_select", "targets_cota_select"}
+	// project_members e project_invitations (00054): os vínculos e os convites
+	// que uso_do_titular conta.
+	quer := []string{"heartbeats_cota_select", "notif_channels_cota_select", "project_invitations_cota_select",
+		"project_members_cota_select", "projects_cota_select", "targets_cota_select"}
 	if !slices.Equal(nomes, quer) {
 		t.Errorf("políticas que citam app.cota_: %v; queria exatamente %v", nomes, quer)
 	}
@@ -370,9 +373,9 @@ func TestQuotaPoliciesAndFunctionsAreContained(t *testing.T) {
 		}
 	}
 	// cota_do_receptor e cota_urls_com_regra_do_receptor (00051): a cota de
-	// quem recebe a titularidade.
+	// quem recebe a titularidade; uso_do_titular (00054): o relatório de uso.
 	quer = []string{"cota_alvos_do_titular", "cota_canais_do_titular", "cota_do_receptor", "cota_heartbeats_do_titular",
-		"cota_urls_com_regra_do_receptor", "cota_urls_com_regra_do_titular"}
+		"cota_urls_com_regra_do_receptor", "cota_urls_com_regra_do_titular", "uso_do_titular"}
 	if !slices.Equal(nomes, quer) {
 		t.Errorf("funções que citam app.cota_: %v; queria exatamente %v", nomes, quer)
 	}

@@ -16,6 +16,7 @@ import (
 	"github.com/BipoXDXD/stillon/internal/account"
 	"github.com/BipoXDXD/stillon/internal/auth"
 	"github.com/BipoXDXD/stillon/internal/clock"
+	"github.com/BipoXDXD/stillon/internal/contaemail"
 	"github.com/BipoXDXD/stillon/internal/storage"
 )
 
@@ -26,7 +27,7 @@ const (
 	saidaAmbiente      = 1 // banco, papel com rolsuper/rolbypassrls, migration
 	saidaUso           = 2 // flag, e-mail, DATABASE_URL, senha fora da política, suspend do operador
 	saidaJaExiste      = 3 // create: o e-mail já tem conta; nada mudou
-	saidaNaoCadastrado = 4 // set-password, reset-2fa, suspend, unsuspend: e-mail não cadastrado; nada mudou
+	saidaNaoCadastrado = 4 // set-password, reset-2fa, suspend, unsuspend, usage: e-mail não cadastrado; nada mudou
 	// saidaInterrompida é Ctrl-C ou SIGTERM, em qualquer fase: 128 + SIGINT,
 	// o que o shell mostra para um programa interrompido por Ctrl-C. Separado
 	// do 1 para um script distinguir "o operador desistiu" de "o ambiente está
@@ -114,6 +115,7 @@ const usoUser = `uso:
   stillon user reset-2fa --email <e-mail>     desliga o 2FA e encerra todas as sessões
   stillon user suspend --email <e-mail>       suspende a conta e encerra todas as sessões
   stillon user unsuspend --email <e-mail>     reativa a conta suspensa
+  stillon user usage --email <e-mail>         mostra o uso da conta diante das cotas
 
 A senha (create, set-password) vem do stdin: num terminal, é pedida duas
 vezes, sem eco; num pipe, é a única linha da entrada. Os outros subcomandos
@@ -170,7 +172,7 @@ func runUser(ctx context.Context, args []string, in entradaDaSenha, stdout, stde
 	if codigo != saidaOK {
 		return codigo
 	}
-	svc, fechar, err := abrirServico(ctx, dsn)
+	svc, emails, fechar, err := abrirServico(ctx, dsn)
 	if err != nil {
 		return c.falhar(saidaAmbiente, "%v", err)
 	}
@@ -187,6 +189,8 @@ func runUser(ctx context.Context, args []string, in entradaDaSenha, stdout, stde
 		return c.runSuspend(svc, e)
 	case "unsuspend":
 		return c.runUnsuspend(svc, e)
+	case "usage":
+		return c.runUsage(svc, emails, e)
 	default:
 		// Inalcançável: o subcomando foi validado no começo. Um subcomando
 		// novo que esqueça este switch falha em vez de cair no reset-2fa.
@@ -197,7 +201,7 @@ func runUser(ctx context.Context, args []string, in entradaDaSenha, stdout, stde
 // subcomandoConhecido diz se sub tem despacho no switch de runUser.
 func subcomandoConhecido(sub string) bool {
 	switch sub {
-	case "create", "set-password", "reset-2fa", "suspend", "unsuspend":
+	case "create", "set-password", "reset-2fa", "suspend", "unsuspend", "usage":
 		return true
 	}
 	return false
@@ -236,25 +240,99 @@ func (c cliUser) lerArgumentos(sub string, args []string, getenv func(string) st
 	return email, dsn, saidaOK
 }
 
-// abrirServico abre o pool e monta o serviço de contas; fechar libera o pool.
-func abrirServico(ctx context.Context, dsn string) (svc *account.Service, fechar func(), err error) {
+// abrirServico abre o pool e monta o serviço de contas e o teto de e-mails de
+// conta (que só o usage lê); fechar libera o pool.
+func abrirServico(ctx context.Context, dsn string) (svc *account.Service, emails *storage.TetoDeEmailsDeConta, fechar func(), err error) {
 	// A mesma ordem do boot: o papel antes da migration. Num
 	// banco virgem, migrar como superusuário criaria as tabelas com o dono
 	// errado, e o papel comum depois não conseguiria usá-las.
 	pool, err := storage.NewPoolNamed(ctx, dsn, "stillon-user")
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	if err := storage.CheckRole(ctx, pool); err != nil {
 		pool.Close()
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	if err := storage.Migrate(ctx, dsn); err != nil {
 		pool.Close()
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	// Sem segundo fator e sem chave de IP: o CLI não troca senha pela API.
-	return account.NewService(pool, nil, clock.Real{}, nil), pool.Close, nil
+	svc = account.NewService(pool, nil, clock.Real{}, nil)
+	emails = storage.NewTetoDeEmailsDeConta(pool, clock.Real{}, contaemail.TetoDiario, contaemail.TetoDiarioPorConta)
+	return svc, emails, pool.Close, nil
+}
+
+// runUsage mostra o uso da conta diante das cotas do plano dela. Só lê: não
+// muda nada nem audita, e não lê senha. ACIMA marca o que passa estritamente
+// do limite (no limite exato a conta está cheia, não acima). Membros comparam
+// vínculos mais convites pendentes, como o portão do convite.
+func (c cliUser) runUsage(svc *account.Service, emails *storage.TetoDeEmailsDeConta, e string) int {
+	uso, err := svc.Usage(c.ctx, e, emails)
+	if errors.Is(err, account.ErrUserNotFound) {
+		return c.falharNaoCadastrado(e)
+	}
+	if err != nil {
+		return c.falhar(saidaAmbiente, "%v", err)
+	}
+	fmt.Fprint(c.stdout, formatarUso(uso))
+	return saidaOK
+}
+
+// formatarUso monta a saída do usage. O nome do projeto é do usuário e sai
+// com %q: aspas e caracteres de controle chegam escapados ao terminal do
+// operador.
+func formatarUso(uso account.Uso) string {
+	var b strings.Builder
+	plano := "grátis"
+	if uso.Operador {
+		plano = "operador"
+	}
+	estado := "ativa"
+	if uso.SuspensaEm != nil {
+		estado = "suspensa desde " + uso.SuspensaEm.UTC().Format("2006-01-02 15:04") + " UTC"
+	}
+	fmt.Fprintf(&b, "conta: %s (%s, %s)\n", uso.Email, plano, estado)
+
+	l := uso.Limites
+	var alvos, heartbeats int64
+	for _, p := range uso.Projetos {
+		alvos += p.Alvos
+		heartbeats += p.Heartbeats
+	}
+	fmt.Fprintf(&b, "projetos: %d/%d%s\n", len(uso.Projetos), l.Projetos, acima(int64(len(uso.Projetos)), int64(l.Projetos)))
+	fmt.Fprintf(&b, "alvos: %d/%d%s\n", alvos, l.Alvos, acima(alvos, l.Alvos))
+	fmt.Fprintf(&b, "heartbeats: %d/%d%s\n", heartbeats, l.Heartbeats, acima(heartbeats, l.Heartbeats))
+	fmt.Fprintf(&b, "e-mails de conta hoje: %d/%d (global %d/%d)\n",
+		uso.EmailsHoje, contaemail.TetoDiarioPorConta, uso.EmailsHojeGlobal, contaemail.TetoDiario)
+
+	for _, p := range uso.Projetos {
+		padrao := ""
+		if p.Padrao {
+			padrao = " (padrão)"
+		}
+		convites := ""
+		switch {
+		case p.Convites == 1:
+			convites = " (+1 convite)"
+		case p.Convites > 1:
+			convites = fmt.Sprintf(" (+%d convites)", p.Convites)
+		}
+		fmt.Fprintf(&b, "projeto %q%s: %d alvos, %d heartbeats, %d/%d canais%s, %d/%d membros%s%s\n",
+			p.Nome, padrao, p.Alvos, p.Heartbeats,
+			p.Canais, l.CanaisPorProjeto, acima(p.Canais, l.CanaisPorProjeto),
+			p.Membros, l.MembrosPorProjeto, convites, acima(p.Membros+p.Convites, int64(l.MembrosPorProjeto)))
+	}
+	return b.String()
+}
+
+// acima marca o valor que passa estritamente do limite.
+func acima(valor, limite int64) string {
+	if valor > limite {
+		return " ACIMA"
+	}
+	return ""
 }
 
 // runReset2FA desliga o 2FA. Não lê senha: quem tem a DATABASE_URL já pode
