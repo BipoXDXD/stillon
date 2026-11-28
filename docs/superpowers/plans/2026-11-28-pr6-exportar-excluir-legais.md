@@ -244,7 +244,7 @@ Os outros recursos ficam com `user_id` NULL; esta decisão é só sobre os canai
 
 ### Sub-PR 6.1 — Textos legais e aceite
 
-#### T1: Versão dos termos, migration M e gravação no cadastro (esforço M)
+### Task 1: Versão dos termos, migration M e gravação no cadastro (esforço M)
 
 **Arquivos**
 - Criar: `internal/legal/versao.go`, `internal/legal/versao_test.go`, `internal/storage/migrations/<M>_aceite_dos_termos.sql`.
@@ -289,7 +289,7 @@ O binário anterior insere sem as colunas: as duas ficam NULL e o CHECK aceita. 
 - [ ] **Passo 4:** os mesmos testes passam. Rodar `go build ./... && go vet ./... && make test`.
 - [ ] **Passo 5:** commit `feat(cadastro): grava a versão dos termos aceita`.
 
-#### T2: Páginas `/termos` e `/privacidade` e caixa de aceite (esforço M)
+### Task 2: Páginas `/termos` e `/privacidade` e caixa de aceite (esforço M)
 
 O visual é funcional, no padrão das telas públicas atuais. O acabamento fica para o T11.
 
@@ -327,7 +327,7 @@ O visual é funcional, no padrão das telas públicas atuais. O acabamento fica 
 
 ### Sub-PR 6.2 — Expand e excluir projeto
 
-#### T3: Migration M+1 e leitores de `user_id` anulável (esforço L)
+### Task 3: Migration M+1 e leitores de `user_id` anulável (esforço L)
 
 **Arquivos**
 - Criar:
@@ -391,7 +391,7 @@ CREATE POLICY projects_do_projeto_delete ON projects FOR DELETE
 
 **Correção levada do plano do PR 7 (risco R1):** a guarda `guardar_notificacao_no_projeto` (00043) trata `recurso_dono IS NULL` como recurso escondido e descarta o aviso. Com `user_id` anulável, o aviso de um recurso cujo criador excluiu a conta sumiria. A migration M+1 do T3 troca a função para resolver o projeto pelo `project_id` do recurso, e não pelo dono. Teste a mais no T3: `TestNotificacaoComCriadorApagadoPassa` (alvo e canal no projeto de A, criado por B, que excluiu a conta: o INSERT em `notifications` sob `InProberTx` entra). Sabotagem: manter o `IF recurso_dono IS NULL`.
 
-#### T4: `DELETE /api/v1/projects/{projectID}` (esforço M)
+### Task 4: `DELETE /api/v1/projects/{projectID}` (esforço M)
 
 **Arquivos**
 - Alterar:
@@ -439,7 +439,7 @@ CREATE POLICY projects_do_projeto_delete ON projects FOR DELETE
 
 ### Sub-PR 6.3 — Excluir conta
 
-#### T5: Escopo `InAccountDeletionTx` (esforço S)
+### Task 5: Escopo `InAccountDeletionTx` (esforço S)
 
 **Arquivos**
 - Alterar: `internal/storage/scope.go`.
@@ -464,7 +464,7 @@ func InAccountDeletionTx(ctx context.Context, b Beginner, userID uuid.UUID,
 - [ ] **Passo 4:** o teste passa, e o `guarda_escopo_test` continua verde.
 - [ ] **Passo 5:** commit `feat(storage): escopo da exclusão de conta`.
 
-#### T6: `account.ExcluirConta` e `PreviaDaExclusao` (esforço L)
+### Task 6: `account.ExcluirConta` e `PreviaDaExclusao` (esforço L)
 
 **Arquivos**
 - Criar: `internal/account/exclusao.go`, `internal/account/exclusao_test.go`, `internal/storage/queries/exclusao.sql`.
@@ -528,7 +528,7 @@ O e-mail de aviso (D8) sai no handler, depois do commit.
 - [ ] **Passo 4:** `go build ./... && go vet ./... && make test`.
 - [ ] **Passo 5:** commit `feat(conta): exclusão de conta com prévia e bloqueio do titular`.
 
-#### T7: Rotas `GET /me/deletion-preview` e `DELETE /me` (esforço M)
+### Task 7: Rotas `GET /me/deletion-preview` e `DELETE /me` (esforço M)
 
 **Arquivos**
 - Criar: `internal/httpapi/exclusaohandlers.go`, `internal/httpapi/exclusao_integration_test.go`.
@@ -555,7 +555,7 @@ O e-mail de aviso (D8) sai no handler, depois do commit.
 
 ### Sub-PR 6.4 — Exportar
 
-#### T8: Pacote `internal/exportacao` (esforço M)
+### Task 8: Pacote `internal/exportacao` (esforço M)
 
 **Arquivos**
 - Criar: `internal/exportacao/exportacao.go`, `internal/exportacao/exportacao_test.go`.
@@ -601,7 +601,7 @@ O e-mail de aviso (D8) sai no handler, depois do commit.
 - [ ] **Passo 4:** `go build ./... && go vet ./... && make test`.
 - [ ] **Passo 5:** commit `feat(conta): exportação dos dados da conta`.
 
-#### T9: Rota `GET /api/v1/me/export` (esforço S)
+### Task 9: Rota `GET /api/v1/me/export` (esforço S)
 
 **Arquivos**
 - Criar: `internal/httpapi/exportacaohandlers.go`, mais o teste de integração.
@@ -627,7 +627,7 @@ O e-mail de aviso (D8) sai no handler, depois do commit.
 
 ### Sub-PR 6.5 — Painel
 
-#### T10: Design das telas de conta (para e espera o dono) (esforço M)
+### Task 10: Design das telas de conta (para e espera o dono) (esforço M)
 
 - Skills: `frontend-design:frontend-design`, `design-skills:ux-writing`, `design-skills:interaction-design`, `design-skills:design-systems`, `design-skills:accessibility-audit` (WCAG 2.2 AA).
 - Entrega:
@@ -637,7 +637,7 @@ O e-mail de aviso (D8) sai no handler, depois do commit.
   - a tipografia das páginas legais.
 - **PARE** e apresente ao dono. Só siga para o T11 com o D1 decidido.
 
-#### T11: Telas de exportar, excluir conta e excluir projeto (esforço M)
+### Task 11: Telas de exportar, excluir conta e excluir projeto (esforço M)
 
 **Arquivos**
 - Criar: `web/src/features/configuracoes/SeusDados.tsx`, `ExclusaoDeConta.tsx`.
@@ -671,7 +671,7 @@ O e-mail de aviso (D8) sai no handler, depois do commit.
 
 ### Sub-PR 6.6 — Ligar o cadastro público em produção (por último)
 
-#### T12: Manifesto, testes de infraestrutura e runbook (esforço S de código)
+### Task 12: Manifesto, testes de infraestrutura e runbook (esforço S de código)
 
 **Pré-requisitos**
 - 6.1–6.5 no ar.
