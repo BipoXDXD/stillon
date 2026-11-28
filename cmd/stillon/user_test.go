@@ -682,8 +682,9 @@ func stdinProibido(t *testing.T) entradaDaSenha {
 	}
 }
 
-// suspend: conta comum suspende e conta as sessões; e-mail sem conta é 4;
-// operador é 2 e não muda nada. Nenhum caso lê o stdin.
+// suspend: conta comum suspende e conta as sessões; de novo, nada muda nem
+// audita; e-mail sem conta é 4; operador é 2 e não muda nada. Nenhum caso lê
+// o stdin.
 func TestUserSuspendCLI(t *testing.T) {
 	pool := testdb.New(t)
 	dsn := testdb.DSN(t)
@@ -703,8 +704,8 @@ func TestUserSuspendCLI(t *testing.T) {
 	}{
 		{"conta comum", []string{"suspend", "--email", "abuso@exemplo.com"}, saidaOK,
 			"conta suspensa; 2 sessões encerradas\n", ""},
-		{"de novo, sem sessões", []string{"suspend", "--email", "abuso@exemplo.com"}, saidaOK,
-			"conta suspensa; 0 sessões encerradas\n", ""},
+		{"já suspensa", []string{"suspend", "--email", "abuso@exemplo.com"}, saidaOK,
+			"a conta já estava suspensa; nada mudou\n", ""},
 		{"sem conta", []string{"suspend", "--email", "ninguem@exemplo.com"}, saidaNaoCadastrado,
 			"", "stillon user: nenhum usuário com o e-mail ninguem@exemplo.com; nada foi alterado\n"},
 		{"operador", []string{"suspend", "--email", "dono@exemplo.com"}, saidaUso,
@@ -721,24 +722,32 @@ func TestUserSuspendCLI(t *testing.T) {
 			}
 		})
 	}
+	// Uma sessão viva numa conta já suspensa (plantada por fora) é encerrada
+	// mesmo assim, e a saída diz isso em vez de "nada mudou".
+	testdb.FamiliaSintetica(t, comum, agora, agora.Add(time.Hour), []byte("token-3"), []byte("ip"))
+	r := rodarUserCom(t, dsn, stdinProibido(t), nil, "suspend", "--email", "abuso@exemplo.com")
+	if quer := "a conta já estava suspensa; 1 sessão encerrada\n"; r.codigo != saidaOK || r.stdout != quer {
+		t.Errorf("suspend de conta suspensa com sessão viva: código %d, stdout %q; queria 0 e %q", r.codigo, r.stdout, quer)
+	}
 	if !suspensa(t, pool, "abuso@exemplo.com") {
 		t.Error("a conta comum não ficou suspensa")
 	}
 	if suspensa(t, pool, "dono@exemplo.com") {
 		t.Error("o operador ficou suspenso")
 	}
-	if n := auditorias(t, pool, "user.suspended"); n != 2 {
-		t.Errorf("%d auditorias user.suspended, queria 2 (a recusa do operador não audita)", n)
+	if n := auditorias(t, pool, "user.suspended"); n != 1 {
+		t.Errorf("%d auditorias user.suspended, queria 1 (a repetição e a recusa do operador não auditam)", n)
 	}
 }
 
-// unsuspend: conta suspensa volta; e-mail sem conta é 4. Nenhum caso lê o
-// stdin.
+// unsuspend: conta suspensa volta; conta ativa (de novo, ou o operador) não
+// muda nem audita; e-mail sem conta é 4. Nenhum caso lê o stdin.
 func TestUserUnsuspendCLI(t *testing.T) {
 	pool := testdb.New(t)
 	dsn := testdb.DSN(t)
 	comum := contaComum(t, pool, "abuso@exemplo.com")
 	testdb.Suspender(t, comum)
+	testdb.Operador(t, contaComum(t, pool, "dono@exemplo.com"))
 
 	casos := []struct {
 		nome           string
@@ -748,6 +757,10 @@ func TestUserUnsuspendCLI(t *testing.T) {
 	}{
 		{"conta suspensa", []string{"unsuspend", "--email", "abuso@exemplo.com"}, saidaOK,
 			"conta reativada; as sessões encerradas não voltam: o dono entra de novo\n", ""},
+		{"não suspensa", []string{"unsuspend", "--email", "abuso@exemplo.com"}, saidaOK,
+			"a conta não estava suspensa; nada mudou\n", ""},
+		{"operador", []string{"unsuspend", "--email", "dono@exemplo.com"}, saidaOK,
+			"a conta não estava suspensa; nada mudou\n", ""},
 		{"sem conta", []string{"unsuspend", "--email", "ninguem@exemplo.com"}, saidaNaoCadastrado,
 			"", "stillon user: nenhum usuário com o e-mail ninguem@exemplo.com; nada foi alterado\n"},
 		{"argumento sobrando", []string{"unsuspend", "--email", "abuso@exemplo.com", "x"}, saidaUso,
@@ -766,7 +779,7 @@ func TestUserUnsuspendCLI(t *testing.T) {
 		t.Error("a conta continua suspensa")
 	}
 	if n := auditorias(t, pool, "user.unsuspended"); n != 1 {
-		t.Errorf("%d auditorias user.unsuspended, queria 1", n)
+		t.Errorf("%d auditorias user.unsuspended, queria 1 (conta ativa não audita)", n)
 	}
 }
 

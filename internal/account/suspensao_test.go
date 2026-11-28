@@ -34,9 +34,12 @@ func TestSuspendRevokesSessionsAndAudits(t *testing.T) {
 		t.Fatalf("o cenário tem %d famílias vivas, queria 2", n)
 	}
 
-	revogadas, err := c.svc.Suspend(context.Background(), emailDoDono)
+	mudou, revogadas, err := c.svc.Suspend(context.Background(), emailDoDono)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if !mudou {
+		t.Error("Suspend de conta ativa devolveu mudou = false")
 	}
 	if revogadas != 2 {
 		t.Errorf("Suspend devolveu %d revogadas, queria 2", revogadas)
@@ -52,29 +55,60 @@ func TestSuspendRevokesSessionsAndAudits(t *testing.T) {
 	}
 }
 
-// Suspender de novo não move o instante: vale o da primeira suspensão.
-func TestSuspendKeepsFirstTimestamp(t *testing.T) {
+// Suspender de novo não muda nada: o instante da primeira suspensão fica, e
+// não há auditoria nova. A revogação roda de novo, de propósito: uma família
+// que exista (aqui, plantada por fora) é encerrada.
+func TestSuspendAgainChangesNothingNorAudits(t *testing.T) {
 	c := montar(t)
 	primeira := c.clk.Now()
-	if _, err := c.svc.Suspend(context.Background(), emailDoDono); err != nil {
+	if _, _, err := c.svc.Suspend(context.Background(), emailDoDono); err != nil {
 		t.Fatal(err)
 	}
 	c.clk.Advance(time.Hour)
-	if _, err := c.svc.Suspend(context.Background(), emailDoDono); err != nil {
+	familiaPreexistente(t, c, c.user)
+	mudou, revogadas, err := c.svc.Suspend(context.Background(), emailDoDono)
+	if err != nil {
 		t.Fatal(err)
+	}
+	if mudou {
+		t.Error("Suspend de conta já suspensa devolveu mudou = true")
+	}
+	if revogadas != 1 {
+		t.Errorf("Suspend repetido revogou %d famílias, queria 1 (a plantada)", revogadas)
 	}
 	if em := suspensaEm(t, c.pool, c.user); em == nil || !em.Equal(primeira) {
 		t.Errorf("suspended_at = %v, queria o da primeira suspensão (%v)", em, primeira)
+	}
+	if n := eventos(t, c.pool, c.user, "user.suspended"); n != 1 {
+		t.Errorf("%d auditorias user.suspended, queria 1 (só a primeira)", n)
+	}
+}
+
+// Reativar conta que não está suspensa não muda nada nem audita.
+func TestUnsuspendActiveAccountChangesNothingNorAudits(t *testing.T) {
+	c := montar(t)
+	mudou, err := c.svc.Unsuspend(context.Background(), emailDoDono)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mudou {
+		t.Error("Unsuspend de conta ativa devolveu mudou = true")
+	}
+	if n := eventos(t, c.pool, c.user, "user.unsuspended"); n != 0 {
+		t.Errorf("%d auditorias user.unsuspended, queria 0", n)
+	}
+	if n := familiasVivas(t, c.pool, c.user); n != 1 {
+		t.Errorf("a conta ativa ficou com %d famílias vivas, queria 1", n)
 	}
 }
 
 // E-mail sem conta é ErrUserNotFound, nas duas direções.
 func TestSuspendUnknownEmailIsNotFound(t *testing.T) {
 	c := montar(t)
-	if _, err := c.svc.Suspend(context.Background(), "ninguem@exemplo.com"); !errors.Is(err, account.ErrUserNotFound) {
+	if _, _, err := c.svc.Suspend(context.Background(), "ninguem@exemplo.com"); !errors.Is(err, account.ErrUserNotFound) {
 		t.Errorf("Suspend de e-mail sem conta: %v, queria ErrUserNotFound", err)
 	}
-	if err := c.svc.Unsuspend(context.Background(), "ninguem@exemplo.com"); !errors.Is(err, account.ErrUserNotFound) {
+	if _, err := c.svc.Unsuspend(context.Background(), "ninguem@exemplo.com"); !errors.Is(err, account.ErrUserNotFound) {
 		t.Errorf("Unsuspend de e-mail sem conta: %v, queria ErrUserNotFound", err)
 	}
 }
@@ -85,12 +119,12 @@ func TestOperatorCannotBeSuspended(t *testing.T) {
 	c := montar(t)
 	testdb.Operador(t, c.user)
 
-	revogadas, err := c.svc.Suspend(context.Background(), emailDoDono)
+	mudou, revogadas, err := c.svc.Suspend(context.Background(), emailDoDono)
 	if !errors.Is(err, account.ErrOperatorNotSuspendable) {
 		t.Fatalf("Suspend do operador: %v, queria ErrOperatorNotSuspendable", err)
 	}
-	if revogadas != 0 {
-		t.Errorf("a recusa contou %d revogadas", revogadas)
+	if mudou || revogadas != 0 {
+		t.Errorf("a recusa devolveu mudou = %v e %d revogadas", mudou, revogadas)
 	}
 	if em := suspensaEm(t, c.pool, c.user); em != nil {
 		t.Errorf("o operador ficou com suspended_at = %v", em)
@@ -107,11 +141,15 @@ func TestOperatorCannotBeSuspended(t *testing.T) {
 // encerradas pela suspensão não voltam.
 func TestUnsuspendClearsAndAudits(t *testing.T) {
 	c := montar(t)
-	if _, err := c.svc.Suspend(context.Background(), emailDoDono); err != nil {
+	if _, _, err := c.svc.Suspend(context.Background(), emailDoDono); err != nil {
 		t.Fatal(err)
 	}
-	if err := c.svc.Unsuspend(context.Background(), emailDoDono); err != nil {
+	mudou, err := c.svc.Unsuspend(context.Background(), emailDoDono)
+	if err != nil {
 		t.Fatal(err)
+	}
+	if !mudou {
+		t.Error("Unsuspend de conta suspensa devolveu mudou = false")
 	}
 	if em := suspensaEm(t, c.pool, c.user); em != nil {
 		t.Errorf("suspended_at = %v depois de reativar, queria nulo", em)

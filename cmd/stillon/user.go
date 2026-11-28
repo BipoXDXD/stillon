@@ -276,9 +276,10 @@ func (c cliUser) runReset2FA(svc *account.Service, e string) int {
 }
 
 // runSuspend suspende uma conta comum e encerra as sessões dela. O operador é
-// recusado como uso errado (2), sem mudar nada. Não lê senha.
+// recusado como uso errado (2), sem mudar nada. Conta já suspensa sai com 0,
+// como o reset-2fa com o 2FA desligado. Não lê senha.
 func (c cliUser) runSuspend(svc *account.Service, e string) int {
-	n, err := svc.Suspend(c.ctx, e)
+	mudou, n, err := svc.Suspend(c.ctx, e)
 	if errors.Is(err, account.ErrUserNotFound) {
 		return c.falharNaoCadastrado(e)
 	}
@@ -288,19 +289,30 @@ func (c cliUser) runSuspend(svc *account.Service, e string) int {
 	if err != nil {
 		return c.falhar(saidaAmbiente, "%v", err)
 	}
-	fmt.Fprintf(c.stdout, "conta suspensa; %s\n", sessoesEncerradas(n))
+	switch {
+	case mudou:
+		fmt.Fprintf(c.stdout, "conta suspensa; %s\n", sessoesEncerradas(n))
+	case n == 0:
+		fmt.Fprintln(c.stdout, "a conta já estava suspensa; nada mudou")
+	default:
+		fmt.Fprintf(c.stdout, "a conta já estava suspensa; %s\n", sessoesEncerradas(n))
+	}
 	return saidaOK
 }
 
 // runUnsuspend reativa a conta. As sessões encerradas pela suspensão não
-// voltam. Não lê senha.
+// voltam. Conta que não estava suspensa sai com 0. Não lê senha.
 func (c cliUser) runUnsuspend(svc *account.Service, e string) int {
-	err := svc.Unsuspend(c.ctx, e)
+	mudou, err := svc.Unsuspend(c.ctx, e)
 	if errors.Is(err, account.ErrUserNotFound) {
 		return c.falharNaoCadastrado(e)
 	}
 	if err != nil {
 		return c.falhar(saidaAmbiente, "%v", err)
+	}
+	if !mudou {
+		fmt.Fprintln(c.stdout, "a conta não estava suspensa; nada mudou")
+		return saidaOK
 	}
 	fmt.Fprintln(c.stdout, "conta reativada; as sessões encerradas não voltam: o dono entra de novo")
 	return saidaOK

@@ -118,16 +118,17 @@ DELETE FROM totp_recovery_codes WHERE user_id = $1;
 -- name: UserIsOperator :one
 SELECT is_operator FROM users WHERE id = sqlc.arg(id);
 
--- A suspensão (stillon user suspend). O COALESCE guarda o primeiro instante:
--- suspender de novo não o move. O operador não se suspende: zero linhas.
+-- A suspensão (stillon user suspend). Zero linhas quando nada muda: a conta
+-- já suspensa (o primeiro instante fica) ou o operador, que não se suspende.
 -- name: SuspendUser :execrows
-UPDATE users SET suspended_at = COALESCE(suspended_at, sqlc.arg(now)::timestamptz)
- WHERE id = sqlc.arg(id) AND NOT is_operator;
+UPDATE users SET suspended_at = sqlc.arg(now)::timestamptz
+ WHERE id = sqlc.arg(id) AND NOT is_operator AND suspended_at IS NULL;
 
--- A reativação (stillon user unsuspend). As sessões encerradas pela
--- suspensão não voltam.
+-- A reativação (stillon user unsuspend). Zero linhas quando a conta não
+-- estava suspensa. As sessões encerradas pela suspensão não voltam.
 -- name: UnsuspendUser :execrows
-UPDATE users SET suspended_at = NULL WHERE id = sqlc.arg(id);
+UPDATE users SET suspended_at = NULL
+ WHERE id = sqlc.arg(id) AND suspended_at IS NOT NULL;
 
 -- A suspensão relida sob a trava do usuário, na emissão e na rotação de
 -- sessão (auth.Manager).

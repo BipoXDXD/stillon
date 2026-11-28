@@ -279,8 +279,8 @@ func (q *Queries) ResetTOTP(ctx context.Context, id uuid.UUID) (int64, error) {
 }
 
 const suspendUser = `-- name: SuspendUser :execrows
-UPDATE users SET suspended_at = COALESCE(suspended_at, $1::timestamptz)
- WHERE id = $2 AND NOT is_operator
+UPDATE users SET suspended_at = $1::timestamptz
+ WHERE id = $2 AND NOT is_operator AND suspended_at IS NULL
 `
 
 type SuspendUserParams struct {
@@ -288,8 +288,8 @@ type SuspendUserParams struct {
 	ID  uuid.UUID
 }
 
-// A suspensão (stillon user suspend). O COALESCE guarda o primeiro instante:
-// suspender de novo não o move. O operador não se suspende: zero linhas.
+// A suspensão (stillon user suspend). Zero linhas quando nada muda: a conta
+// já suspensa (o primeiro instante fica) ou o operador, que não se suspende.
 func (q *Queries) SuspendUser(ctx context.Context, arg SuspendUserParams) (int64, error) {
 	result, err := q.db.Exec(ctx, suspendUser, arg.Now, arg.ID)
 	if err != nil {
@@ -326,11 +326,12 @@ func (q *Queries) SwapUserHash(ctx context.Context, arg SwapUserHashParams) (int
 }
 
 const unsuspendUser = `-- name: UnsuspendUser :execrows
-UPDATE users SET suspended_at = NULL WHERE id = $1
+UPDATE users SET suspended_at = NULL
+ WHERE id = $1 AND suspended_at IS NOT NULL
 `
 
-// A reativação (stillon user unsuspend). As sessões encerradas pela
-// suspensão não voltam.
+// A reativação (stillon user unsuspend). Zero linhas quando a conta não
+// estava suspensa. As sessões encerradas pela suspensão não voltam.
 func (q *Queries) UnsuspendUser(ctx context.Context, id uuid.UUID) (int64, error) {
 	result, err := q.db.Exec(ctx, unsuspendUser, id)
 	if err != nil {

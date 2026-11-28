@@ -16,56 +16,78 @@ import (
 // não muda nada.
 var ErrOperatorNotSuspendable = errors.New("a conta do operador não pode ser suspensa")
 
-// Suspend marca suspended_at (mantém o primeiro instante), revoga todas as
-// famílias de sessão e audita user.suspended, numa transação. Devolve
-// ErrUserNotFound para e-mail não cadastrado e ErrOperatorNotSuspendable para
-// o operador; revogadas conta as famílias vivas, como o ResetPassword.
+// Suspend marca suspended_at, revoga todas as famílias de sessão e audita
+// user.suspended, numa transação. Devolve ErrUserNotFound para e-mail não
+// cadastrado e ErrOperatorNotSuspendable para o operador; revogadas conta as
+// famílias vivas, como o ResetPassword.
+//
+// Conta já suspensa: mudou volta false, o primeiro instante fica e não há
+// auditoria. A revogação roda mesmo assim: encerrar o que estiver vivo é
+// inofensivo, e a emissão e a rotação já recusam suspenso, então em regra não
+// há o que encerrar.
 //
 // A marca e a revogação vão sob a trava de sessões do usuário, a mesma da
 // emissão e da rotação (auth.Manager), que releem a suspensão sob ela: ou a
 // suspensão comita antes (e a emissão ou a rotação recusa), ou a sessão comita
 // antes (e a revogação daqui a alcança).
-func (s *Service) Suspend(ctx context.Context, email string) (revogadas int64, err error) {
+func (s *Service) Suspend(ctx context.Context, email string) (mudou bool, revogadas int64, err error) {
 	now := s.clk.Now()
 	err = s.inTx(ctx, func(q *db.Queries) error {
 		userID, err := usuarioTravado(ctx, q, email)
 		if err != nil {
 			return err
 		}
+		operador, err := q.UserIsOperator(ctx, userID)
+		if err != nil {
+			return fmt.Errorf("ler se é operador: %w", err)
+		}
+		if operador {
+			return ErrOperatorNotSuspendable
+		}
 		n, err := q.SuspendUser(ctx, db.SuspendUserParams{ID: userID, Now: now})
 		if err != nil {
 			return fmt.Errorf("suspender usuário: %w", err)
 		}
-		if n == 0 {
-			return ErrOperatorNotSuspendable
-		}
+		mudou = n == 1
 		revogadas, err = q.RevokeAllFamilies(ctx, db.RevokeAllFamiliesParams{UserID: userID, Now: now})
 		if err != nil {
 			return fmt.Errorf("revogar sessões: %w", err)
 		}
+		if !mudou {
+			return nil
+		}
 		return audit(ctx, q, userID, "user.suspended", nil, nil, nil, now)
 	})
 	if err != nil {
-		return 0, err
+		return false, 0, err
 	}
-	return revogadas, nil
+	return mudou, revogadas, nil
 }
 
 // Unsuspend limpa suspended_at e audita user.unsuspended. As sessões
-// encerradas pela suspensão não voltam: o dono faz login de novo. Devolve
+// encerradas pela suspensão não voltam: o dono faz login de novo. Conta que
+// não estava suspensa: mudou volta false, sem auditoria. Devolve
 // ErrUserNotFound para e-mail não cadastrado.
-func (s *Service) Unsuspend(ctx context.Context, email string) error {
+func (s *Service) Unsuspend(ctx context.Context, email string) (mudou bool, err error) {
 	now := s.clk.Now()
-	return s.inTx(ctx, func(q *db.Queries) error {
+	err = s.inTx(ctx, func(q *db.Queries) error {
 		userID, err := usuarioTravado(ctx, q, email)
 		if err != nil {
 			return err
 		}
-		if _, err := q.UnsuspendUser(ctx, userID); err != nil {
+		n, err := q.UnsuspendUser(ctx, userID)
+		if err != nil {
 			return fmt.Errorf("reativar usuário: %w", err)
+		}
+		if mudou = n == 1; !mudou {
+			return nil
 		}
 		return audit(ctx, q, userID, "user.unsuspended", nil, nil, nil, now)
 	})
+	if err != nil {
+		return false, err
+	}
+	return mudou, nil
 }
 
 // usuarioTravado acha o usuário pelo e-mail, liga o escopo dele (RLS de
