@@ -52,10 +52,13 @@ func TestPrepareSkipsRevokedInvitation(t *testing.T) {
 	envio := &envioFalso{}
 	m := convitemail.New(pool, relogio, envio, account.Links{Base: "https://stillon.tech"})
 	if err := m.SendInvitation(ctx, tenancy.InvitationEmail{
-		To: "b@y.com", ProjectName: "Loja", InviterEmail: "a@y.com", Role: tenancy.RoleMember,
+		To: "b@y.com", ProjectName: "Loja", InviterEmail: "a@y.com", InviterID: a, Role: tenancy.RoleMember,
 		Token: token, TokenHash: crypto.HashToken(token),
 	}); err != nil {
 		t.Fatal(err)
+	}
+	if envio.entrega.Conta != a {
+		t.Errorf("o convite foi com a conta %v, queria quem convida (%v)", envio.entrega.Conta, a)
 	}
 	if envio.chamadas != 1 || envio.para != "b@y.com" || !strings.Contains(envio.corpo, "https://stillon.tech/invite#token="+token+"\n") {
 		t.Fatalf("enfileirado: para %q, corpo %q", envio.para, envio.corpo)

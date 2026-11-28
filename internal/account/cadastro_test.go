@@ -25,7 +25,10 @@ import (
 )
 
 // emailEnviado é o que o mailer falso recebeu.
-type emailEnviado struct{ to, subject, body string }
+type emailEnviado struct {
+	to, subject, body string
+	conta             uuid.UUID
+}
 
 // mailerFalso grava os e-mails de conta, em vez de enfileirá-los.
 type mailerFalso struct {
@@ -35,7 +38,7 @@ type mailerFalso struct {
 
 func (m *mailerFalso) SendAccountEmail(ctx context.Context, to, subject, body string, entrega account.EntregaDeEmail) error {
 	m.mu.Lock()
-	m.enviados = append(m.enviados, emailEnviado{to, subject, body})
+	m.enviados = append(m.enviados, emailEnviado{to, subject, body, entrega.Conta})
 	m.mu.Unlock()
 	if entrega.Concluir != nil {
 		return entrega.Concluir(ctx, account.AceitoPeloTransporte)
@@ -831,5 +834,41 @@ func TestCadastrarComMailerForaDoArDevolveNilNosDoisRamos(t *testing.T) {
 	}
 	if strings.Contains(saida, "fulano") || strings.Contains(saida, "token") {
 		t.Errorf("o log traz o endereço ou o token: %s", saida)
+	}
+}
+
+// O reenvio da confirmação leva a conta da sessão até o enviador (o teto por
+// conta); o cadastro e o "esqueci a senha" não têm conta conhecida e vão
+// com uuid.Nil.
+func TestResendConfirmationCarriesAccount(t *testing.T) {
+	a := novoCadastro(t)
+	ctx := context.Background()
+	if err := a.cad.Cadastrar(ctx, "fulano@exemplo.com", senha); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.cad.Cadastrar(ctx, "fulano@exemplo.com", senha); err != nil {
+		t.Fatal(err)
+	}
+	for i, e := range a.mailer.todos() {
+		if e.conta != uuid.Nil {
+			t.Errorf("e-mail %d do cadastro com a conta %v, queria uuid.Nil", i, e.conta)
+		}
+	}
+	a.mailer.limpar()
+	u := idDoEmail(t, "fulano@exemplo.com")
+
+	if err := a.cad.ReenviarConfirmacao(ctx, u); err != nil {
+		t.Fatal(err)
+	}
+	if e := a.mailer.todos(); len(e) != 1 || e[0].conta != u {
+		t.Fatalf("reenvio = %+v, queria um e-mail com a conta %v", e, u)
+	}
+
+	r, m := novaRecuperacao(a.pool, a.clk)
+	if err := r.PedirRedefinicao(ctx, "fulano@exemplo.com"); err != nil {
+		t.Fatal(err)
+	}
+	if e := m.todos(); len(e) != 1 || e[0].conta != uuid.Nil {
+		t.Fatalf("esqueci a senha = %+v, queria um e-mail com uuid.Nil", e)
 	}
 }

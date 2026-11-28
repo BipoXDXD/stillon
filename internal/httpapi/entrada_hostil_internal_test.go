@@ -185,7 +185,7 @@ func conferirConsultaHostil(t *testing.T, nome string, h http.HandlerFunc, consu
 
 type carteiroQueNaoEnvia struct{}
 
-func (carteiroQueNaoEnvia) SendVerification(context.Context, crypto.Secret, string) error {
+func (carteiroQueNaoEnvia) SendVerification(context.Context, uuid.UUID, crypto.Secret, string) error {
 	return nil
 }
 

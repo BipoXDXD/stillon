@@ -75,9 +75,13 @@ func novoServicoDeConvites(t *testing.T) (*tenancy.Invitations, *repoDeConvitesF
 // destinatário e o papel do convite.
 func TestInviteSendsAfterCommitWithToken(t *testing.T) {
 	svc, repo, mailer := novoServicoDeConvites(t)
-	inv, err := svc.Invite(context.Background(), uuid.New(), uuid.New(), "b@x.com", "member")
+	quemConvida := uuid.New()
+	inv, err := svc.Invite(context.Background(), quemConvida, uuid.New(), "b@x.com", "member")
 	if err != nil {
 		t.Fatal(err)
+	}
+	if mailer.recebido.InviterID != quemConvida {
+		t.Errorf("e-mail com InviterID %v, queria quem convida (%v)", mailer.recebido.InviterID, quemConvida)
 	}
 	if got := *repo.eventos; !slices.Equal(got, []string{"create", "send"}) {
 		t.Fatalf("ordem das chamadas = %v; queria create e depois send", got)

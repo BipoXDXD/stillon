@@ -17,12 +17,15 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/BipoXDXD/stillon/internal/account"
 	"github.com/BipoXDXD/stillon/internal/apierr"
 	"github.com/BipoXDXD/stillon/internal/auth"
 	"github.com/BipoXDXD/stillon/internal/contaemail"
 	"github.com/BipoXDXD/stillon/internal/crypto"
 	"github.com/BipoXDXD/stillon/internal/httpapi"
+	"github.com/BipoXDXD/stillon/internal/storage"
 	"github.com/BipoXDXD/stillon/internal/turnstile"
 	"github.com/BipoXDXD/stillon/internal/turnstile/turnstiletest"
 )
@@ -578,9 +581,12 @@ type tetoFalso struct {
 	consultas atomic.Int32
 }
 
-func (tf *tetoFalso) Reservar(context.Context) (bool, error) {
+func (tf *tetoFalso) Reservar(context.Context, uuid.UUID) (string, error) {
 	tf.consultas.Add(1)
-	return tf.libera, nil
+	if tf.libera {
+		return "", nil
+	}
+	return storage.RecusaTeto, nil
 }
 
 // baldeDeDestinatarioFalso libera ou recusa toda consulta do trabalhador.
@@ -685,5 +691,64 @@ func TestSignupLimitePorIP(t *testing.T) {
 	exigirErro(t, "6º signup", signup(t, a, "fulano@exemplo.com"), http.StatusTooManyRequests, apierr.CodeRateLimited)
 	if n := contarUsuarios(t, a); n != 1 {
 		t.Errorf("%d usuários, queria só o da fixture", n)
+	}
+}
+
+// Com o teto da conta esgotado, o reenvio da confirmação responde como o
+// reenvio que sai (202 sem corpo), e nada chega ao provedor.
+func TestSuppressedAccountEmailKeepsSameResponse(t *testing.T) {
+	if testing.Short() {
+		t.Skip("precisa de Docker; pulado em -short")
+	}
+	cenarios := []struct {
+		nome     string
+		esgotar  bool
+		entregas int32
+		daConta  int
+	}{
+		{nome: "sai", entregas: 1, daConta: 1},
+		{nome: "teto da conta esgotado", esgotar: true, daConta: contaemail.TetoDiarioPorConta},
+	}
+	var livre *respostaCrua
+	for _, c := range cenarios {
+		t.Run(c.nome, func(t *testing.T) {
+			a := newAPI(t)
+			if _, err := a.pool.Exec(t.Context(),
+				`UPDATE users SET email_verified_at = NULL WHERE id = $1`, a.userID); err != nil {
+				t.Fatal(err)
+			}
+			teto := storage.NewTetoDeEmailsDeConta(a.pool, a.clk, contaemail.TetoDiario, contaemail.TetoDiarioPorConta)
+			if c.esgotar {
+				for range contaemail.TetoDiarioPorConta {
+					if recusa, err := teto.Reservar(t.Context(), a.userID); err != nil || recusa != "" {
+						t.Fatalf("esgotar o teto da conta: %q, %v", recusa, err)
+					}
+				}
+			}
+			transporte := &transporteContado{}
+			enviador := contaemail.New(transporte, teto, &baldeDeDestinatarioFalso{libera: true}, testIPHashKey, slog.New(slog.DiscardHandler))
+			ctx, parar := context.WithCancel(context.Background())
+			rodando := make(chan struct{})
+			go func() { defer close(rodando); enviador.Rodar(ctx) }()
+			t.Cleanup(func() { parar(); <-rodando })
+			a.trocarMailerDeConta(t, enviador)
+
+			status, corpo := lerCru(t, a, http.MethodPost, "/api/v1/auth/email/resend", tokenDe(t, a, a.userID), nil)
+			parar()
+			<-rodando
+			r := respostaCrua{status: status, corpo: corpo}
+			exigir202SemCorpo(t, "reenvio", r)
+			if n := transporte.entregas.Load(); n != c.entregas {
+				t.Errorf("%d entregas, queria %d", n, c.entregas)
+			}
+			if n, err := teto.EnviadosHojePelaConta(t.Context(), a.userID); err != nil || n != c.daConta {
+				t.Errorf("e-mails da conta hoje = %d, %v; queria %d", n, err, c.daConta)
+			}
+			if livre == nil {
+				livre = &r
+			} else {
+				exigirIguais(t, "reenvio: suprimido × enviado", *livre, r)
+			}
+		})
 	}
 }

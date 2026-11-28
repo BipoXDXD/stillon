@@ -49,7 +49,7 @@ func (s *Invitations) Invite(ctx context.Context, actorID, projectID uuid.UUID, 
 	if err != nil {
 		return Invitation{}, err
 	}
-	msg.To, msg.Role, msg.Token, msg.TokenHash = email, papel, token, hash
+	msg.To, msg.Role, msg.Token, msg.TokenHash, msg.InviterID = email, papel, token, hash, actorID
 	if err := s.mailer.SendInvitation(ctx, msg); err != nil {
 		// O erro pode conter dados da mensagem: o log é fixo.
 		slog.ErrorContext(ctx, "e-mail de convite não enfileirado")

@@ -21,7 +21,10 @@ import (
 )
 
 // emailDeRecuperacao é uma chamada ao carteiro falso.
-type emailDeRecuperacao struct{ para, assunto, corpo string }
+type emailDeRecuperacao struct {
+	para, assunto, corpo string
+	conta                uuid.UUID
+}
 
 // carteiro é o AccountMailer dos testes: guarda o que mandaram enviar.
 type carteiro struct {
@@ -31,7 +34,7 @@ type carteiro struct {
 
 func (c *carteiro) SendAccountEmail(ctx context.Context, to, subject, body string, entrega account.EntregaDeEmail) error {
 	c.mu.Lock()
-	c.enviados = append(c.enviados, emailDeRecuperacao{to, subject, body})
+	c.enviados = append(c.enviados, emailDeRecuperacao{to, subject, body, entrega.Conta})
 	c.mu.Unlock()
 	if entrega.Concluir != nil {
 		return entrega.Concluir(ctx, account.AceitoPeloTransporte)

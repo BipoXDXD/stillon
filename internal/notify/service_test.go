@@ -37,14 +37,16 @@ func (f *testadorFalso) quantos() int {
 
 type carteiroFalso struct {
 	mu        sync.Mutex
+	contas    []uuid.UUID
 	enderecos []string
 	links     []string
 	err       error
 }
 
-func (f *carteiroFalso) SendVerification(_ context.Context, dest crypto.Secret, link string) error {
+func (f *carteiroFalso) SendVerification(_ context.Context, conta uuid.UUID, dest crypto.Secret, link string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.contas = append(f.contas, conta)
 	f.enderecos = append(f.enderecos, string(dest.Reveal()))
 	f.links = append(f.links, link)
 	return f.err
@@ -488,5 +490,26 @@ func TestResendRefusesAnUnverifiedDiscordChannel(t *testing.T) {
 	}
 	if len(b.email.enderecos) != 0 {
 		t.Errorf("mandou link para %d destinos, queria nenhum", len(b.email.enderecos))
+	}
+}
+
+// A verificação de canal leva a conta de quem pediu (o teto por conta), na
+// criação e no reenvio.
+func TestChannelVerificationCarriesRequester(t *testing.T) {
+	b := novaBancadaCanais(t, true)
+	ctx := context.Background()
+	escopo := b.escopo(t, b.dono)
+	c, err := b.svc.Create(ctx, escopo, ChannelInput{Kind: KindEmail, Email: "p@x.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := b.svc.ResendVerification(ctx, escopo, c.ID); err != nil {
+		t.Fatal(err)
+	}
+	if len(b.email.contas) != 2 || b.email.contas[0] != escopo.UserID || b.email.contas[1] != escopo.UserID {
+		t.Errorf("contas recebidas = %v, queria [%v %v]", b.email.contas, escopo.UserID, escopo.UserID)
+	}
+	if escopo.UserID != b.dono {
+		t.Fatalf("escopo de %v, queria o dono %v", escopo.UserID, b.dono)
 	}
 }
