@@ -639,3 +639,125 @@ func TestUserPipeWithATerminalOnStderrExplainsTheWait(t *testing.T) {
 		}
 	}
 }
+
+// contaComum insere, por fora do CLI, uma conta que não é operadora (o create
+// do CLI só cria operador).
+func contaComum(t *testing.T, pool *pgxpool.Pool, email string) uuid.UUID {
+	t.Helper()
+	id := uuid.New()
+	if _, err := pool.Exec(context.Background(),
+		`INSERT INTO users (id, email, password_hash) VALUES ($1, $2, 'x')`, id, email); err != nil {
+		t.Fatal(err)
+	}
+	return id
+}
+
+func suspensa(t *testing.T, pool *pgxpool.Pool, email string) bool {
+	t.Helper()
+	var s bool
+	if err := pool.QueryRow(context.Background(),
+		`SELECT suspended_at IS NOT NULL FROM users WHERE email = $1`, email).Scan(&s); err != nil {
+		t.Fatal(err)
+	}
+	return s
+}
+
+// suspend: conta comum suspende e conta as sessões; e-mail sem conta é 4;
+// operador é 2 e não muda nada. Nenhum caso lê senha: o stdin traz a senha
+// marcada, e ela nunca sai.
+func TestUserSuspendCLI(t *testing.T) {
+	pool := testdb.New(t)
+	dsn := testdb.DSN(t)
+	if r := rodarUser(t, dsn, senhaMarcada, "create", "--email", "dono@exemplo.com"); r.codigo != saidaOK {
+		t.Fatalf("create: código %d; %s", r.codigo, r.stderr)
+	}
+	comum := contaComum(t, pool, "abuso@exemplo.com")
+	agora := time.Now()
+	testdb.FamiliaSintetica(t, comum, agora, agora.Add(time.Hour), []byte("token-1"), []byte("ip"))
+	testdb.FamiliaSintetica(t, comum, agora, agora.Add(time.Hour), []byte("token-2"), []byte("ip"))
+
+	casos := []struct {
+		nome           string
+		args           []string
+		codigo         int
+		stdout, stderr string
+	}{
+		{"conta comum", []string{"suspend", "--email", "abuso@exemplo.com"}, saidaOK,
+			"conta suspensa; 2 sessões encerradas\n", ""},
+		{"de novo, sem sessões", []string{"suspend", "--email", "abuso@exemplo.com"}, saidaOK,
+			"conta suspensa; 0 sessões encerradas\n", ""},
+		{"sem conta", []string{"suspend", "--email", "ninguem@exemplo.com"}, saidaNaoCadastrado,
+			"", "stillon user: nenhum usuário com o e-mail ninguem@exemplo.com; nada foi alterado\n"},
+		{"operador", []string{"suspend", "--email", "dono@exemplo.com"}, saidaUso,
+			"", "stillon user: a conta do operador não pode ser suspensa; nada foi alterado\n"},
+		{"argumento sobrando", []string{"suspend", "--email", "abuso@exemplo.com", "x"}, saidaUso,
+			"", `stillon user: argumento inesperado: "x"` + "\n"},
+	}
+	for _, c := range casos {
+		t.Run(c.nome, func(t *testing.T) {
+			r := rodarUser(t, dsn, senhaMarcada, c.args...)
+			if r.codigo != c.codigo || r.stdout != c.stdout || r.stderr != c.stderr {
+				t.Errorf("código %d, stdout %q, stderr %q; queria %d, %q e %q",
+					r.codigo, r.stdout, r.stderr, c.codigo, c.stdout, c.stderr)
+			}
+			if strings.Contains(r.saida(), senhaMarcada) {
+				t.Error("a senha do stdin apareceu na saída")
+			}
+		})
+	}
+	if !suspensa(t, pool, "abuso@exemplo.com") {
+		t.Error("a conta comum não ficou suspensa")
+	}
+	if suspensa(t, pool, "dono@exemplo.com") {
+		t.Error("o operador ficou suspenso")
+	}
+	if n := auditorias(t, pool, "user.suspended"); n != 2 {
+		t.Errorf("%d auditorias user.suspended, queria 2 (a recusa do operador não audita)", n)
+	}
+}
+
+// unsuspend: conta suspensa volta; e-mail sem conta é 4.
+func TestUserUnsuspendCLI(t *testing.T) {
+	pool := testdb.New(t)
+	dsn := testdb.DSN(t)
+	comum := contaComum(t, pool, "abuso@exemplo.com")
+	testdb.Suspender(t, comum)
+
+	casos := []struct {
+		nome           string
+		args           []string
+		codigo         int
+		stdout, stderr string
+	}{
+		{"conta suspensa", []string{"unsuspend", "--email", "abuso@exemplo.com"}, saidaOK,
+			"conta reativada; as sessões encerradas não voltam: o dono entra de novo\n", ""},
+		{"sem conta", []string{"unsuspend", "--email", "ninguem@exemplo.com"}, saidaNaoCadastrado,
+			"", "stillon user: nenhum usuário com o e-mail ninguem@exemplo.com; nada foi alterado\n"},
+		{"argumento sobrando", []string{"unsuspend", "--email", "abuso@exemplo.com", "x"}, saidaUso,
+			"", `stillon user: argumento inesperado: "x"` + "\n"},
+	}
+	for _, c := range casos {
+		t.Run(c.nome, func(t *testing.T) {
+			r := rodarUser(t, dsn, senhaMarcada, c.args...)
+			if r.codigo != c.codigo || r.stdout != c.stdout || r.stderr != c.stderr {
+				t.Errorf("código %d, stdout %q, stderr %q; queria %d, %q e %q",
+					r.codigo, r.stdout, r.stderr, c.codigo, c.stdout, c.stderr)
+			}
+		})
+	}
+	if suspensa(t, pool, "abuso@exemplo.com") {
+		t.Error("a conta continua suspensa")
+	}
+	if n := auditorias(t, pool, "user.unsuspended"); n != 1 {
+		t.Errorf("%d auditorias user.unsuspended, queria 1", n)
+	}
+}
+
+// O uso lista os dois subcomandos novos.
+func TestUserSubcommandsListedInUsage(t *testing.T) {
+	for _, sub := range []string{"stillon user suspend --email", "stillon user unsuspend --email"} {
+		if !strings.Contains(usoUser, sub) {
+			t.Errorf("usoUser não cita %q", sub)
+		}
+	}
+}
