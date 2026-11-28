@@ -467,3 +467,78 @@ func linhaDoAchado(t *testing.T, achado string) int {
 	}
 	return n
 }
+
+// identificadoresDeProducao devolve, para cada nome pedido, os arquivos de
+// produção (relativos à raiz, com "/") onde ele aparece como identificador,
+// com a mesma varredura de usosDeEscopo: sem _test.go, sem db/ gerado e sem
+// diretórios ocultos.
+func identificadoresDeProducao(t *testing.T, raiz string, nomes ...string) map[string][]string {
+	t.Helper()
+	achados := map[string][]string{}
+	fset := token.NewFileSet()
+	err := filepath.WalkDir(raiz, func(caminho string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(raiz, caminho)
+		if err != nil {
+			return err
+		}
+		rel = filepath.ToSlash(rel)
+		if d.IsDir() {
+			if rel != "." && (strings.HasPrefix(d.Name(), ".") || diretoriosForaDaVarredura[d.Name()] ||
+				rel == "internal/storage/db") {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(rel, ".go") || strings.HasSuffix(rel, "_test.go") {
+			return nil
+		}
+		arq, err := parser.ParseFile(fset, caminho, nil, parser.SkipObjectResolution)
+		if err != nil {
+			return fmt.Errorf("ler %s: %w", rel, err)
+		}
+		ast.Inspect(arq, func(n ast.Node) bool {
+			if id, ok := n.(*ast.Ident); ok && slices.Contains(nomes, id.Name) && !slices.Contains(achados[id.Name], rel) {
+				achados[id.Name] = append(achados[id.Name], rel)
+			}
+			return true
+		})
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("varrer %s: %v", raiz, err)
+	}
+	return achados
+}
+
+// O portão do 2b: ListTitularContentRuleTargetURLs lê as URLs dos alvos com
+// regra em TODOS os projetos do titular, inclusive os que quem chama não
+// enxerga (cota_urls_com_regra_do_titular liga os GUCs app.cota_*, 00045).
+// Com membros, quem cria alvo num projeto alheio chega a essa consulta; ela só
+// pode servir à conta do teto em internal/targets, e a linha (com a URL)
+// nunca pode chegar a um DTO de internal/httpapi.
+func TestQuotaURLsNeverLeaveTargetsQuota(t *testing.T) {
+	raiz, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	const consulta, linha = "ListTitularContentRuleTargetURLs", "ListTitularContentRuleTargetURLsRow"
+	achados := identificadoresDeProducao(t, raiz, consulta, linha)
+	if len(achados[consulta]) == 0 {
+		t.Fatalf("a varredura de %s não achou %s; ela deixou de enxergar o código", raiz, consulta)
+	}
+	for _, arquivo := range achados[consulta] {
+		if !strings.HasPrefix(arquivo, "internal/targets/") {
+			t.Errorf("%s chama %s fora de internal/targets/: essa consulta vê as URLs de todos os "+
+				"projetos do titular e só serve à conta do teto de regras por host", arquivo, consulta)
+		}
+	}
+	for _, arquivo := range achados[linha] {
+		if strings.HasPrefix(arquivo, "internal/httpapi/") {
+			t.Errorf("%s usa %s: a linha traz URLs de projetos que quem pede pode não enxergar, "+
+				"e não pode chegar a uma resposta da API", arquivo, linha)
+		}
+	}
+}

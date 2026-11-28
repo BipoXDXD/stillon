@@ -1,6 +1,6 @@
-// Package tenancy é o contexto de domínio dos projetos: papéis, permissões e a
-// invariante de que todo projeto tem pelo menos um owner. É puro: não conhece
-// banco, HTTP nem storage.
+// Package tenancy é o contexto de domínio dos projetos: papéis, permissões,
+// membros e a regra de que o titular é sempre owner (o que garante pelo menos
+// um owner por projeto). É puro: não conhece banco, HTTP nem storage.
 package tenancy
 
 import (
@@ -25,8 +25,12 @@ var (
 	ErrUnknownRole     = errors.New("papel desconhecido")
 	ErrForbidden       = errors.New("operação não permitida para o papel")
 	ErrProjectNotFound = errors.New("projeto não encontrado")
-	ErrLastOwner       = errors.New("o projeto ficaria sem owner")
 	ErrNotMember       = errors.New("não é membro do projeto")
+	// ErrTitularProtected: o titular não é rebaixado, não é removido e não
+	// sai; antes, transfere a titularidade.
+	ErrTitularProtected = errors.New("o titular do projeto não sai nem perde o papel de owner")
+	ErrMemberLimit      = errors.New("limite de membros do projeto atingido")
+	ErrAlreadyMember    = errors.New("já é membro do projeto")
 )
 
 // Permission é uma ação sobre o projeto que depende do papel.

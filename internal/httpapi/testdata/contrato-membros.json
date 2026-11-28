@@ -1,0 +1,22 @@
+[
+  {
+    "caso": "titular",
+    "resposta": {
+      "user_id": "01900000-0000-7000-8000-000000000201",
+      "email": "titular@exemplo.com",
+      "role": "owner",
+      "is_titular": true,
+      "joined_at": "2026-11-01T12:00:00Z"
+    }
+  },
+  {
+    "caso": "viewer",
+    "resposta": {
+      "user_id": "01900000-0000-7000-8000-000000000202",
+      "email": "leitor@exemplo.com",
+      "role": "viewer",
+      "is_titular": false,
+      "joined_at": "2026-11-27T09:30:15.123Z"
+    }
+  }
+]

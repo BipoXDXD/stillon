@@ -12,11 +12,29 @@ import (
 	"github.com/BipoXDXD/stillon/internal/tenancy"
 )
 
-// repoFalso guarda o que EnsureDefault e Create receberam.
+// repoFalso guarda o que EnsureDefault, Create, ChangeRole e Rename receberam.
 type repoFalso struct {
-	nowRecebido  time.Time
-	escopo       tenancy.ProjectScope
-	novoRecebido tenancy.NewProject
+	nowRecebido   time.Time
+	escopo        tenancy.ProjectScope
+	novoRecebido  tenancy.NewProject
+	papelRecebido tenancy.Role
+	nomeRecebido  string
+}
+
+func (r *repoFalso) ListMembers(context.Context, uuid.UUID, uuid.UUID) ([]tenancy.MemberView, error) {
+	return nil, nil
+}
+
+func (r *repoFalso) ChangeRole(_ context.Context, _, _, alvo uuid.UUID, para tenancy.Role) (tenancy.MemberView, error) {
+	r.papelRecebido = para
+	return tenancy.MemberView{UserID: alvo, Role: para}, nil
+}
+
+func (r *repoFalso) RemoveMember(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) error { return nil }
+
+func (r *repoFalso) Rename(_ context.Context, _, projeto uuid.UUID, nome string) (tenancy.ProjectSummary, error) {
+	r.nomeRecebido = nome
+	return tenancy.ProjectSummary{ID: projeto, Name: nome}, nil
 }
 
 func (r *repoFalso) Membership(context.Context, uuid.UUID, uuid.UUID) (tenancy.ProjectScope, error) {
@@ -78,6 +96,26 @@ func (r repoQueFalha) Create(context.Context, tenancy.NewProject) (tenancy.Proje
 	return tenancy.ProjectSummary{}, nil
 }
 
+func (r repoQueFalha) ListMembers(context.Context, uuid.UUID, uuid.UUID) ([]tenancy.MemberView, error) {
+	r.t.Error("ListMembers chamado")
+	return nil, nil
+}
+
+func (r repoQueFalha) ChangeRole(context.Context, uuid.UUID, uuid.UUID, uuid.UUID, tenancy.Role) (tenancy.MemberView, error) {
+	r.t.Error("ChangeRole chamado")
+	return tenancy.MemberView{}, nil
+}
+
+func (r repoQueFalha) RemoveMember(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) error {
+	r.t.Error("RemoveMember chamado")
+	return nil
+}
+
+func (r repoQueFalha) Rename(context.Context, uuid.UUID, uuid.UUID, string) (tenancy.ProjectSummary, error) {
+	r.t.Error("Rename chamado")
+	return tenancy.ProjectSummary{}, nil
+}
+
 func TestScopeRefusesNilProjectWithoutRepository(t *testing.T) {
 	svc := tenancy.NewService(repoQueFalha{t: t}, clock.NewFake(time.Now()))
 
@@ -110,5 +148,41 @@ func TestServiceCreateValidatesNameBeforeRepository(t *testing.T) {
 	}
 	if resumo.ID != got.ID {
 		t.Errorf("resumo.ID = %s, queria o do repositório %s", resumo.ID, got.ID)
+	}
+}
+
+// Papel desconhecido para no Service: o repositório não é chamado. O papel
+// válido segue convertido.
+func TestServiceChangeRoleRejectsUnknownRoleBeforeRepo(t *testing.T) {
+	semRepo := tenancy.NewService(repoQueFalha{t: t}, clock.NewFake(time.Now()))
+	_, err := semRepo.ChangeRole(context.Background(), uuid.New(), uuid.New(), uuid.New(), "admin")
+	if !errors.Is(err, tenancy.ErrUnknownRole) {
+		t.Errorf("ChangeRole(\"admin\") = %v, queria ErrUnknownRole", err)
+	}
+
+	repo := &repoFalso{}
+	svc := tenancy.NewService(repo, clock.NewFake(time.Now()))
+	if _, err := svc.ChangeRole(context.Background(), uuid.New(), uuid.New(), uuid.New(), "viewer"); err != nil {
+		t.Fatal(err)
+	}
+	if repo.papelRecebido != tenancy.RoleViewer {
+		t.Errorf("papel repassado = %q, queria viewer", repo.papelRecebido)
+	}
+}
+
+// O nome é validado e aparado antes do repositório, como na criação.
+func TestServiceRenameValidatesName(t *testing.T) {
+	semRepo := tenancy.NewService(repoQueFalha{t: t}, clock.NewFake(time.Now()))
+	if _, err := semRepo.Rename(context.Background(), uuid.New(), uuid.New(), " "); !errors.Is(err, tenancy.ErrProjectNameRequired) {
+		t.Errorf("Rename(\" \") = %v, queria ErrProjectNameRequired", err)
+	}
+
+	repo := &repoFalso{}
+	svc := tenancy.NewService(repo, clock.NewFake(time.Now()))
+	if _, err := svc.Rename(context.Background(), uuid.New(), uuid.New(), "  Novo  "); err != nil {
+		t.Fatal(err)
+	}
+	if repo.nomeRecebido != "Novo" {
+		t.Errorf("nome repassado = %q, queria \"Novo\"", repo.nomeRecebido)
 	}
 }

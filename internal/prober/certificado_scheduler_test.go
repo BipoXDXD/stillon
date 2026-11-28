@@ -60,7 +60,7 @@ func (b *bancada) exigirLinhaTLS(t *testing.T, alvo uuid.UUID) linhaTLS {
 }
 
 func (b *bancada) linhaDoAlvo(alvo uuid.UUID) db.ClaimDueTargetsRow {
-	return db.ClaimDueTargetsRow{ID: alvo, UserID: b.dono, URL: urlVelha, Method: "GET", IntervalSec: 60}
+	return db.ClaimDueTargetsRow{ID: alvo, URL: urlVelha, Method: "GET", IntervalSec: 60}
 }
 
 func comCertificado(validade time.Time) Result {

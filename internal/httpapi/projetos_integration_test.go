@@ -141,7 +141,7 @@ func TestListProjectsReturnsOwnProjectsWithRole(t *testing.T) {
 // recursos de verdade no Projeto padrão do dono: o caminho chega até o
 // serviço, e não para num id que não existe.
 type recursosDoDono struct {
-	projeto                                           string
+	projeto, titular                                  string
 	alvo, incidente, hb, incidenteDoHB, canal, pagina string
 }
 
@@ -152,7 +152,8 @@ func (r recursosDoDono) dados() []string {
 }
 
 // caminho preenche o molde de uma gêmea: {projectID} com projeto, {id} com o
-// recurso do primeiro segmento depois dele, e a consulta que a rota exige.
+// recurso do primeiro segmento depois dele, {userID} com o titular, e a
+// consulta que a rota exige.
 // Curinga desconhecido falha alto: rota nova precisa ensinar este teste.
 func (r recursosDoDono) caminho(t *testing.T, rota, projeto string) string {
 	t.Helper()
@@ -163,7 +164,9 @@ func (r recursosDoDono) caminho(t *testing.T, rota, projeto string) string {
 		"targets": r.alvo, "incidents": r.incidente, "heartbeats": r.hb,
 		"channels": r.canal, "status-pages": r.pagina,
 	}
-	trocas := map[string]string{"{projectID}": projeto, "{id}": ids[recurso], "{incident_id}": r.incidenteDoHB}
+	trocas := map[string]string{
+		"{projectID}": projeto, "{id}": ids[recurso], "{incident_id}": r.incidenteDoHB, "{userID}": r.titular,
+	}
 	caminho := curinga.ReplaceAllStringFunc(molde, func(c string) string {
 		valor := trocas[c]
 		if valor == "" {
@@ -201,6 +204,8 @@ var corpoDaGemea = map[string]any{
 	"POST /api/v1/projects/{projectID}/channels/{id}/verify/resend":                 nil,
 	"POST /api/v1/projects/{projectID}/status-pages":                                map[string]any{"slug": "pagina-nova", "title": "Nova"},
 	"PATCH /api/v1/projects/{projectID}/status-pages/{id}":                          map[string]any{"title": "alterado"},
+	"PATCH /api/v1/projects/{projectID}/members/{userID}":                           map[string]any{"role": "viewer"},
+	"DELETE /api/v1/projects/{projectID}/members/{userID}":                          nil,
 }
 
 // rotasGemeas separa, das rotas registradas, as gêmeas de leitura e as de
@@ -229,7 +234,7 @@ func rotasGemeas(t *testing.T) (leituras, escritas []string) {
 // e status page.
 func prepararDono(t *testing.T, a *api, dono string) recursosDoDono {
 	t.Helper()
-	r := recursosDoDono{projeto: testdb.ProjetoPadrao(t, a.userID).String()}
+	r := recursosDoDono{projeto: testdb.ProjetoPadrao(t, a.userID).String(), titular: a.userID.String()}
 	alvo, incidentes := incidentesDe(t, a, dono, 1)
 	r.alvo, r.incidente = alvo, incidentes[0]
 	r.hb, _ = criarHB(t, a, dono, corpoDePeriodo)

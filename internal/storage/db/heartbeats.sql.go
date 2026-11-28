@@ -60,7 +60,7 @@ func (q *Queries) AckHeartbeatIncident(ctx context.Context, arg AckHeartbeatInci
 }
 
 const claimHeartbeatsToClose = `-- name: ClaimHeartbeatsToClose :many
-SELECT h.id, h.user_id, h.last_success_at, x.id AS incident_id, x.started_at
+SELECT h.id, h.project_id, h.last_success_at, x.id AS incident_id, x.started_at
   FROM incidents x
   JOIN heartbeats h ON h.id = x.heartbeat_id
  WHERE x.resolved_at IS NULL
@@ -80,7 +80,7 @@ type ClaimHeartbeatsToCloseParams struct {
 
 type ClaimHeartbeatsToCloseRow struct {
 	ID            uuid.UUID
-	UserID        uuid.UUID
+	ProjectID     *uuid.UUID
 	LastSuccessAt *time.Time
 	IncidentID    uuid.UUID
 	StartedAt     time.Time
@@ -102,7 +102,7 @@ func (q *Queries) ClaimHeartbeatsToClose(ctx context.Context, arg ClaimHeartbeat
 		var i ClaimHeartbeatsToCloseRow
 		if err := rows.Scan(
 			&i.ID,
-			&i.UserID,
+			&i.ProjectID,
 			&i.LastSuccessAt,
 			&i.IncidentID,
 			&i.StartedAt,
@@ -118,7 +118,7 @@ func (q *Queries) ClaimHeartbeatsToClose(ctx context.Context, arg ClaimHeartbeat
 }
 
 const claimHeartbeatsToOpen = `-- name: ClaimHeartbeatsToOpen :many
-SELECT h.id, h.user_id, h.deadline_at, h.failing_since
+SELECT h.id, h.project_id, h.deadline_at, h.failing_since
   FROM heartbeats h
  WHERE h.enabled
    AND (h.failing_since IS NOT NULL
@@ -139,7 +139,7 @@ type ClaimHeartbeatsToOpenParams struct {
 
 type ClaimHeartbeatsToOpenRow struct {
 	ID           uuid.UUID
-	UserID       uuid.UUID
+	ProjectID    *uuid.UUID
 	DeadlineAt   time.Time
 	FailingSince *time.Time
 }
@@ -165,7 +165,7 @@ func (q *Queries) ClaimHeartbeatsToOpen(ctx context.Context, arg ClaimHeartbeats
 		var i ClaimHeartbeatsToOpenRow
 		if err := rows.Scan(
 			&i.ID,
-			&i.UserID,
+			&i.ProjectID,
 			&i.DeadlineAt,
 			&i.FailingSince,
 		); err != nil {

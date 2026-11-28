@@ -8,6 +8,7 @@ import (
 	"math"
 	"net/http"
 	"net/netip"
+	"net/url"
 	"runtime/debug"
 	"sync"
 	"time"
@@ -95,6 +96,9 @@ type Scheduler struct {
 	// é sempre enfileirar, e só o teste da guarda do banco o troca. O
 	// heartbeat não passa por aqui: chama enfileirar direto.
 	avisos enfileirador
+
+	// teto é o teto de requisições por host de destino; só o Tick o usa.
+	teto *tetoPorHost
 }
 
 // avisoListaDaHospedagemVazia é a mensagem estável do aviso de boot, para
@@ -127,6 +131,7 @@ func newScheduler(pool *pgxpool.Pool, box *crypto.Box, clk clock.Clock, m *Metri
 		sondas: sondas, abortar: abortar,
 		tickTimeout: tickTimeout, reconcileTimeout: reconcileTimeout,
 		avisos: enfileirar,
+		teto:   novoTetoPorHost(RequisicoesPorHostPorMinuto, RajadaPorHost),
 	}
 }
 
@@ -241,8 +246,9 @@ func contarEventosSemJIT(ctx context.Context, q *db.Queries) (int64, error) {
 }
 
 // Tick reivindica até "vagas livres" alvos vencidos e dispara uma goroutine
-// por alvo. Devolve quantos disparou. O Tick inteiro tem o prazo tickTimeout;
-// as sondas disparadas não herdam esse prazo.
+// por alvo, exceto os que o teto por host adia. Devolve quantos disparou. O
+// Tick inteiro tem o prazo tickTimeout; as sondas disparadas não herdam esse
+// prazo.
 func (s *Scheduler) Tick(ctx context.Context) (int, error) {
 	ctx, cancel := context.WithTimeout(ctx, s.tickTimeout)
 	defer cancel()
@@ -290,7 +296,26 @@ func (s *Scheduler) Tick(ctx context.Context) (int, error) {
 		}
 	}
 
+	// O teto por host vem depois da reivindicação: é ela que diz quais alvos
+	// sairiam agora. O adiado não vira check nem incidente, devolve a vaga na
+	// hora e volta para quando a ficha do host chega
+	// (TestHostThrottleDefersWithoutCheckOrIncident). Os adiados do mesmo host
+	// saem escalonados, uma ficha depois do outro: no mesmo instante, todos
+	// voltariam juntos a cada segundo, com um UPDATE por alvo e tomando as
+	// vagas dos outros projetos (TestHostThrottleSpreadsDeferredWithinTick).
+	var adiados []db.PostponeTargetParams
+	naFila := map[string]int{}
+	disparados := 0
 	for _, a := range alvos {
+		if host, espera, ok := s.reservarHost(a.URL, now); !ok {
+			espera += time.Duration(naFila[host]) * s.teto.passo()
+			naFila[host]++
+			s.sem.Release(1)
+			s.metrics.hostThrottled.Inc()
+			adiados = append(adiados, db.PostponeTargetParams{ID: a.ID, NextRunAt: now.Add(espera)})
+			continue
+		}
+		disparados++
 		s.emVoo.Add(1)
 		s.metrics.inflight.Inc()
 		go func() {
@@ -312,10 +337,48 @@ func (s *Scheduler) Tick(ctx context.Context) (int, error) {
 		}()
 	}
 
-	if err := s.medirFila(ctx, now); err != nil {
-		return len(alvos), fmt.Errorf("medir fila: %w", err)
+	var erros []error
+	if err := adiar(ctx, s.pool, adiados); err != nil {
+		// A reivindicação já empurrou o next_run_at: o adiado que não foi
+		// gravado só perde um intervalo.
+		erros = append(erros, fmt.Errorf("adiar %d alvos pelo teto por host: %w", len(adiados), err))
 	}
-	return len(alvos), nil
+	if err := s.medirFila(ctx, now); err != nil {
+		erros = append(erros, fmt.Errorf("medir fila: %w", err))
+	}
+	return disparados, errors.Join(erros...)
+}
+
+// reservarHost gasta uma ficha do host de destino do alvo e devolve o host
+// canônico, a chave do balde. URL que não abre ou host que não canonicaliza
+// segue sem teto: a sonda o recusa adiante, como antes do teto. Os saltos de
+// redirect não passam por aqui.
+func (s *Scheduler) reservarHost(alvo string, agora time.Time) (host string, espera time.Duration, ok bool) {
+	u, err := url.Parse(alvo)
+	if err != nil {
+		return "", 0, true
+	}
+	host, canonico := hostCanonico(u.Hostname())
+	if !canonico {
+		return "", 0, true
+	}
+	espera, ok = s.teto.Reservar(host, agora)
+	return host, espera, ok
+}
+
+// adiar grava o next_run_at dos alvos que o teto por host segurou.
+func adiar(ctx context.Context, b storage.Beginner, adiados []db.PostponeTargetParams) error {
+	if len(adiados) == 0 {
+		return nil
+	}
+	return storage.InProberTx(ctx, b, func(q *db.Queries) error {
+		for _, p := range adiados {
+			if err := q.PostponeTarget(ctx, p); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }
 
 // Stop espera as sondas em voo por até grace. Depois disso, aborta as que

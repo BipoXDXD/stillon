@@ -155,11 +155,12 @@ type Notification struct {
 }
 
 type Project struct {
-	ID        uuid.UUID
-	Name      string
-	TitularID uuid.UUID
-	IsDefault bool
-	CreatedAt time.Time
+	ID          uuid.UUID
+	Name        string
+	TitularID   uuid.UUID
+	IsDefault   bool
+	CreatedAt   time.Time
+	TitularRole string
 }
 
 type ProjectMember struct {

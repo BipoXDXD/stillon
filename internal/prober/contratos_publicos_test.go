@@ -367,6 +367,7 @@ func TestReconcilePreservesSeriesAfterPublicQueryFailureComplementar(t *testing.
 
 func TestSchedulerWrongKeyReturnsPublicSlotsWithoutChecksComplementar(t *testing.T) {
 	b := novaBancadaPublica(t)
+	prober.SemTetoPorHost(b.s)
 	other, err := crypto.NewBox([]byte(strings.Repeat("b", 32)))
 	if err != nil {
 		t.Fatal(err)

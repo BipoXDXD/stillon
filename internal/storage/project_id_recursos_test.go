@@ -81,16 +81,11 @@ func inserirComSQLAntigo(t *testing.T, pool *pgxpool.Pool, ins insercaoAntiga, d
 	return id
 }
 
-// outroProjeto cria, por fora da RLS, um segundo projeto (não padrão) do titular.
+// outroProjeto cria, por fora da RLS, um segundo projeto (não padrão) do
+// titular, com o vínculo de owner.
 func outroProjeto(t *testing.T, titular uuid.UUID) uuid.UUID {
 	t.Helper()
-	id := novoID()
-	if _, err := testdb.Admin(t).Exec(context.Background(),
-		`INSERT INTO projects (id, name, titular_id, is_default, created_at) VALUES ($1, 'Outro', $2, false, $3)`,
-		id, titular, agora); err != nil {
-		t.Fatalf("criar outro projeto: %v", err)
-	}
-	return id
+	return testdb.NovoProjeto(t, titular, "Outro")
 }
 
 // O INSERT do binário anterior (escopo só do usuário, sem project_id) não
