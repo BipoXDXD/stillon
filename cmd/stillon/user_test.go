@@ -15,9 +15,11 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/BipoXDXD/stillon/internal/account"
 	"github.com/BipoXDXD/stillon/internal/auth"
 	"github.com/BipoXDXD/stillon/internal/clock"
 	"github.com/BipoXDXD/stillon/internal/storage/testdb"
+	"github.com/BipoXDXD/stillon/internal/tenancy"
 )
 
 // senhaMarcada é distinta o bastante para ser procurada na saída: ela nunca
@@ -783,9 +785,110 @@ func TestUserUnsuspendCLI(t *testing.T) {
 	}
 }
 
-// O uso lista os dois subcomandos novos.
+// usage: o cenário do plano (conta grátis acima do teto de alvos, a Loja
+// acima de canais e de membros com os convites) sai exatamente assim; no
+// limite exato (o padrão com 5/5 canais e 1 membro mais 2 convites) não há
+// ACIMA. E-mail sem conta é 4.
+// Nenhum caso lê o stdin.
+func TestUserUsageCLI(t *testing.T) {
+	pool := testdb.New(t)
+	dsn := testdb.DSN(t)
+	u := contaComum(t, pool, "x@y")
+	padrao := testdb.ProjetoPadrao(t, u)
+	loja := testdb.NovoProjeto(t, u, "Loja")
+	testdb.Recursos(t, u, padrao, 15, 2, 5)
+	testdb.Recursos(t, u, loja, 6, 1, 6)
+	testdb.Membro(t, padrao, contaComum(t, pool, "m1@exemplo.com"), "member")
+	testdb.Membro(t, loja, contaComum(t, pool, "m2@exemplo.com"), "member")
+	testdb.Membro(t, loja, contaComum(t, pool, "m3@exemplo.com"), "viewer")
+	testdb.Convite(t, loja, "c1@exemplo.com", "member")
+	testdb.Convite(t, loja, "c2@exemplo.com", "viewer")
+	testdb.Convite(t, padrao, "c3@exemplo.com", "member")
+	testdb.Convite(t, padrao, "c4@exemplo.com", "viewer")
+	ano, mes, dia := time.Now().UTC().Date()
+	hoje := time.Date(ano, mes, dia, 0, 0, 0, 0, time.UTC)
+	admin := testdb.Admin(t)
+	if _, err := admin.Exec(context.Background(),
+		`INSERT INTO account_email_daily (day, sent) VALUES ($1, 17)`, hoje); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := admin.Exec(context.Background(),
+		`INSERT INTO account_email_daily_by_user (user_id, day, sent) VALUES ($1, $2, 4)`, u, hoje); err != nil {
+		t.Fatal(err)
+	}
+
+	casos := []struct {
+		nome           string
+		args           []string
+		codigo         int
+		stdout, stderr string
+	}{
+		{"conta acima", []string{"usage", "--email", "x@y"}, saidaOK,
+			"conta: x@y (grátis, ativa)\n" +
+				"projetos: 2/3\n" +
+				"alvos: 21/20 ACIMA\n" +
+				"heartbeats: 3/20\n" +
+				"e-mails de conta hoje: 4/10 (global 17/50)\n" +
+				`projeto "Projeto padrão" (padrão): 15 alvos, 2 heartbeats, 5/5 canais, 1/3 membros (+2 convites)` + "\n" +
+				`projeto "Loja": 6 alvos, 1 heartbeat, 6/5 canais ACIMA, 2/3 membros (+2 convites) ACIMA` + "\n", ""},
+		{"sem conta", []string{"usage", "--email", "ninguem@exemplo.com"}, saidaNaoCadastrado,
+			"", "stillon user: nenhum usuário com o e-mail ninguem@exemplo.com; nada foi alterado\n"},
+		{"argumento sobrando", []string{"usage", "--email", "x@y", "x"}, saidaUso,
+			"", `stillon user: argumento inesperado: "x"` + "\n"},
+	}
+	for _, c := range casos {
+		t.Run(c.nome, func(t *testing.T) {
+			r := rodarUserCom(t, dsn, stdinProibido(t), nil, c.args...)
+			if r.codigo != c.codigo || r.stdout != c.stdout || r.stderr != c.stderr {
+				t.Errorf("código %d, stdout %q, stderr %q; queria %d, %q e %q",
+					r.codigo, r.stdout, r.stderr, c.codigo, c.stdout, c.stderr)
+			}
+		})
+	}
+}
+
+// A primeira linha diz o plano e a suspensão, com o instante em UTC.
+func TestUserUsageCLIFirstLine(t *testing.T) {
+	pool := testdb.New(t)
+	dsn := testdb.DSN(t)
+	o := contaComum(t, pool, "operador@exemplo.com")
+	testdb.Operador(t, o)
+	testdb.ProjetoPadrao(t, o)
+	s := contaComum(t, pool, "suspensa@exemplo.com")
+	testdb.ProjetoPadrao(t, s)
+	em := time.Date(2026, 11, 28, 11, 3, 0, 0, time.FixedZone("BRT", -3*3600))
+	if _, err := testdb.Admin(t).Exec(context.Background(),
+		`UPDATE users SET suspended_at = $2 WHERE id = $1`, s, em); err != nil {
+		t.Fatal(err)
+	}
+
+	for email, quer := range map[string]string{
+		"operador@exemplo.com": "conta: operador@exemplo.com (operador, ativa)\n",
+		"suspensa@exemplo.com": "conta: suspensa@exemplo.com (grátis, suspensa desde 2026-11-28 14:03 UTC)\n",
+	} {
+		r := rodarUserCom(t, dsn, stdinProibido(t), nil, "usage", "--email", email)
+		if primeira, _, _ := strings.Cut(r.stdout, "\n"); r.codigo != saidaOK || primeira+"\n" != quer {
+			t.Errorf("usage de %s: código %d, stdout %q; queria 0 e a primeira linha %q", email, r.codigo, r.stdout, quer)
+		}
+	}
+}
+
+// Um de cada sai no singular: alvo, heartbeat e convite.
+func TestFormatarUsoSingular(t *testing.T) {
+	uso := account.Uso{
+		Email:    "x@y",
+		Limites:  tenancy.LimitesDe(false),
+		Projetos: []account.UsoDoProjeto{{Nome: "Um", Alvos: 1, Heartbeats: 1, Canais: 1, Convites: 1}},
+	}
+	quer := `projeto "Um": 1 alvo, 1 heartbeat, 1/5 canais, 0/3 membros (+1 convite)` + "\n"
+	if saida := formatarUso(uso); !strings.HasSuffix(saida, quer) {
+		t.Errorf("formatarUso deu %q; queria terminar em %q", saida, quer)
+	}
+}
+
+// O uso lista os subcomandos novos.
 func TestUserSubcommandsListedInUsage(t *testing.T) {
-	for _, sub := range []string{"stillon user suspend --email", "stillon user unsuspend --email"} {
+	for _, sub := range []string{"stillon user suspend --email", "stillon user unsuspend --email", "stillon user usage --email"} {
 		if !strings.Contains(usoUser, sub) {
 			t.Errorf("usoUser não cita %q", sub)
 		}

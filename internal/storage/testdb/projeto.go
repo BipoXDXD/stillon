@@ -208,3 +208,34 @@ func Convite(t *testing.T, projeto uuid.UUID, email, papel string) (token string
 	}
 	return token
 }
+
+// Recursos grava, por fora da RLS, alvos, heartbeats e canais mínimos no
+// projeto, com dono no user_id: as contagens de cota e de uso só olham quantos
+// há. Os nomes e os hashes de ping saem distintos a cada linha.
+func Recursos(t *testing.T, dono, projeto uuid.UUID, alvos, heartbeats, canais int) {
+	t.Helper()
+	ctx := context.Background()
+	passos := []struct {
+		sql string
+		n   int
+	}{
+		{`INSERT INTO targets (id, user_id, project_id, name, url, method, interval_sec, timeout_ms,
+		                       expected_status, enabled, next_run_at, created_at)
+		  SELECT gen_random_uuid(), $1, $2, 'alvo ' || g, 'https://exemplo.com', 'GET', 300, 5000, 200,
+		         true, now(), now()
+		    FROM generate_series(1, $3::int) AS g`, alvos},
+		{`INSERT INTO heartbeats (id, user_id, project_id, name, ping_token_hash, period_sec, grace_sec,
+		                          enabled, created_at, deadline_at, description, ping_resumes)
+		  SELECT gen_random_uuid(), $1, $2, 'heartbeat ' || g,
+		         sha256(convert_to(gen_random_uuid()::text, 'UTF8')), 3600, 300, true, now(), now(), '', false
+		    FROM generate_series(1, $3::int) AS g`, heartbeats},
+		{`INSERT INTO notif_channels (id, user_id, project_id, kind, config_enc, verified_at, created_at)
+		  SELECT gen_random_uuid(), $1, $2, 'discord', '\x01', now(), now()
+		    FROM generate_series(1, $3::int) AS g`, canais},
+	}
+	for _, p := range passos {
+		if _, err := Admin(t).Exec(ctx, p.sql, dono, projeto, p.n); err != nil {
+			t.Fatalf("semear %d linha(s) no projeto %s: %s: %v", p.n, projeto, p.sql, err)
+		}
+	}
+}
