@@ -49,6 +49,22 @@ func (repoFalso) Create(context.Context, tenancy.NewProject) (tenancy.ProjectSum
 	return tenancy.ProjectSummary{}, errRepoFalso
 }
 
+func (repoFalso) ListMembers(context.Context, uuid.UUID, uuid.UUID) ([]tenancy.MemberView, error) {
+	return nil, errRepoFalso
+}
+
+func (repoFalso) ChangeRole(context.Context, uuid.UUID, uuid.UUID, uuid.UUID, tenancy.Role) (tenancy.MemberView, error) {
+	return tenancy.MemberView{}, errRepoFalso
+}
+
+func (repoFalso) RemoveMember(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) error {
+	return errRepoFalso
+}
+
+func (repoFalso) Rename(context.Context, uuid.UUID, uuid.UUID, string) (tenancy.ProjectSummary, error) {
+	return tenancy.ProjectSummary{}, errRepoFalso
+}
+
 // conferidorQueConfirma é a trava de e-mail dos testes sem banco: toda conta
 // conta como confirmada, para que a trava não esconda o que o teste olha.
 type conferidorQueConfirma struct{}

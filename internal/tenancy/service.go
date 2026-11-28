@@ -53,3 +53,32 @@ func (s *Service) Create(ctx context.Context, userID uuid.UUID, name string) (Pr
 	}
 	return s.repo.Create(ctx, NewProject{ID: id, Name: nome, TitularID: userID, Now: s.clk.Now()})
 }
+
+// Members lista os membros do projeto para actorID, que precisa ser membro.
+func (s *Service) Members(ctx context.Context, actorID, projectID uuid.UUID) ([]MemberView, error) {
+	return s.repo.ListMembers(ctx, actorID, projectID)
+}
+
+// ChangeRole converte o papel recebido e delega; a autorização roda no
+// repositório, com o papel de actorID lido na transação.
+func (s *Service) ChangeRole(ctx context.Context, actorID, projectID, targetID uuid.UUID, role string) (MemberView, error) {
+	papel, err := ParseRole(role)
+	if err != nil {
+		return MemberView{}, err
+	}
+	return s.repo.ChangeRole(ctx, actorID, projectID, targetID, papel)
+}
+
+// RemoveMember tira targetID do projeto; targetID = actorID é sair.
+func (s *Service) RemoveMember(ctx context.Context, actorID, projectID, targetID uuid.UUID) error {
+	return s.repo.RemoveMember(ctx, actorID, projectID, targetID)
+}
+
+// Rename valida e normaliza o nome antes do repositório, como Create.
+func (s *Service) Rename(ctx context.Context, actorID, projectID uuid.UUID, name string) (ProjectSummary, error) {
+	nome, err := ParseProjectName(name)
+	if err != nil {
+		return ProjectSummary{}, err
+	}
+	return s.repo.Rename(ctx, actorID, projectID, nome)
+}

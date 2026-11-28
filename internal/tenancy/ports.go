@@ -39,4 +39,20 @@ type ProjectRepository interface {
 	// na MESMA transação, sob a trava do titular; ErrProjectLimit quando
 	// ProjectLimit(is_operator) já foi atingido.
 	Create(ctx context.Context, p NewProject) (ProjectSummary, error)
+
+	// As operações de membros e de renomear rodam no escopo do projeto,
+	// agindo como actorID: não membro dá ErrProjectNotFound, e a autorização
+	// (Authorize*, Require) usa o papel lido na própria transação, nunca o de
+	// quem chamou.
+
+	// ListMembers lista os membros, o titular primeiro e depois por entrada.
+	ListMembers(ctx context.Context, actorID, projectID uuid.UUID) ([]MemberView, error)
+	// ChangeRole dá o papel to a targetID. Alvo que não é membro dá
+	// ErrNotMember.
+	ChangeRole(ctx context.Context, actorID, projectID, targetID uuid.UUID, to Role) (MemberView, error)
+	// RemoveMember tira targetID do projeto (targetID = actorID é sair) e
+	// desabilita, na mesma transação, os canais de e-mail que ele criou ali.
+	RemoveMember(ctx context.Context, actorID, projectID, targetID uuid.UUID) error
+	// Rename troca o nome do projeto (name já normalizado).
+	Rename(ctx context.Context, actorID, projectID uuid.UUID, name string) (ProjectSummary, error)
 }
