@@ -133,11 +133,15 @@ export type Pedido = {
 // enviar monta a requisição. Toda mutação leva X-Requested-With, inclusive
 // /auth/refresh, /auth/login e /auth/logout: o RequireCustomHeader envolve a
 // API inteira (routes.go), e sem o cabeçalho a resposta é 403 (spec §5.3).
-export async function enviar(buscar: Buscar, p: Pedido): Promise<Response> {
+export async function enviar(
+  buscar: Buscar,
+  p: Pedido,
+  credenciais: RequestCredentials = 'same-origin',
+): Promise<Response> {
   const cabecalhos: Record<string, string> = { Accept: 'application/json' }
   if (p.metodo !== 'GET') cabecalhos['X-Requested-With'] = 'stillon'
   if (p.token) cabecalhos.Authorization = `Bearer ${p.token}`
-  const init: RequestInit = { method: p.metodo, headers: cabecalhos, credentials: 'same-origin', signal: p.sinal }
+  const init: RequestInit = { method: p.metodo, headers: cabecalhos, credentials: credenciais, signal: p.sinal }
   if (p.corpo !== undefined) {
     cabecalhos['Content-Type'] = 'application/json'
     init.body = JSON.stringify(p.corpo)

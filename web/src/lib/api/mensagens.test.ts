@@ -78,6 +78,16 @@ describe('regra de conteúdo', () => {
     )
   })
 
+  // PR 5: os tetos variam com o plano do titular, e o código não traz o
+  // valor: as mensagens de cota não citam número.
+  it.each([
+    ['target_limit_reached', 'Limite de alvos da conta atingido.'],
+    ['heartbeat_limit_reached', 'Limite de heartbeats da conta atingido.'],
+    ['channel_limit_reached', 'Limite de canais deste projeto atingido.'],
+  ])('o 409 %s fala do teto sem número', (codigo, texto) => {
+    expect(mensagemDe(new ApiError(409, codigo, ''))).toBe(texto)
+  })
+
   it('o 409 da status page repetida fala do projeto, não da conta', () => {
     expect(mensagemDe(new ApiError(409, 'status_page_exists', ''))).toBe('Este projeto já tem uma status page.')
   })

@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import type { AlteracaoAlvo, EntradaAlvo, EntradaRegra } from '@/lib/api/cliente'
 import { CONTROLE_NA_REGRA, LIMITE_DA_REGRA } from '@/lib/api/mensagens'
-import { RegraDeConteudo, type Alvo } from '@/lib/api/schemas'
+import { RegraDeConteudo, type Alvo, type Projeto } from '@/lib/api/schemas'
 import { MENSAGEM_INVISIVEL, temInvisivel } from '@/lib/rotulo'
 import { erroNasTags, separarTags } from '@/lib/tags'
 
@@ -117,7 +117,14 @@ function erroDoPonteiro(p: string): string | null {
 // "Substituir todos" sem nenhuma linha não vira headers: {} (que apagaria
 // todos em silêncio; para isso existe "Remover todos"). Os nomes dos headers
 // guardados antecipam o Accept-Encoding ou o Range que "Manter como está" conservaria.
-export function esquemaDoAlvo(base?: { url: string; nomesDeHeaders?: readonly string[] }) {
+// O mínimo do intervalo é o do plano do titular (intervaloMinimoDo); o
+// intervalo já guardado não passa de novo por ele, porque o servidor só o
+// confere quando interval_sec vem no PATCH (um alvo legado de 60 s num
+// projeto grátis continua editável sem mexer no intervalo).
+export function esquemaDoAlvo(
+  minIntervalo: number,
+  base?: { url: string; nomesDeHeaders?: readonly string[]; intervalSec?: number },
+) {
   return z
     .object({
       name: z
@@ -138,13 +145,14 @@ export function esquemaDoAlvo(base?: { url: string; nomesDeHeaders?: readonly st
         }),
       method: z.enum(['GET', 'HEAD', 'POST']),
       // Um dos intervalos da lista ou "outro" (spec §4.3): com "outro", o
-      // número vem do campo em segundos; a regra é a mesma, 30 a 86400.
+      // número vem do campo em segundos; a regra é a mesma, do mínimo do
+      // plano a 86400.
       intervaloEscolhido: z.string(),
       interval_sec: z
         .number({ error: 'Informe um número.' })
         .int()
-        .min(30, 'Mínimo de 30 s.')
-        .max(86400, 'Máximo de 1 dia.'),
+        .max(86400, 'Máximo de 1 dia.')
+        .refine((s) => s >= minIntervalo || s === base?.intervalSec, `Mínimo de ${minIntervalo} s.`),
       timeout_ms: z
         .number({ error: 'Informe um número.' })
         .int()
@@ -279,7 +287,17 @@ function validarRegra(v: CamposDaRegra, guardados: readonly string[], ctx: z.Ref
   if (erroDoPonteiroDaRegra) ctx.addIssue({ code: 'custom', path: ['ponteiroDaRegra'], message: erroDoPonteiroDaRegra })
 }
 
-export const esquemaAlvo = esquemaDoAlvo()
+// Sem limits (a API anterior, ainda no ar durante o release), o mínimo de
+// hoje.
+export const INTERVALO_MINIMO_SEM_LIMITES = 30
+
+// O mínimo do intervalo no projeto: o do plano do TITULAR, nunca o de quem
+// está logado.
+export function intervaloMinimoDo(p: Projeto): number {
+  return p.limits?.min_interval_sec ?? INTERVALO_MINIMO_SEM_LIMITES
+}
+
+export const esquemaAlvo = esquemaDoAlvo(INTERVALO_MINIMO_SEM_LIMITES)
 
 export type ValoresDoAlvo = z.infer<typeof esquemaAlvo>
 
@@ -293,10 +311,24 @@ export const INTERVALOS = [
 
 export const OUTRO = 'outro'
 
+// As opções do seletor: só as do mínimo para cima, mais a do intervalo já
+// guardado (um alvo legado abaixo do mínimo abre com o valor dele, e salvar
+// sem mexer não o troca).
+export function intervalosPara(minIntervalo: number, atual?: number) {
+  return INTERVALOS.filter(([s]) => s >= minIntervalo || s === atual)
+}
+
 // O que o seletor mostra para um intervalo: ele mesmo, se está na lista;
 // senão, "outro" (o campo em segundos aparece com o valor).
 export function escolhaDoIntervalo(s: number): string {
   return INTERVALOS.some(([v]) => v === s) ? String(s) : OUTRO
+}
+
+// O padrão de 60 s, ou o mínimo do plano se for maior: o padrão não pode
+// ser recusado pela própria cota.
+export function valoresPadraoPara(minIntervalo: number): ValoresDoAlvo {
+  const intervalo = Math.max(60, minIntervalo)
+  return { ...valoresPadrao, intervaloEscolhido: escolhaDoIntervalo(intervalo), interval_sec: intervalo }
 }
 
 export const valoresPadrao: ValoresDoAlvo = {

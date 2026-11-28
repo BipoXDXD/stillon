@@ -139,7 +139,7 @@ func TestCreateProjectRespectsTitularLimit(t *testing.T) {
 	u := novoUsuario(t, pool)
 	testdb.ProjetoPadrao(t, u)
 	st := pgstore.New(pool)
-	for i := range tenancy.MaxProjectsPerTitular - 1 {
+	for i := range tenancy.LimitesDe(false).Projetos - 1 {
 		if _, err := criarProjeto(t, st, u, fmt.Sprintf("Extra %d", i)); err != nil {
 			t.Fatalf("projeto %d: %v", i+2, err)
 		}
@@ -148,8 +148,8 @@ func TestCreateProjectRespectsTitularLimit(t *testing.T) {
 	if _, err := criarProjeto(t, st, u, "Um a mais"); !errors.Is(err, tenancy.ErrProjectLimit) {
 		t.Errorf("4º projeto = %v, queria ErrProjectLimit", err)
 	}
-	if n := contar(t, `SELECT count(*) FROM projects WHERE titular_id = $1`, u); n != tenancy.MaxProjectsPerTitular {
-		t.Errorf("projetos = %d, queria %d", n, tenancy.MaxProjectsPerTitular)
+	if n := contar(t, `SELECT count(*) FROM projects WHERE titular_id = $1`, u); n != tenancy.LimitesDe(false).Projetos {
+		t.Errorf("projetos = %d, queria %d", n, tenancy.LimitesDe(false).Projetos)
 	}
 }
 
@@ -197,8 +197,8 @@ func TestCreateProjectLimitUnderRace(t *testing.T) {
 	if passaram != 1 {
 		t.Errorf("criações que passaram = %d, queria 1", passaram)
 	}
-	if n := contar(t, `SELECT count(*) FROM projects WHERE titular_id = $1`, u); n != tenancy.MaxProjectsPerTitular {
-		t.Errorf("projetos = %d, queria %d", n, tenancy.MaxProjectsPerTitular)
+	if n := contar(t, `SELECT count(*) FROM projects WHERE titular_id = $1`, u); n != tenancy.LimitesDe(false).Projetos {
+		t.Errorf("projetos = %d, queria %d", n, tenancy.LimitesDe(false).Projetos)
 	}
 }
 
@@ -260,16 +260,16 @@ func TestOperatorProjectLimitIsHundred(t *testing.T) {
 		t.Fatal(err)
 	}
 	st := pgstore.New(pool)
-	for i := range tenancy.MaxProjectsPerTitular - 1 {
+	for i := range tenancy.LimitesDe(false).Projetos - 1 {
 		if _, err := criarProjeto(t, st, u, fmt.Sprintf("Extra %d", i)); err != nil {
 			t.Fatalf("projeto %d: %v", i+2, err)
 		}
 	}
 
 	if _, err := criarProjeto(t, st, u, "Quarto do operador"); err != nil {
-		t.Errorf("4º projeto do operador = %v, queria nil (teto %d)", err, tenancy.MaxProjectsForOperator)
+		t.Errorf("4º projeto do operador = %v, queria nil (teto %d)", err, tenancy.LimitesDe(true).Projetos)
 	}
-	if n := contar(t, `SELECT count(*) FROM projects WHERE titular_id = $1`, u); n != tenancy.MaxProjectsPerTitular+1 {
-		t.Errorf("projetos = %d, queria %d", n, tenancy.MaxProjectsPerTitular+1)
+	if n := contar(t, `SELECT count(*) FROM projects WHERE titular_id = $1`, u); n != tenancy.LimitesDe(false).Projetos+1 {
+		t.Errorf("projetos = %d, queria %d", n, tenancy.LimitesDe(false).Projetos+1)
 	}
 }

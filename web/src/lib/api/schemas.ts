@@ -43,8 +43,20 @@ export const RespostaLogin = z.union([
 ])
 export type RespostaLogin = z.infer<typeof RespostaLogin>
 
-export const Me = z.object({ id, email: z.string(), totp_enabled: z.boolean(), created_at: instante })
+export const Me = z.object({
+  id,
+  email: z.string(),
+  totp_enabled: z.boolean(),
+  // false enquanto o e-mail do cadastro público não for confirmado: o
+  // servidor recusa criar recursos com 403 email_not_verified.
+  email_verified: z.boolean(),
+  created_at: instante,
+})
 export type Me = z.infer<typeof Me>
+
+// GET /auth/signup-config: a site key vem vazia com o cadastro desligado.
+export const ConfigDoCadastro = z.object({ enabled: z.boolean(), turnstile_site_key: z.string() })
+export type ConfigDoCadastro = z.infer<typeof ConfigDoCadastro>
 
 // O papel de quem pede no projeto (projectResponse.role). Um papel de uma
 // versão posterior do servidor vira 'desconhecido', no molde do
@@ -55,7 +67,26 @@ export const Papel = z.union([
 ])
 export type Papel = z.infer<typeof Papel>
 
-export const Projeto = z.object({ id, name: z.string(), is_default: z.boolean(), role: Papel, created_at: instante })
+// As cotas do TITULAR do projeto (projectResponse.limits), não as de quem
+// pede. Opcional: a API anterior, ainda no ar durante o release, não as manda.
+export const LimitesDoProjeto = z.object({
+  projects: z.number().int(),
+  members_per_project: z.number().int(),
+  targets: z.number().int(),
+  heartbeats: z.number().int(),
+  channels_per_project: z.number().int(),
+  min_interval_sec: z.number().int(),
+})
+export type LimitesDoProjeto = z.infer<typeof LimitesDoProjeto>
+
+export const Projeto = z.object({
+  id,
+  name: z.string(),
+  is_default: z.boolean(),
+  role: Papel,
+  created_at: instante,
+  limits: LimitesDoProjeto.optional(),
+})
 export type Projeto = z.infer<typeof Projeto>
 
 export const ListaDeProjetos = z.object({ items: z.array(Projeto) })

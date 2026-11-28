@@ -23,11 +23,23 @@ func NewProjectHandlers(svc *tenancy.Service) *ProjectHandlers {
 // projectResponse é um item de GET /api/v1/projects, com o papel de quem
 // pede naquele projeto.
 type projectResponse struct {
-	ID        string    `json:"id"`
-	Name      string    `json:"name"`
-	IsDefault bool      `json:"is_default"`
-	Role      string    `json:"role"`
-	CreatedAt time.Time `json:"created_at"`
+	ID        string         `json:"id"`
+	Name      string         `json:"name"`
+	IsDefault bool           `json:"is_default"`
+	Role      string         `json:"role"`
+	CreatedAt time.Time      `json:"created_at"`
+	Limits    limitsResponse `json:"limits"`
+}
+
+// limitsResponse são as cotas do titular do projeto (tenancy.Limites): o
+// painel lê delas o intervalo mínimo do projeto atual.
+type limitsResponse struct {
+	Projects           int   `json:"projects"`
+	MembersPerProject  int   `json:"members_per_project"`
+	Targets            int64 `json:"targets"`
+	Heartbeats         int64 `json:"heartbeats"`
+	ChannelsPerProject int64 `json:"channels_per_project"`
+	MinIntervalSec     int32 `json:"min_interval_sec"`
 }
 
 // List é GET /api/v1/projects: os projetos de que o usuário é membro, o
@@ -131,5 +143,13 @@ func (h *ProjectHandlers) recusarNome(w http.ResponseWriter, r *http.Request, op
 func toProjectResponse(p tenancy.ProjectSummary) projectResponse {
 	return projectResponse{
 		ID: p.ID.String(), Name: p.Name, IsDefault: p.IsDefault, Role: string(p.Role), CreatedAt: p.CreatedAt,
+		Limits: limitsResponse{
+			Projects:           p.Limites.Projetos,
+			MembersPerProject:  p.Limites.MembrosPorProjeto,
+			Targets:            p.Limites.Alvos,
+			Heartbeats:         p.Limites.Heartbeats,
+			ChannelsPerProject: p.Limites.CanaisPorProjeto,
+			MinIntervalSec:     p.Limites.IntervaloMinimoSec,
+		},
 	}
 }

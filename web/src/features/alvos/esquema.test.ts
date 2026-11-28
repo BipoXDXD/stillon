@@ -6,9 +6,11 @@ import {
   escolhaDoIntervalo,
   esquemaAlvo,
   esquemaDoAlvo,
+  intervaloMinimoDo,
   paraAlteracao,
   paraCriacao,
   valoresDe,
+  valoresPadraoPara,
   type ValoresDoAlvo,
 } from './esquema'
 
@@ -118,7 +120,7 @@ describe('validação pública do formulário de alvo', () => {
   })
 
   it('editar conserva a URL guardada; mudar a URL reaplica a validação', () => {
-    const esquema = esquemaDoAlvo({ url: 'http://0x7f.1/' })
+    const esquema = esquemaDoAlvo(30, { url: 'http://0x7f.1/' })
     expect(esquema.safeParse(entrada({ url: ' http://0x7f.1/ ', modoHeaders: 'manter' })).success).toBe(true)
     expect(esquema.safeParse(entrada({ url: 'http://127.0.0.1/', modoHeaders: 'manter' })).success).toBe(false)
     expect(esquemaAlvo.safeParse(entrada({ url: 'http://0x7f.1/' })).success).toBe(false)
@@ -165,7 +167,7 @@ describe('validação pública do formulário de alvo', () => {
     expect(camposComErro({ modoHeaders: 'manter', headers })).toEqual([])
     expect(camposComErro({ modoHeaders: 'remover', headers })).toEqual([])
     expect(camposComErro({ headers })).toEqual(['headers.0.nome'])
-    const editar = esquemaDoAlvo({ url: 'https://api.exemplo.com/health' })
+    const editar = esquemaDoAlvo(30, { url: 'https://api.exemplo.com/health' })
     const vazio = editar.safeParse(entrada())
     expect(vazio.success).toBe(false)
     expect(vazio.error?.issues.map((e) => e.path.join('.'))).toEqual(['headers'])
@@ -417,25 +419,25 @@ describe('regra de conteúdo', () => {
 
   it('na edição, um Range guardado recusa a regra enquanto os headers são mantidos', () => {
     const base = { url: 'https://api.exemplo.com/health', nomesDeHeaders: ['X-A', 'range'] }
-    const r = esquemaDoAlvo(base).safeParse(ligada({ modoHeaders: 'manter' }))
+    const r = esquemaDoAlvo(30, base).safeParse(ligada({ modoHeaders: 'manter' }))
     expect(r.success ? [] : r.error.issues.map((e) => [e.path.join('.'), e.message])).toEqual([
       ['modoDaRegra', 'Remova o header Range para verificar o conteúdo: a resposta viria cortada.'],
     ])
-    expect(esquemaDoAlvo(base).safeParse(ligada({ modoHeaders: 'remover' })).success).toBe(true)
+    expect(esquemaDoAlvo(30, base).safeParse(ligada({ modoHeaders: 'remover' })).success).toBe(true)
   })
 
   // "Manter como está" não manda headers, mas a edição conhece os nomes
   // guardados: um Accept-Encoding antigo já é acusado no cliente.
   it('na edição, um Accept-Encoding guardado recusa a regra enquanto os headers são mantidos', () => {
     const base = { url: 'https://api.exemplo.com/health', nomesDeHeaders: ['X-A', 'Accept-Encoding'] }
-    const r = esquemaDoAlvo(base).safeParse(ligada({ modoHeaders: 'manter' }))
+    const r = esquemaDoAlvo(30, base).safeParse(ligada({ modoHeaders: 'manter' }))
     expect(r.success ? [] : r.error.issues.map((e) => [e.path.join('.'), e.message])).toEqual([
       ['modoDaRegra', 'Remova o header Accept-Encoding para verificar o conteúdo: a resposta viria comprimida.'],
     ])
-    expect(esquemaDoAlvo(base).safeParse(ligada({ modoHeaders: 'remover' })).success).toBe(true)
-    expect(esquemaDoAlvo(base).safeParse(entrada({ modoHeaders: 'manter' })).success).toBe(true)
+    expect(esquemaDoAlvo(30, base).safeParse(ligada({ modoHeaders: 'remover' })).success).toBe(true)
+    expect(esquemaDoAlvo(30, base).safeParse(entrada({ modoHeaders: 'manter' })).success).toBe(true)
     const semAccept = { url: base.url, nomesDeHeaders: ['X-A'] }
-    expect(esquemaDoAlvo(semAccept).safeParse(ligada({ modoHeaders: 'manter' })).success).toBe(true)
+    expect(esquemaDoAlvo(30, semAccept).safeParse(ligada({ modoHeaders: 'manter' })).success).toBe(true)
   })
 
   it('valoresDe lê a regra do alvo', () => {
@@ -487,5 +489,47 @@ describe('regra de conteúdo', () => {
     ['content_rule.json_pointer', 'ponteiroDaRegra'],
   ])('o erro %s do servidor cai em %s', (campo, noFormulario) => {
     expect(campoDoServidor[campo]).toBe(noFormulario)
+  })
+})
+
+// PR 5: o intervalo mínimo é o do plano do titular do projeto (limits).
+// Sabotagem: em esquemaDoAlvo, trocar .min(minIntervalo, …) por .min(30, …)
+// → 60 passa com o mínimo de 300.
+describe('intervalo mínimo do plano', () => {
+  function erroDoIntervalo(esquema: ReturnType<typeof esquemaDoAlvo>, interval_sec: number) {
+    const r = esquema.safeParse(entrada({ interval_sec, intervaloEscolhido: String(interval_sec), timeout_ms: 5000 }))
+    return r.success ? undefined : r.error.issues.find((i) => i.path.join('.') === 'interval_sec')?.message
+  }
+
+  it('recusa intervalo abaixo do mínimo do plano', () => {
+    expect(erroDoIntervalo(esquemaDoAlvo(300), 60)).toBe('Mínimo de 300 s.')
+    expect(erroDoIntervalo(esquemaDoAlvo(300), 300)).toBeUndefined()
+    expect(erroDoIntervalo(esquemaDoAlvo(30), 30)).toBeUndefined()
+    expect(erroDoIntervalo(esquemaDoAlvo(30), 29)).toBe('Mínimo de 30 s.')
+  })
+
+  // Sabotagem: valoresPadraoPara ignorando o mínimo (sempre 60).
+  it('padrão respeita o mínimo', () => {
+    expect(valoresPadraoPara(300).interval_sec).toBe(300)
+    expect(valoresPadraoPara(300).intervaloEscolhido).toBe('300')
+    expect(valoresPadraoPara(30).interval_sec).toBe(60)
+    expect(valoresPadraoPara(30).intervaloEscolhido).toBe('60')
+  })
+
+  // O servidor só confere o mínimo quando interval_sec vem no PATCH: um alvo
+  // legado de 60 s num projeto grátis tem de continuar editável sem mexer no
+  // intervalo. Sabotagem: tirar a exceção do intervalo guardado.
+  it('na edição, o intervalo já guardado abaixo do mínimo passa; um novo abaixo, não', () => {
+    const editar = esquemaDoAlvo(300, { url: 'https://api.exemplo.com/health', intervalSec: 60 })
+    expect(erroDoIntervalo(editar, 60)).toBeUndefined()
+    expect(erroDoIntervalo(editar, 120)).toBe('Mínimo de 300 s.')
+  })
+
+  // Sabotagem: intervaloMinimoDo devolvendo sempre 30.
+  it('o mínimo vem de limits do projeto; sem limits (API anterior), 30', () => {
+    const base = { id: 'p', name: 'P', is_default: true, role: 'owner' as const, created_at: '2026-11-01T00:00:00Z' }
+    const limites = { projects: 3, members_per_project: 3, targets: 20, heartbeats: 20, channels_per_project: 5 }
+    expect(intervaloMinimoDo({ ...base, limits: { ...limites, min_interval_sec: 300 } })).toBe(300)
+    expect(intervaloMinimoDo(base)).toBe(30)
   })
 })

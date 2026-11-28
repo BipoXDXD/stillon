@@ -3,10 +3,12 @@ package httpapi
 import (
 	"bytes"
 	"encoding/json"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
@@ -66,6 +68,34 @@ func respostaRealDeProjeto(t *testing.T, p tenancy.ProjectSummary) json.RawMessa
 	return bytes.TrimSpace(rec.Body.Bytes())
 }
 
+// O item tem exatamente as chaves que o painel lê, e limits as seis cotas do
+// titular.
+func TestProjectContractListsLimits(t *testing.T) {
+	for _, c := range projetosDoContrato() {
+		var item map[string]json.RawMessage
+		if err := json.Unmarshal(respostaRealDeProjeto(t, c.projeto), &item); err != nil {
+			t.Fatal(err)
+		}
+		if got, want := chavesOrdenadas(item), []string{"created_at", "id", "is_default", "limits", "name", "role"}; !slices.Equal(got, want) {
+			t.Errorf("%s: chaves do item = %v, queria %v", c.nome, got, want)
+		}
+		var limites map[string]json.RawMessage
+		if err := json.Unmarshal(item["limits"], &limites); err != nil {
+			t.Fatalf("%s: limits não é objeto: %v", c.nome, err)
+		}
+		want := []string{"channels_per_project", "heartbeats", "members_per_project", "min_interval_sec", "projects", "targets"}
+		if got := chavesOrdenadas(limites); !slices.Equal(got, want) {
+			t.Errorf("%s: chaves de limits = %v, queria %v", c.nome, got, want)
+		}
+	}
+}
+
+func chavesOrdenadas(m map[string]json.RawMessage) []string {
+	chaves := slices.Collect(maps.Keys(m))
+	slices.Sort(chaves)
+	return chaves
+}
+
 type projetoDoContrato struct {
 	nome    string
 	projeto tenancy.ProjectSummary
@@ -81,12 +111,14 @@ func projetosDoContrato() []projetoDoContrato {
 			IsDefault: true,
 			Role:      tenancy.RoleOwner,
 			CreatedAt: time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC),
+			Limites:   tenancy.LimitesDe(false),
 		}},
-		{nome: "criado pela API, owner", projeto: tenancy.ProjectSummary{
+		{nome: "criado pela API, owner, titular operador", projeto: tenancy.ProjectSummary{
 			ID:        uuid.MustParse("01900000-0000-7000-8000-000000000102"),
 			Name:      "Clientes",
 			Role:      tenancy.RoleOwner,
 			CreatedAt: time.Date(2026, 11, 22, 9, 30, 15, 123000000, time.UTC),
+			Limites:   tenancy.LimitesDe(true),
 		}},
 	}
 }

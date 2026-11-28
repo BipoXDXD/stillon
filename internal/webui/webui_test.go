@@ -131,7 +131,7 @@ func TestIndexLevaONonceDaCSP(t *testing.T) {
 	if n := strings.Count(b, `nonce="`+m[1]+`"`); n != 3 {
 		t.Errorf("o nonce da CSP aparece %d vezes no corpo, queria 3 (meta, script, link):\n%s", n, b)
 	}
-	for _, diretiva := range []string{"default-src 'none'", "script-src 'self';", "frame-ancestors 'none'",
+	for _, diretiva := range []string{"default-src 'none'", "script-src 'self' https://challenges.cloudflare.com;", "frame-ancestors 'none'",
 		"base-uri 'none'", "form-action 'none'", "connect-src 'self'"} {
 		if !strings.Contains(csp, diretiva) {
 			t.Errorf("CSP sem %q: %s", diretiva, csp)
@@ -139,6 +139,19 @@ func TestIndexLevaONonceDaCSP(t *testing.T) {
 	}
 	if strings.Contains(csp, "unsafe-inline") || strings.Contains(csp, "unsafe-eval") {
 		t.Errorf("CSP afrouxada: %s", csp)
+	}
+}
+
+// O widget do Turnstile (cadastro e "esqueci a senha") é a única origem de
+// fora: o api.js em script-src e o iframe do desafio em frame-src. O resto da
+// política fica idêntico. A CSP vale para todas as rotas: o painel é SPA, e ir
+// de /login para /signup não busca o HTML de novo.
+func TestPoliticaLiberaSoOTurnstile(t *testing.T) {
+	const queria = "default-src 'none'; script-src 'self' https://challenges.cloudflare.com; " +
+		"style-src 'self' 'nonce-N'; img-src 'self'; font-src 'self'; connect-src 'self'; manifest-src 'self'; " +
+		"frame-src https://challenges.cloudflare.com; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+	if got := webui.Politica("N"); got != queria {
+		t.Errorf("CSP:\n got %s\nwant %s", got, queria)
 	}
 }
 

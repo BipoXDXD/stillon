@@ -20,11 +20,12 @@ const porCodigo: Record<string, string> = {
   invalid_session: 'Sua sessão terminou. Entre de novo.',
   invalid_credentials: 'E-mail ou senha incorretos.',
   validation_failed: 'Confira os campos destacados.',
-  target_limit_reached: 'Limite de 100 alvos atingido.',
+  // Sem o número: os tetos variam com o plano do titular, e o código de erro
+  // não traz o valor.
+  target_limit_reached: 'Limite de alvos da conta atingido.',
   content_rule_host_limit_reached: 'Limite de regras de conteúdo para este host atingido.',
-  heartbeat_limit_reached: 'Limite de 100 heartbeats atingido.',
-  channel_limit_reached: 'Limite de 10 canais atingido.',
-  // Sem o número: o teto muda no PR 5 (planos).
+  heartbeat_limit_reached: 'Limite de heartbeats da conta atingido.',
+  channel_limit_reached: 'Limite de canais deste projeto atingido.',
   project_limit_reached: 'Limite de projetos atingido.',
   channel_not_pending: 'O canal não está mais aguardando verificação.',
   delivery_failed: 'Não conseguimos entregar a mensagem de teste. Confira o endereço.',
@@ -32,6 +33,12 @@ const porCodigo: Record<string, string> = {
   slug_taken: 'Este endereço já está em uso.',
   // O 409 do PATCH num heartbeat de agendamento que esta versão não lê.
   schedule_unsupported: 'Este agendamento não pode ser editado nesta versão.',
+  // O cadastro público (PR 3). O 403 de criar recurso com o e-mail ainda não
+  // confirmado; o Turnstile recusado no siteverify; o token de conta
+  // inexistente, usado ou vencido.
+  email_not_verified: 'Confirme seu e-mail para criar recursos. Use o link que enviamos ou peça outro.',
+  turnstile_failed: 'A verificação de segurança falhou. Faça a verificação de novo e envie.',
+  token_invalid: 'Link inválido ou vencido. Peça outro.',
 }
 
 function duracao(segundos: number): string {
@@ -94,6 +101,7 @@ const porCampo: Record<string, Record<string, string>> = {
   kind: { unavailable: 'O envio de e-mail não está configurado neste servidor.' },
   email: { invalid: 'E-mail inválido.' },
   slug: { invalid: 'De 3 a 40 caracteres: letras minúsculas, números e hífens, sem hífen nas pontas.' },
+  password: { too_short: 'Mínimo de 15 caracteres.', too_long: 'Máximo de 128 caracteres.' },
   new_password: { too_short: 'Mínimo de 15 caracteres.', too_long: 'Máximo de 128 caracteres.' },
   content_rule: { forbidden: 'Para verificar o conteúdo, use GET ou POST e tire os headers Accept-Encoding e Range.' },
   'content_rule.value': { too_long: LIMITE_DA_REGRA, invalid: CONTROLE_NA_REGRA },

@@ -12,13 +12,6 @@ import (
 // 00039): o domínio recusa antes de o banco recusar.
 const MaxProjectNameRunes = 100
 
-// Teto de projetos de que uma conta pode ser titular: o operador tem folga
-// para administrar; os demais, uma cota pequena.
-const (
-	MaxProjectsPerTitular  = 3
-	MaxProjectsForOperator = 100
-)
-
 var (
 	ErrProjectNameRequired = errors.New("nome do projeto obrigatório")
 	ErrProjectNameTooLong  = errors.New("nome do projeto longo demais")
@@ -40,12 +33,4 @@ func ParseProjectName(s string) (string, error) {
 		return "", ErrProjectNameInvalid
 	}
 	return name, nil
-}
-
-// ProjectLimit diz quantos projetos a conta pode ter como titular.
-func ProjectLimit(isOperator bool) int {
-	if isOperator {
-		return MaxProjectsForOperator
-	}
-	return MaxProjectsPerTitular
 }

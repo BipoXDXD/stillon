@@ -20,8 +20,10 @@ ON CONFLICT DO NOTHING;
 -- suspenso (os membros perdem o acesso enquanto durar a suspensão). O padrão
 -- vem primeiro. Roda no escopo do usuário: project_members_own_select já
 -- restringe aos vínculos dele, e o filtro por user_id deixa isso explícito.
+-- titular_is_operator dá os limites do titular de cada projeto
+-- (tenancy.LimitesDe): valem os do dono do projeto, não os de quem pede.
 -- name: ListMyProjects :many
-SELECT p.id, p.name, p.is_default, m.role, p.created_at
+SELECT p.id, p.name, p.is_default, m.role, p.created_at, t.is_operator AS titular_is_operator
   FROM project_members m
   JOIN projects p ON p.id = m.project_id
   JOIN users t ON t.id = p.titular_id

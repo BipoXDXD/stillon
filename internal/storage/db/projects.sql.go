@@ -136,7 +136,7 @@ func (q *Queries) InsertProjectOwner(ctx context.Context, arg InsertProjectOwner
 }
 
 const listMyProjects = `-- name: ListMyProjects :many
-SELECT p.id, p.name, p.is_default, m.role, p.created_at
+SELECT p.id, p.name, p.is_default, m.role, p.created_at, t.is_operator AS titular_is_operator
   FROM project_members m
   JOIN projects p ON p.id = m.project_id
   JOIN users t ON t.id = p.titular_id
@@ -145,17 +145,20 @@ SELECT p.id, p.name, p.is_default, m.role, p.created_at
 `
 
 type ListMyProjectsRow struct {
-	ID        uuid.UUID
-	Name      string
-	IsDefault bool
-	Role      string
-	CreatedAt time.Time
+	ID                uuid.UUID
+	Name              string
+	IsDefault         bool
+	Role              string
+	CreatedAt         time.Time
+	TitularIsOperator bool
 }
 
 // Os projetos de que user_id é membro, com o papel dele, sem os de titular
 // suspenso (os membros perdem o acesso enquanto durar a suspensão). O padrão
 // vem primeiro. Roda no escopo do usuário: project_members_own_select já
 // restringe aos vínculos dele, e o filtro por user_id deixa isso explícito.
+// titular_is_operator dá os limites do titular de cada projeto
+// (tenancy.LimitesDe): valem os do dono do projeto, não os de quem pede.
 func (q *Queries) ListMyProjects(ctx context.Context, userID uuid.UUID) ([]ListMyProjectsRow, error) {
 	rows, err := q.db.Query(ctx, listMyProjects, userID)
 	if err != nil {
@@ -171,6 +174,7 @@ func (q *Queries) ListMyProjects(ctx context.Context, userID uuid.UUID) ([]ListM
 			&i.IsDefault,
 			&i.Role,
 			&i.CreatedAt,
+			&i.TitularIsOperator,
 		); err != nil {
 			return nil, err
 		}

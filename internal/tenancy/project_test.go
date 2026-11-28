@@ -34,12 +34,3 @@ func TestParseProjectName(t *testing.T) {
 		})
 	}
 }
-
-func TestProjectLimit(t *testing.T) {
-	if got := ProjectLimit(false); got != 3 {
-		t.Errorf("ProjectLimit(false) = %d; quer 3", got)
-	}
-	if got := ProjectLimit(true); got != 100 {
-		t.Errorf("ProjectLimit(true) = %d; quer 100", got)
-	}
-}

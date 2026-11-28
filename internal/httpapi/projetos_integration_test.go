@@ -25,6 +25,63 @@ type projetoJSON struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+// limitesJSON é o campo limits de um item de GET /api/v1/projects.
+type limitesJSON struct {
+	Projects           int   `json:"projects"`
+	MembersPerProject  int   `json:"members_per_project"`
+	Targets            int64 `json:"targets"`
+	Heartbeats         int64 `json:"heartbeats"`
+	ChannelsPerProject int64 `json:"channels_per_project"`
+	MinIntervalSec     int32 `json:"min_interval_sec"`
+}
+
+// U (grátis) é owner do padrão dele e membro do padrão de O (operador): cada
+// item traz os limites do TITULAR daquele projeto, nunca os de quem pede.
+func TestProjectListCarriesTitularLimits(t *testing.T) {
+	a := newAPI(t)
+	u := tokenDe(t, a, a.userID)
+	padraoDeU := testdb.ProjetoPadrao(t, a.userID)
+	o := outroUsuario(t, a)
+	testdb.Operador(t, o)
+	padraoDeO := testdb.ProjetoPadrao(t, o)
+	testdb.Membro(t, padraoDeO, a.userID, "member")
+
+	status, corpo := lerCru(t, a, http.MethodGet, "/api/v1/projects", u, nil)
+	if status != http.StatusOK {
+		t.Fatalf("GET /api/v1/projects deu %d, queria 200: %s", status, corpo)
+	}
+	var lista struct {
+		Items []struct {
+			ID     string       `json:"id"`
+			Limits *limitesJSON `json:"limits"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal([]byte(corpo), &lista); err != nil {
+		t.Fatal(err)
+	}
+	queria := map[string]limitesJSON{
+		padraoDeU.String(): {Projects: 3, MembersPerProject: 3, Targets: 20, Heartbeats: 20, ChannelsPerProject: 5, MinIntervalSec: 300},
+		padraoDeO.String(): {Projects: 100, MembersPerProject: 100, Targets: 100, Heartbeats: 100, ChannelsPerProject: 10, MinIntervalSec: 30},
+	}
+	if len(lista.Items) != len(queria) {
+		t.Fatalf("a lista trouxe %d projetos, queria %d: %s", len(lista.Items), len(queria), corpo)
+	}
+	for _, item := range lista.Items {
+		q, ok := queria[item.ID]
+		if !ok {
+			t.Errorf("projeto inesperado %s na lista", item.ID)
+			continue
+		}
+		if item.Limits == nil {
+			t.Errorf("o projeto %s veio sem limits: %s", item.ID, corpo)
+			continue
+		}
+		if *item.Limits != q {
+			t.Errorf("limits do projeto %s = %+v, queria %+v", item.ID, *item.Limits, q)
+		}
+	}
+}
+
 // U é owner do Projeto padrão e viewer de B (de outro titular): a lista traz
 // os dois, o padrão primeiro, cada um com o papel de U. O projeto de V, de que
 // U não é membro, não aparece.
@@ -49,7 +106,7 @@ func TestListProjectsReturnsOwnProjectsWithRole(t *testing.T) {
 	crus, _ := envelope["items"].([]any)
 	for i, item := range crus {
 		m, _ := item.(map[string]any)
-		if chaves := chavesDe(m); !slices.Equal(chaves, []string{"created_at", "id", "is_default", "name", "role"}) {
+		if chaves := chavesDe(m); !slices.Equal(chaves, []string{"created_at", "id", "is_default", "limits", "name", "role"}) {
 			t.Errorf("o item %d tem as chaves %v", i, chaves)
 		}
 	}

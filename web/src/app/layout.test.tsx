@@ -1,5 +1,6 @@
-import { screen, within } from '@testing-library/react'
+import { act, screen, waitFor, within } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
+import { chaves } from '@/lib/api/consultas'
 import { EMAIL } from '@/test/api-falsa'
 import { renderizarPainel } from '@/test/renderizar'
 
@@ -66,5 +67,18 @@ describe('Layout', () => {
     expect(await within(cabecalho).findByText(EMAIL)).toBeInTheDocument()
     expect(within(cabecalho).getByRole('button', { name: /^Tema:/ })).toBeInTheDocument()
     expect(within(cabecalho).getByRole('button', { name: 'Sair' })).toBeInTheDocument()
+  })
+
+  // Sabotagem prevista: montar o aviso sem olhar o email_verified.
+  it('mostra o aviso só com email_verified false', async () => {
+    const { falsa, cliente } = await renderizarPainel('/')
+    await screen.findByRole('heading', { name: 'Painel' })
+    await within(screen.getByRole('banner')).findByText(EMAIL)
+    const texto = 'Confirme seu e-mail para criar monitores, canais e páginas.'
+    expect(screen.queryByText(texto, { exact: false })).not.toBeInTheDocument()
+
+    falsa.estado.emailConfirmado = false
+    await act(() => cliente.invalidateQueries({ queryKey: chaves.me }))
+    await waitFor(() => expect(screen.getByRole('main')).toHaveTextContent(texto))
   })
 })
