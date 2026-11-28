@@ -1,7 +1,7 @@
 import { useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { useNavigate, useParams } from 'react-router'
-import { useApiDoProjeto, useRotaDoProjeto } from '@/app/projeto'
+import { useApiDoProjeto, useProjeto, useRotaDoProjeto } from '@/app/projeto'
 import { EstadoDaConsulta } from '@/components/EstadoDaConsulta'
 import { Titulo } from '@/components/Titulo'
 import { useAvisar } from '@/components/ui/avisos'
@@ -9,7 +9,7 @@ import { Confirmar } from '@/components/ui/dialogo'
 import { useAlvo, useChavesDoProjeto } from '@/lib/api/consultas'
 import type { Alvo } from '@/lib/api/schemas'
 import { FormularioAlvo } from './FormularioAlvo'
-import { apagaOsHeaders, paraAlteracao, paraCriacao, valoresDe, valoresPadrao } from './esquema'
+import { apagaOsHeaders, paraAlteracao, paraCriacao, valoresDe, valoresPadraoPara } from './esquema'
 
 export function PaginaNovoAlvo() {
   const api = useApiDoProjeto()
@@ -18,11 +18,12 @@ export function PaginaNovoAlvo() {
   const navegar = useNavigate()
   const noProjeto = useRotaDoProjeto()
   const avisar = useAvisar()
+  const { intervaloMinimo } = useProjeto()
   return (
     <>
       <Titulo aba="Novo alvo">Novo alvo</Titulo>
       <FormularioAlvo
-        iniciais={valoresPadrao}
+        iniciais={valoresPadraoPara(intervaloMinimo)}
         rotuloDoBotao="Cadastrar"
         aoEnviar={async (v) => {
           const a = await api.criarAlvo(paraCriacao(v))

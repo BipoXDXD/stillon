@@ -67,7 +67,7 @@ func TestCreateProjectReturns201AndListShowsIt(t *testing.T) {
 	if status != http.StatusCreated {
 		t.Fatalf("POST %s deu %d, queria 201: %s", rotaDeProjetos, status, corpo)
 	}
-	if chaves := chavesDe(decodificar(t, corpo)); !slices.Equal(chaves, []string{"created_at", "id", "is_default", "name", "role"}) {
+	if chaves := chavesDe(decodificar(t, corpo)); !slices.Equal(chaves, []string{"created_at", "id", "is_default", "limits", "name", "role"}) {
 		t.Errorf("a resposta tem as chaves %v, queria as do item de GET %s", chaves, rotaDeProjetos)
 	}
 	var criado projetoJSON
@@ -79,6 +79,15 @@ func TestCreateProjectReturns201AndListShowsIt(t *testing.T) {
 	}
 	if _, err := uuid.Parse(criado.ID); err != nil {
 		t.Fatalf("id %q não é UUID: %v", criado.ID, err)
+	}
+	var comLimites struct {
+		Limits limitesJSON `json:"limits"`
+	}
+	if err := json.Unmarshal([]byte(corpo), &comLimites); err != nil {
+		t.Fatal(err)
+	}
+	if q := (limitesJSON{Projects: 3, MembersPerProject: 3, Targets: 20, Heartbeats: 20, ChannelsPerProject: 5, MinIntervalSec: 300}); comLimites.Limits != q {
+		t.Errorf("limits do projeto criado = %+v, queria os do plano grátis %+v", comLimites.Limits, q)
 	}
 
 	lista := listarProjetos(t, a, token)
@@ -169,7 +178,7 @@ func TestCreateProjectLimitIs409(t *testing.T) {
 	a := newAPI(t)
 	token := tokenDe(t, a, a.userID)
 	testdb.ProjetoPadrao(t, a.userID)
-	for i := 2; i <= tenancy.MaxProjectsPerTitular; i++ {
+	for i := 2; i <= tenancy.LimitesDe(false).Projetos; i++ {
 		if status, corpo := criarProjetoHTTP(t, a, token, map[string]string{"name": "Extra"}); status != http.StatusCreated {
 			t.Fatalf("o %dº projeto deu %d, queria 201: %s", i, status, corpo)
 		}
@@ -178,8 +187,8 @@ func TestCreateProjectLimitIs409(t *testing.T) {
 	if status != http.StatusConflict || codigoNoCorpo(t, corpo) != string(apierr.CodeProjectLimit) {
 		t.Errorf("o 4º projeto deu %d %s, queria 409 project_limit_reached", status, corpo)
 	}
-	if n := projetosDoTitular(t, a.userID); n != tenancy.MaxProjectsPerTitular {
-		t.Errorf("o titular tem %d projetos, queria %d", n, tenancy.MaxProjectsPerTitular)
+	if n := projetosDoTitular(t, a.userID); n != tenancy.LimitesDe(false).Projetos {
+		t.Errorf("o titular tem %d projetos, queria %d", n, tenancy.LimitesDe(false).Projetos)
 	}
 }
 

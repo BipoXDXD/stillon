@@ -321,7 +321,7 @@ const userIsOperator = `-- name: UserIsOperator :one
 SELECT is_operator FROM users WHERE id = $1
 `
 
-// O operador tem teto de projetos maior (tenancy.ProjectLimit).
+// O operador tem teto de projetos maior (tenancy.LimitesDe).
 func (q *Queries) UserIsOperator(ctx context.Context, id uuid.UUID) (bool, error) {
 	row := q.db.QueryRow(ctx, userIsOperator, id)
 	var is_operator bool

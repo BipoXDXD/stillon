@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, type ReactNode } from 'react'
 import { Outlet, useMatch, useParams } from 'react-router'
 import { EstadoDaConsulta } from '@/components/EstadoDaConsulta'
+import { intervaloMinimoDo } from '@/features/alvos/esquema'
 import type { ApiDoProjeto } from '@/lib/api/cliente'
 import { useProjetos } from '@/lib/api/consultas'
 import type { Papel, Projeto } from '@/lib/api/schemas'
@@ -8,7 +9,8 @@ import { useApi } from './contexto'
 import { escolherProjeto, lembrarProjeto, lerProjetoLembrado } from './escolher-projeto'
 import { NaoEncontrada } from './NaoEncontrada'
 
-export type ProjetoAtual = { id: string; nome: string; papel: Papel; padrao: boolean }
+// intervaloMinimo: o do plano do titular do projeto (limits), em segundos.
+export type ProjetoAtual = { id: string; nome: string; papel: Papel; padrao: boolean; intervaloMinimo: number }
 
 const Contexto = createContext<ProjetoAtual | null>(null)
 
@@ -45,7 +47,11 @@ function ComProjeto({ projeto }: { projeto: Projeto }) {
 // e o contador de abertos.
 export function NoProjeto({ projeto, children }: { projeto: Projeto; children: ReactNode }) {
   const { id, name, role, is_default } = projeto
-  const atual = useMemo<ProjetoAtual>(() => ({ id, nome: name, papel: role, padrao: is_default }), [id, name, role, is_default])
+  const intervaloMinimo = intervaloMinimoDo(projeto)
+  const atual = useMemo<ProjetoAtual>(
+    () => ({ id, nome: name, papel: role, padrao: is_default, intervaloMinimo }),
+    [id, name, role, is_default, intervaloMinimo],
+  )
   return <Contexto.Provider value={atual}>{children}</Contexto.Provider>
 }
 

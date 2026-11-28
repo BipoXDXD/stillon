@@ -106,6 +106,7 @@ func (s *Store) ListForUser(ctx context.Context, userID uuid.UUID) ([]tenancy.Pr
 		}
 		out = append(out, tenancy.ProjectSummary{
 			ID: l.ID, Name: l.Name, IsDefault: l.IsDefault, Role: papel, CreatedAt: l.CreatedAt,
+			Limites: tenancy.LimitesDe(l.TitularIsOperator),
 		})
 	}
 	return out, nil
@@ -117,12 +118,16 @@ func (s *Store) ListForUser(ctx context.Context, userID uuid.UUID) ([]tenancy.Pr
 // O vínculo vai na mesma transação porque o banco não garante que todo
 // projeto tenha owner (Membership recusaria um projeto órfão).
 func (s *Store) Create(ctx context.Context, p tenancy.NewProject) (tenancy.ProjectSummary, error) {
-	var linha db.InsertProjectRow
+	var (
+		linha    db.InsertProjectRow
+		operador bool
+	)
 	err := storage.InUserTx(ctx, s.pool, p.TitularID, func(q *db.Queries) error {
 		if err := q.LockTitularProjects(ctx, p.TitularID); err != nil {
 			return fmt.Errorf("travar projetos do titular: %w", err)
 		}
-		operador, err := q.UserIsOperator(ctx, p.TitularID)
+		var err error
+		operador, err = q.UserIsOperator(ctx, p.TitularID)
 		if err != nil {
 			return fmt.Errorf("ler se o titular é operador: %w", err)
 		}
@@ -130,7 +135,7 @@ func (s *Store) Create(ctx context.Context, p tenancy.NewProject) (tenancy.Proje
 		if err != nil {
 			return fmt.Errorf("contar projetos do titular: %w", err)
 		}
-		if total >= int64(tenancy.ProjectLimit(operador)) {
+		if total >= int64(tenancy.LimitesDe(operador).Projetos) {
 			return tenancy.ErrProjectLimit
 		}
 		linha, err = q.InsertProject(ctx, db.InsertProjectParams{
@@ -152,5 +157,6 @@ func (s *Store) Create(ctx context.Context, p tenancy.NewProject) (tenancy.Proje
 	return tenancy.ProjectSummary{
 		ID: linha.ID, Name: linha.Name, IsDefault: linha.IsDefault,
 		Role: tenancy.RoleOwner, CreatedAt: linha.CreatedAt,
+		Limites: tenancy.LimitesDe(operador),
 	}, nil
 }

@@ -67,7 +67,26 @@ export const Papel = z.union([
 ])
 export type Papel = z.infer<typeof Papel>
 
-export const Projeto = z.object({ id, name: z.string(), is_default: z.boolean(), role: Papel, created_at: instante })
+// As cotas do TITULAR do projeto (projectResponse.limits), não as de quem
+// pede. Opcional: a API anterior, ainda no ar durante o release, não as manda.
+export const LimitesDoProjeto = z.object({
+  projects: z.number().int(),
+  members_per_project: z.number().int(),
+  targets: z.number().int(),
+  heartbeats: z.number().int(),
+  channels_per_project: z.number().int(),
+  min_interval_sec: z.number().int(),
+})
+export type LimitesDoProjeto = z.infer<typeof LimitesDoProjeto>
+
+export const Projeto = z.object({
+  id,
+  name: z.string(),
+  is_default: z.boolean(),
+  role: Papel,
+  created_at: instante,
+  limits: LimitesDoProjeto.optional(),
+})
 export type Projeto = z.infer<typeof Projeto>
 
 export const ListaDeProjetos = z.object({ items: z.array(Projeto) })

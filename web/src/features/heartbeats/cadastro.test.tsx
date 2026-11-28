@@ -265,11 +265,11 @@ describe('cadastro', () => {
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
 
-  it('o teto de 100 aparece como erro do formulário', async () => {
+  it('o teto de heartbeats aparece como erro do formulário', async () => {
     const r = await renderizarPainel('/heartbeats/new')
     r.falsa.estado.forcar.set('POST /projects/:projectId/heartbeats', { status: 409, code: 'heartbeat_limit_reached' })
     await cadastrar(r)
-    expect(await screen.findByRole('alert')).toHaveTextContent('Limite de 100 heartbeats atingido.')
+    expect(await screen.findByRole('alert')).toHaveTextContent('Limite de heartbeats da conta atingido.')
   })
 
   it('campo inválido não chama o servidor', async () => {

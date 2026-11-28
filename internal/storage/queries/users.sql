@@ -114,6 +114,6 @@ UPDATE users SET totp_secret_enc = NULL, totp_confirmed_at = NULL, totp_last_tim
 -- name: DeleteRecoveryCodes :exec
 DELETE FROM totp_recovery_codes WHERE user_id = $1;
 
--- O operador tem teto de projetos maior (tenancy.ProjectLimit).
+-- O operador tem teto de projetos maior (tenancy.LimitesDe).
 -- name: UserIsOperator :one
 SELECT is_operator FROM users WHERE id = sqlc.arg(id);

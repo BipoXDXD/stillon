@@ -14,6 +14,8 @@ type ProjectSummary struct {
 	IsDefault bool
 	Role      Role
 	CreatedAt time.Time
+	// Limites são os do titular do projeto, não os de quem pede a lista.
+	Limites Limites
 }
 
 // NewProject é o projeto a criar pela API: nunca o padrão.
@@ -37,6 +39,6 @@ type ProjectRepository interface {
 	ListForUser(ctx context.Context, userID uuid.UUID) ([]ProjectSummary, error)
 	// Create grava o projeto (is_default = false) e o vínculo owner do titular
 	// na MESMA transação, sob a trava do titular; ErrProjectLimit quando
-	// ProjectLimit(is_operator) já foi atingido.
+	// LimitesDe(is_operator).Projetos já foi atingido.
 	Create(ctx context.Context, p NewProject) (ProjectSummary, error)
 }
