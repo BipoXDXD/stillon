@@ -254,10 +254,15 @@ func achadosDeGUCDeProjeto(arquivo, sql string) []string {
 	return achados
 }
 
-// migrationDaCota é a das funções de cota do titular: a única, fora de
-// ScopeToProject, que escreve em app.project_id, e só para zerá-lo durante a
-// contagem e devolvê-lo ao valor que guardou (nenhuma liga projeto novo).
-var migrationDaCota = filepath.Join("migrations", "00045_contagem_de_cota_do_titular.sql")
+// migrationsDaCota são as das funções de cota: as únicas, fora de
+// ScopeToProject, que escrevem em app.project_id, e só para zerá-lo durante a
+// contagem e devolvê-lo ao valor que guardaram (nenhuma liga projeto novo). A
+// 00045 tem as do titular; a 00050, cota_do_receptor, a cota de quem recebe a
+// titularidade, que só o pendente da proposta chama (PR 4.3).
+var migrationsDaCota = []string{
+	filepath.Join("migrations", "00045_contagem_de_cota_do_titular.sql"),
+	filepath.Join("migrations", "00050_transferencia_de_titular.sql"),
+}
 
 var (
 	// escritaDaCota casa as duas formas aceitas na 00045: set_config local de
@@ -348,15 +353,16 @@ func TestOnlyScopeSQLSetsProjectGUC(t *testing.T) {
 		caminhos = append(caminhos, achados...)
 	}
 
-	viuScopeToProject, zeramNaCota, restauramNaCota := false, 0, 0
+	viuScopeToProject := false
+	zeramNaCota, restauramNaCota := map[string]int{}, map[string]int{}
 	for _, c := range caminhos {
 		conteudo, err := os.ReadFile(c)
 		if err != nil {
 			t.Fatal(err)
 		}
 		sql := string(conteudo)
-		if c == migrationDaCota {
-			sql, zeramNaCota, restauramNaCota = semEscritasDaCota(sql)
+		if slices.Contains(migrationsDaCota, c) {
+			sql, zeramNaCota[c], restauramNaCota[c] = semEscritasDaCota(sql)
 		}
 		for _, achado := range achadosDeGUCDeProjeto(c, sql) {
 			if c == filepath.Join("queries", "scope.sql") && blocoDaLinha(sql, linhaDoAchado(t, achado)) == "ScopeToProject" {
@@ -371,14 +377,16 @@ func TestOnlyScopeSQLSetsProjectGUC(t *testing.T) {
 	if !viuScopeToProject {
 		t.Error("a varredura não achou o set_config de ScopeToProject em queries/scope.sql; ela deixou de enxergar o SQL")
 	}
-	if zeramNaCota == 0 || restauramNaCota == 0 {
-		t.Errorf("a varredura achou %d escrita(s) que zeram e %d que restauram app.project_id em %s; "+
-			"queria as duas formas: ela deixou de enxergar a migration", zeramNaCota, restauramNaCota, migrationDaCota)
+	for _, m := range migrationsDaCota {
+		if zeramNaCota[m] == 0 || restauramNaCota[m] == 0 {
+			t.Errorf("a varredura achou %d escrita(s) que zeram e %d que restauram app.project_id em %s; "+
+				"queria as duas formas: ela deixou de enxergar a migration", zeramNaCota[m], restauramNaCota[m], m)
+		}
 	}
 }
 
 // gucsDaCota são os GUCs que abrem os projetos do titular às políticas
-// <t>_cota_select. Só as funções da 00045 os ligam, e elas os zeram de novo
+// <t>_cota_select. Só as funções de cota (00045 e 00050) os ligam, e elas os zeram de novo
 // antes de sair.
 var gucsDaCota = []string{"app.cota_titular_id", "app.cota_projetos"}
 
@@ -395,7 +403,7 @@ func TestOnlyQuotaFunctionsUseQuotaGUCs(t *testing.T) {
 		return ""
 	}
 
-	viuNaMigration := false
+	viuNaMigration := map[string]bool{}
 	for _, padrao := range []string{"queries/*.sql", "migrations/*.sql"} {
 		caminhos, err := filepath.Glob(padrao)
 		if err != nil {
@@ -412,15 +420,17 @@ func TestOnlyQuotaFunctionsUseQuotaGUCs(t *testing.T) {
 			guc := cita(string(conteudo))
 			switch {
 			case guc == "":
-			case c == migrationDaCota:
-				viuNaMigration = true
+			case slices.Contains(migrationsDaCota, c):
+				viuNaMigration[c] = true
 			default:
-				t.Errorf("%s cita %s: só as funções de cota de %s ligam esse GUC", c, guc, migrationDaCota)
+				t.Errorf("%s cita %s: só as funções de cota de %v ligam esse GUC", c, guc, migrationsDaCota)
 			}
 		}
 	}
-	if !viuNaMigration {
-		t.Errorf("a varredura não achou os GUCs da cota em %s; ela deixou de enxergar a migration", migrationDaCota)
+	for _, m := range migrationsDaCota {
+		if !viuNaMigration[m] {
+			t.Errorf("a varredura não achou os GUCs da cota em %s; ela deixou de enxergar a migration", m)
+		}
 	}
 
 	raiz, err := filepath.Abs(filepath.Join("..", ".."))
@@ -448,7 +458,7 @@ func TestOnlyQuotaFunctionsUseQuotaGUCs(t *testing.T) {
 		lidos++
 		if guc := cita(string(conteudo)); guc != "" {
 			rel, _ := filepath.Rel(raiz, caminho)
-			t.Errorf("%s cita %s: só as funções de cota de %s ligam esse GUC", filepath.ToSlash(rel), guc, migrationDaCota)
+			t.Errorf("%s cita %s: só as funções de cota de %v ligam esse GUC", filepath.ToSlash(rel), guc, migrationsDaCota)
 		}
 		return nil
 	})

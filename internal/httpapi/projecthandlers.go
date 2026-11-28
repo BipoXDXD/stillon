@@ -5,7 +5,12 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/BipoXDXD/stillon/internal/apierr"
+	"github.com/BipoXDXD/stillon/internal/heartbeat"
+	"github.com/BipoXDXD/stillon/internal/notify"
+	"github.com/BipoXDXD/stillon/internal/targets"
 	"github.com/BipoXDXD/stillon/internal/tenancy"
 )
 
@@ -29,6 +34,11 @@ type projectResponse struct {
 	Role      string         `json:"role"`
 	CreatedAt time.Time      `json:"created_at"`
 	Limits    limitsResponse `json:"limits"`
+	// PendingTitular: a titularidade foi proposta a quem pede (PR 4.3). Só
+	// sai quando true: o schema Projeto do painel ainda não tem o campo, e o
+	// teste de contrato dele exige exatamente as chaves do schema (o 4.4 o
+	// acrescenta).
+	PendingTitular bool `json:"pending_titular,omitempty"`
 }
 
 // limitsResponse são as cotas do titular do projeto (tenancy.Limites): o
@@ -143,6 +153,7 @@ func (h *ProjectHandlers) recusarNome(w http.ResponseWriter, r *http.Request, op
 func toProjectResponse(p tenancy.ProjectSummary) projectResponse {
 	return projectResponse{
 		ID: p.ID.String(), Name: p.Name, IsDefault: p.IsDefault, Role: string(p.Role), CreatedAt: p.CreatedAt,
+		PendingTitular: p.PendingTitular,
 		Limits: limitsResponse{
 			Projects:           p.Limites.Projetos,
 			MembersPerProject:  p.Limites.MembrosPorProjeto,
@@ -152,4 +163,91 @@ func toProjectResponse(p tenancy.ProjectSummary) projectResponse {
 			MinIntervalSec:     p.Limites.IntervaloMinimoSec,
 		},
 	}
+}
+
+// transferRequest é o corpo de POST /titular-transfer: o owner a quem a
+// titularidade é proposta.
+type transferRequest struct {
+	UserID string `json:"user_id"`
+}
+
+// ProposeTransfer é POST /api/v1/projects/{projectID}/titular-transfer com
+// {"user_id": ...}: só o titular propõe, e só a outro owner (409
+// titular_transfer_target, também para quem não é membro e para o Projeto
+// padrão). 202: a titularidade só muda quando quem recebe aceita.
+func (h *ProjectHandlers) ProposeTransfer(w http.ResponseWriter, r *http.Request) {
+	sc, ok := escopo(w, r)
+	if !ok {
+		return
+	}
+	var req transferRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	alvo, err := uuid.Parse(req.UserID)
+	if err != nil {
+		campoInvalido(w, r, "user_id", "invalid")
+		return
+	}
+	if h.transferenciaFalhou(w, r, "propor a transferência", h.svc.ProposeTransfer(r.Context(), sc.UserID, sc.ProjectID, alvo)) {
+		return
+	}
+	w.WriteHeader(http.StatusAccepted)
+}
+
+// AcceptTransfer é POST /api/v1/projects/{projectID}/titular-transfer/accept:
+// quem recebe aceita, se a cota dele comporta o projeto, e a resposta é o
+// item de GET /api/v1/projects. Quem não é o pendente recebe 403.
+func (h *ProjectHandlers) AcceptTransfer(w http.ResponseWriter, r *http.Request) {
+	sc, ok := escopo(w, r)
+	if !ok {
+		return
+	}
+	p, err := h.svc.AcceptTransfer(r.Context(), sc.UserID, sc.ProjectID)
+	if h.transferenciaFalhou(w, r, "aceitar a transferência", err) {
+		return
+	}
+	apierr.WriteJSON(w, http.StatusOK, toProjectResponse(p))
+}
+
+// CancelTransfer é DELETE /api/v1/projects/{projectID}/titular-transfer: o
+// titular cancela, quem recebe recusa (204); outro membro recebe 403.
+func (h *ProjectHandlers) CancelTransfer(w http.ResponseWriter, r *http.Request) {
+	sc, ok := escopo(w, r)
+	if !ok {
+		return
+	}
+	if h.transferenciaFalhou(w, r, "cancelar a transferência", h.svc.CancelTransfer(r.Context(), sc.UserID, sc.ProjectID)) {
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// transferenciaFalhou traduz o erro da transferência. Quem saiu do projeto no
+// meio do caminho recebe o 404 de projeto inexistente; as cotas de quem
+// recebe são os 409 das criações.
+func (h *ProjectHandlers) transferenciaFalhou(w http.ResponseWriter, r *http.Request, op string, err error) bool {
+	switch {
+	case err == nil:
+		return false
+	case errors.Is(err, tenancy.ErrNotMember), errors.Is(err, tenancy.ErrProjectNotFound):
+		apierr.WriteError(w, r, apierr.CodeNotFound)
+	case errors.Is(err, tenancy.ErrForbidden):
+		apierr.WriteError(w, r, apierr.CodeForbidden)
+	case errors.Is(err, tenancy.ErrTransferTarget):
+		apierr.WriteError(w, r, apierr.CodeTransferTarget)
+	case errors.Is(err, tenancy.ErrProjectLimit):
+		apierr.WriteError(w, r, apierr.CodeProjectLimit)
+	case errors.Is(err, tenancy.ErrMemberLimit):
+		apierr.WriteError(w, r, apierr.CodeMemberLimit)
+	case errors.Is(err, targets.ErrLimitReached):
+		apierr.WriteError(w, r, apierr.CodeTargetLimit)
+	case errors.Is(err, heartbeat.ErrLimitReached):
+		apierr.WriteError(w, r, apierr.CodeHeartbeatLimit)
+	case errors.Is(err, notify.ErrLimitReached):
+		apierr.WriteError(w, r, apierr.CodeChannelLimit)
+	default:
+		erroInterno(w, r, op, err)
+	}
+	return true
 }

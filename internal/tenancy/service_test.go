@@ -32,6 +32,16 @@ func (r *repoFalso) ChangeRole(_ context.Context, _, _, alvo uuid.UUID, para ten
 
 func (r *repoFalso) RemoveMember(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) error { return nil }
 
+func (r *repoFalso) ProposeTransfer(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) error {
+	return nil
+}
+
+func (r *repoFalso) AcceptTransfer(context.Context, uuid.UUID, uuid.UUID) (tenancy.ProjectSummary, error) {
+	return tenancy.ProjectSummary{}, nil
+}
+
+func (r *repoFalso) CancelTransfer(context.Context, uuid.UUID, uuid.UUID) error { return nil }
+
 func (r *repoFalso) Rename(_ context.Context, _, projeto uuid.UUID, nome string) (tenancy.ProjectSummary, error) {
 	r.nomeRecebido = nome
 	return tenancy.ProjectSummary{ID: projeto, Name: nome}, nil
@@ -108,6 +118,21 @@ func (r repoQueFalha) ChangeRole(context.Context, uuid.UUID, uuid.UUID, uuid.UUI
 
 func (r repoQueFalha) RemoveMember(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) error {
 	r.t.Error("RemoveMember chamado")
+	return nil
+}
+
+func (r repoQueFalha) ProposeTransfer(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) error {
+	r.t.Error("ProposeTransfer chamado")
+	return nil
+}
+
+func (r repoQueFalha) AcceptTransfer(context.Context, uuid.UUID, uuid.UUID) (tenancy.ProjectSummary, error) {
+	r.t.Error("AcceptTransfer chamado")
+	return tenancy.ProjectSummary{}, nil
+}
+
+func (r repoQueFalha) CancelTransfer(context.Context, uuid.UUID, uuid.UUID) error {
+	r.t.Error("CancelTransfer chamado")
 	return nil
 }
 

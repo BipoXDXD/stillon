@@ -105,7 +105,8 @@ func (s *Store) ListForUser(ctx context.Context, userID uuid.UUID) ([]tenancy.Pr
 		}
 		out = append(out, tenancy.ProjectSummary{
 			ID: l.ID, Name: l.Name, IsDefault: l.IsDefault, Role: papel, CreatedAt: l.CreatedAt,
-			Limites: tenancy.LimitesDe(l.TitularIsOperator),
+			Limites:        tenancy.LimitesDe(l.TitularIsOperator),
+			PendingTitular: l.PendingTitular,
 		})
 	}
 	return out, nil
