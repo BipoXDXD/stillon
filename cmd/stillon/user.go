@@ -313,18 +313,24 @@ func formatarUso(uso account.Uso) string {
 			padrao = " (padrão)"
 		}
 		convites := ""
-		switch {
-		case p.Convites == 1:
-			convites = " (+1 convite)"
-		case p.Convites > 1:
-			convites = fmt.Sprintf(" (+%d convites)", p.Convites)
+		if p.Convites > 0 {
+			convites = " (+" + quantos(p.Convites, "convite", "convites") + ")"
 		}
-		fmt.Fprintf(&b, "projeto %q%s: %d alvos, %d heartbeats, %d/%d canais%s, %d/%d membros%s%s\n",
-			p.Nome, padrao, p.Alvos, p.Heartbeats,
+		fmt.Fprintf(&b, "projeto %q%s: %s, %s, %d/%d canais%s, %d/%d membros%s%s\n",
+			p.Nome, padrao, quantos(p.Alvos, "alvo", "alvos"), quantos(p.Heartbeats, "heartbeat", "heartbeats"),
 			p.Canais, l.CanaisPorProjeto, acima(p.Canais, l.CanaisPorProjeto),
 			p.Membros, l.MembrosPorProjeto, convites, acima(p.Membros+p.Convites, int64(l.MembrosPorProjeto)))
 	}
 	return b.String()
+}
+
+// quantos concorda o número: "1 alvo", e "N alvos" para os outros (0
+// inclusive), como sessoesEncerradas.
+func quantos(n int64, singular, plural string) string {
+	if n == 1 {
+		return "1 " + singular
+	}
+	return fmt.Sprintf("%d %s", n, plural)
 }
 
 // acima marca o valor que passa estritamente do limite.

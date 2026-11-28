@@ -4559,7 +4559,8 @@ cole o novo no Bitwarden e no Coolify e publique de novo.
 - `vc exec app /stillon user unsuspend --email <e-mail>` reativa a conta; as sessões encerradas
   não voltam, e o dono entra de novo (código 4 é e-mail sem conta).
 - `vc exec app /stillon user usage --email <e-mail>` só lê: mostra plano, suspensão, projetos,
-  alvos, heartbeats, canais, membros e e-mails de conta do dia, com `ACIMA` no que passa do limite.
+  alvos, heartbeats, canais, membros e e-mails de conta do dia, com `ACIMA` no que passa do limite
+  (código 4 é e-mail sem conta).
 - Depois do `suspend`, a página pública de um titular suspenso pode continuar no ar por até
   cerca de 30 s, por causa do cache.
 

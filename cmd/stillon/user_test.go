@@ -15,9 +15,11 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/BipoXDXD/stillon/internal/account"
 	"github.com/BipoXDXD/stillon/internal/auth"
 	"github.com/BipoXDXD/stillon/internal/clock"
 	"github.com/BipoXDXD/stillon/internal/storage/testdb"
+	"github.com/BipoXDXD/stillon/internal/tenancy"
 )
 
 // senhaMarcada é distinta o bastante para ser procurada na saída: ela nunca
@@ -785,7 +787,8 @@ func TestUserUnsuspendCLI(t *testing.T) {
 
 // usage: o cenário do plano (conta grátis acima do teto de alvos, a Loja
 // acima de canais e de membros com os convites) sai exatamente assim; no
-// limite exato (5/5 canais, 3 membros) não há ACIMA. E-mail sem conta é 4.
+// limite exato (o padrão com 5/5 canais e 1 membro mais 2 convites) não há
+// ACIMA. E-mail sem conta é 4.
 // Nenhum caso lê o stdin.
 func TestUserUsageCLI(t *testing.T) {
 	pool := testdb.New(t)
@@ -800,6 +803,8 @@ func TestUserUsageCLI(t *testing.T) {
 	testdb.Membro(t, loja, contaComum(t, pool, "m3@exemplo.com"), "viewer")
 	testdb.Convite(t, loja, "c1@exemplo.com", "member")
 	testdb.Convite(t, loja, "c2@exemplo.com", "viewer")
+	testdb.Convite(t, padrao, "c3@exemplo.com", "member")
+	testdb.Convite(t, padrao, "c4@exemplo.com", "viewer")
 	ano, mes, dia := time.Now().UTC().Date()
 	hoje := time.Date(ano, mes, dia, 0, 0, 0, 0, time.UTC)
 	admin := testdb.Admin(t)
@@ -824,8 +829,8 @@ func TestUserUsageCLI(t *testing.T) {
 				"alvos: 21/20 ACIMA\n" +
 				"heartbeats: 3/20\n" +
 				"e-mails de conta hoje: 4/10 (global 17/50)\n" +
-				`projeto "Projeto padrão" (padrão): 15 alvos, 2 heartbeats, 5/5 canais, 1/3 membros` + "\n" +
-				`projeto "Loja": 6 alvos, 1 heartbeats, 6/5 canais ACIMA, 2/3 membros (+2 convites) ACIMA` + "\n", ""},
+				`projeto "Projeto padrão" (padrão): 15 alvos, 2 heartbeats, 5/5 canais, 1/3 membros (+2 convites)` + "\n" +
+				`projeto "Loja": 6 alvos, 1 heartbeat, 6/5 canais ACIMA, 2/3 membros (+2 convites) ACIMA` + "\n", ""},
 		{"sem conta", []string{"usage", "--email", "ninguem@exemplo.com"}, saidaNaoCadastrado,
 			"", "stillon user: nenhum usuário com o e-mail ninguem@exemplo.com; nada foi alterado\n"},
 		{"argumento sobrando", []string{"usage", "--email", "x@y", "x"}, saidaUso,
@@ -865,6 +870,19 @@ func TestUserUsageCLIFirstLine(t *testing.T) {
 		if primeira, _, _ := strings.Cut(r.stdout, "\n"); r.codigo != saidaOK || primeira+"\n" != quer {
 			t.Errorf("usage de %s: código %d, stdout %q; queria 0 e a primeira linha %q", email, r.codigo, r.stdout, quer)
 		}
+	}
+}
+
+// Um de cada sai no singular: alvo, heartbeat e convite.
+func TestFormatarUsoSingular(t *testing.T) {
+	uso := account.Uso{
+		Email:    "x@y",
+		Limites:  tenancy.LimitesDe(false),
+		Projetos: []account.UsoDoProjeto{{Nome: "Um", Alvos: 1, Heartbeats: 1, Canais: 1, Convites: 1}},
+	}
+	quer := `projeto "Um": 1 alvo, 1 heartbeat, 1/5 canais, 0/3 membros (+1 convite)` + "\n"
+	if saida := formatarUso(uso); !strings.HasSuffix(saida, quer) {
+		t.Errorf("formatarUso deu %q; queria terminar em %q", saida, quer)
 	}
 }
 
