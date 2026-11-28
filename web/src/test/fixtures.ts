@@ -132,8 +132,20 @@ export function sessao(p: Partial<z.input<typeof Sessao>> = {}): z.input<typeof 
   }
 }
 
+// As chaves de teste públicas do Turnstile (docs da Cloudflare): a site key
+// que sempre passa e o token fixo que o widget dela entrega.
+export const SITE_KEY_DO_TURNSTILE = '1x00000000000000000000AA'
+export const TOKEN_DO_TURNSTILE = 'XXXX.DUMMY.TOKEN.XXXX'
+
 export function me(p: Partial<z.input<typeof Me>> = {}): z.input<typeof Me> {
-  return { id: 'u1', email: 'dono@exemplo.com', totp_enabled: false, created_at: '2026-09-01T10:00:00Z', ...p }
+  return {
+    id: 'u1',
+    email: 'dono@exemplo.com',
+    totp_enabled: false,
+    email_verified: true,
+    created_at: '2026-09-01T10:00:00Z',
+    ...p,
+  }
 }
 
 export function pagina(p: Partial<z.input<typeof PaginaDeStatus>> = {}): z.input<typeof PaginaDeStatus> {

@@ -32,7 +32,10 @@ const REGRAS: Regra[] = [
     // O valor começa por minúscula ou dígito: as classes do Tailwind nunca
     // começam por maiúscula, e assim o locale 'pt-BR' não vira "pt-BR" de espaço.
     padrao: new RegExp(String.raw`(?<![\w-])-?${ESPACO}-([a-z\d.][\w.]*)(?![\w./-])`, 'g'),
-    aceita: (a) => ESCALA.has(a[1] ?? ''),
+    aceita: (a) =>
+      ESCALA.has(a[1] ?? '') ||
+      // O pt-br da opção language do Turnstile também coincide com pt-*.
+      (a[0] === 'pt-br' && /\blanguage:\s*['"]$/.test(a.input.slice(0, a.index))),
   },
   {
     nome: 'valor arbitrário de espaço, fonte, raio, sombra ou cor',
@@ -170,16 +173,21 @@ describe('CSS legado removido pelo PR 6', () => {
 
 // Bloco 2, item 6: o que flutua acima do cartão (sombra de nível 2: diálogo,
 // aviso, tooltip) fica na superfície elevada, que no escuro é mais clara que
-// o cartão. O login não flutua sobre nada: o cartão dele é a tela inteira.
+// o cartão. No login e nas telas públicas de conta, o cartão é a própria tela.
 // Sabotagem: voltar o diálogo para bg-superficie.
 describe('o que flutua fica na superfície elevada', () => {
-  const FORA_DA_REGRA = new Set(['src/features/login/PaginaLogin.tsx'])
+  const TELAS_PUBLICAS = new Set([
+    'src/features/login/PaginaLogin.tsx',
+    'src/features/conta/comum.tsx',
+  ])
+  const classesDoCartaoPublico = 'space-y-6 rounded-padrao border border-borda bg-superficie p-6 sombra-nivel-2 sm:p-8'
   const classesComSombra2 = (codigo: string) =>
     Array.from(codigo.matchAll(/['"`]([^'"`]*\bsombra-nivel-2\b[^'"`]*)['"`]/g), (m) => m[1] ?? '')
 
   it('toda classe com sombra-nivel-2 usa bg-superficie-elevada', () => {
-    const achados = ARQUIVOS_NO_SISTEMA.filter((a) => !FORA_DA_REGRA.has(a)).flatMap((arquivo) =>
+    const achados = ARQUIVOS_NO_SISTEMA.flatMap((arquivo) =>
       classesComSombra2(readFileSync(arquivo, 'utf8'))
+        .filter((classes) => !(TELAS_PUBLICAS.has(arquivo) && classes === classesDoCartaoPublico))
         .filter((classes) => !/\bbg-superficie-elevada\b/.test(classes))
         .map((classes) => `${arquivo}: ${classes}`),
     )

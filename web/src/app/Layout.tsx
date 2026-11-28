@@ -12,6 +12,7 @@ import { useAbertos, useMe } from '@/lib/api/consultas'
 import { mensagemDe } from '@/lib/api/mensagens'
 import { ATRASO_DO_SINAL_MS, useAposUmTempo } from '@/lib/atraso'
 import { cn } from '@/lib/utils'
+import { AvisoDeConfirmacao } from './AvisoDeConfirmacao'
 import { BotaoDeTema } from './BotaoDeTema'
 import { useSessao } from './contexto'
 import { NoProjeto, useProjetoDaMoldura, useRotaDoProjeto } from './projeto'
@@ -91,6 +92,8 @@ export function Layout() {
       {/* tabIndex -1: a última reserva de foco, para quando o que tinha o foco
           some e a tela ainda não tem <h1>. */}
       <main id="conteudo" tabIndex={-1} className="mx-auto min-w-0 max-w-6xl space-y-8 px-4 pt-8 pb-16 outline-none sm:px-6 lg:pt-12 lg:pb-12">
+        {/* Só com o /me dizendo false: enquanto ele não chega, nada pisca. */}
+        {me.data?.email_verified === false && <AvisoDeConfirmacao email={me.data.email} />}
         <Outlet />
       </main>
     </ProvedorDeAnuncios>

@@ -7,6 +7,7 @@ import {
   AgendamentoEditavel,
   Canal,
   ConfirmacaoTotp,
+  ConfigDoCadastro,
   Heartbeat,
   HeartbeatComPing,
   IncidenteDeHeartbeat,
@@ -87,6 +88,10 @@ export type EntradaPagina = {
   published: boolean
   items: { target_id: string; display_name: string }[]
 }
+
+export type EntradaCadastro = { email: string; password: string; turnstile_token: string }
+export type PedidoDeRedefinicao = { email: string; turnstile_token: string }
+export type Redefinicao = { token: string; new_password: string }
 
 export type EntradaProjeto = { name: string }
 
@@ -255,7 +260,26 @@ export function criarApi(sessao: Sessao, buscar: Buscar, o: OpcoesDaApi = {}) {
     return lerCorpo(r, esquema)
   }
 
-  async function get<T>(rota: string, esquema: z.ZodType<T>, cancelamento?: AbortSignal): Promise<T> {
+  // As rotas públicas do cadastro dispensam o token de acesso e os cookies
+  // de sessão. Um 401 volta ao chamador sem renovar a sessão.
+  function publico(p: Omit<Pedido, 'token'>, esquema: null): Promise<void>
+  function publico<T>(p: Omit<Pedido, 'token'>, esquema: z.ZodType<T>): Promise<T>
+  async function publico<T>(p: Omit<Pedido, 'token'>, esquema: z.ZodType<T> | null): Promise<T | undefined> {
+    // O GET já chega com o prazo do get(); as mutações ganham o mesmo prazo
+    // do login, para uma rede presa não deixar o formulário sem resposta.
+    const r = await enviar(buscar, { ...p, sinal: p.sinal ?? AbortSignal.timeout(PRAZO_DA_CONSULTA_MS) }, 'omit')
+    if (!r.ok) throw await lerErro(r)
+    return esquema === null ? undefined : lerCorpo(r, esquema)
+  }
+
+  // O GET com prazo e cancelamento; quem envia é o pedir (com sessão) ou o
+  // publico (sem token).
+  async function get<T>(
+    rota: string,
+    esquema: z.ZodType<T>,
+    cancelamento?: AbortSignal,
+    enviarPedido: (p: Omit<Pedido, 'token'>, esquema: z.ZodType<T>) => Promise<T> = pedir,
+  ): Promise<T> {
     if (cancelamento?.aborted) throw cancelamento.reason
     const controlador = new AbortController()
     // O prazo de rede usa o relógio nativo, como a sessão. Ele é
@@ -278,7 +302,7 @@ export function criarApi(sessao: Sessao, buscar: Buscar, o: OpcoesDaApi = {}) {
     prazo.addEventListener('abort', abortarPorPrazo, { once: true })
     try {
       return await Promise.race([
-        pedir({ metodo: 'GET', caminho: rota, sinal: controlador.signal }, esquema),
+        enviarPedido({ metodo: 'GET', caminho: rota, sinal: controlador.signal }, esquema),
         cancelada,
       ])
     } finally {
@@ -289,6 +313,21 @@ export function criarApi(sessao: Sessao, buscar: Buscar, o: OpcoesDaApi = {}) {
 
   return {
     me: (sinal?: AbortSignal) => get('/me', Me, sinal),
+
+    // Cadastro público (PR 3). O resend é o único com sessão: reenvia a
+    // confirmação para o e-mail da conta logada.
+    // O tipo explícito: com o publico (sobrecarregado) como enviarPedido, a
+    // inferência do get caía em unknown.
+    configDoCadastro: (sinal?: AbortSignal) =>
+      get<ConfigDoCadastro>('/auth/signup-config', ConfigDoCadastro, sinal, publico),
+    cadastrar: (e: EntradaCadastro) => publico({ metodo: 'POST', caminho: '/auth/signup', corpo: e }, null),
+    // A senha do cadastro: o link sozinho não habilita a conta.
+    confirmarEmail: (token: string, senha: string) =>
+      publico({ metodo: 'POST', caminho: '/auth/email/confirm', corpo: { token, password: senha } }, null),
+    reenviarConfirmacao: () => pedir({ metodo: 'POST', caminho: '/auth/email/resend' }, null),
+    pedirRedefinicao: (e: PedidoDeRedefinicao) =>
+      publico({ metodo: 'POST', caminho: '/auth/password/forgot', corpo: e }, null),
+    redefinirSenha: (e: Redefinicao) => publico({ metodo: 'POST', caminho: '/auth/password/reset', corpo: e }, null),
 
     projetos: (sinal?: AbortSignal) => get('/projects', ListaDeProjetos, sinal),
     criarProjeto: (e: EntradaProjeto) => pedir({ metodo: 'POST', caminho: '/projects', corpo: e }, Projeto),

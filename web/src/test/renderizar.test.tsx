@@ -83,8 +83,10 @@ function portao() {
 }
 
 function rotaDoDetalhe() {
-  const rota = rotas[1]?.children?.[0]?.children
-    ?.find((r) => r.path === 'projects/:projectId')
+  const rota = rotas
+    .flatMap((r) => r.children ?? [])
+    .flatMap((r) => r.children ?? [])
+    .find((r) => r.path === 'projects/:projectId')
     ?.children?.flatMap((r) => r.children ?? [])
     .find((r) => r.path === 'targets/:id')
   if (!rota || typeof rota.lazy !== 'function') throw new Error('rota lazy real do detalhe ausente')

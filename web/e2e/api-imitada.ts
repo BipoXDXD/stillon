@@ -1,7 +1,21 @@
 import type { Page, Route } from '@playwright/test'
 import type { z } from 'zod'
-import type { ConfirmacaoTotp, InicioDaTroca, Projeto, Serie } from '../src/lib/api/schemas'
-import { alvo, canal, eventoDeHeartbeat, heartbeat, incidente, incidenteDeHeartbeat, itemDoResumo, me, pagina, projeto, sessao } from '../src/test/fixtures'
+import type { ConfigDoCadastro, ConfirmacaoTotp, InicioDaTroca, Projeto, Serie } from '../src/lib/api/schemas'
+import {
+  alvo,
+  canal,
+  eventoDeHeartbeat,
+  heartbeat,
+  incidente,
+  incidenteDeHeartbeat,
+  itemDoResumo,
+  me,
+  pagina,
+  projeto,
+  sessao,
+  SITE_KEY_DO_TURNSTILE,
+  TOKEN_DO_TURNSTILE,
+} from '../src/test/fixtures'
 
 // A API do painel respondida pelo próprio teste (page.route): o a11y.spec.ts
 // e o roteiro de captura (capturas.spec.ts) veem os mesmos dados. As
@@ -106,6 +120,36 @@ respostas['POST /heartbeats'] = { ...heartbeats[0], id: 'h1', ping_url: `https:/
 respostas['POST /auth/totp/rotate'] = troca
 respostas['POST /auth/totp/rotate/confirm'] = codigosNovos
 
+// O cadastro público (contrato HTTP do PR 3): ligado, e as mutações aceitas
+// sem corpo, como o servidor.
+const configDoCadastro: z.input<typeof ConfigDoCadastro> = { enabled: true, turnstile_site_key: SITE_KEY_DO_TURNSTILE }
+respostas['GET /auth/signup-config'] = configDoCadastro
+const semCorpo: Record<string, number> = {
+  'POST /auth/signup': 202,
+  'POST /auth/email/confirm': 204,
+  'POST /auth/email/resend': 202,
+  'POST /auth/password/forgot': 202,
+  'POST /auth/password/reset': 204,
+}
+
+// O api.js do Turnstile imitado: o widget "resolve" na hora com o token fixo
+// das chaves de teste, sem rede nem iframe da Cloudflare. Chama o ?onload=
+// quando o painel carrega o script com ele.
+const TURNSTILE_IMITADO = `
+window.turnstile = {
+  render(el, o) {
+    const alvo = typeof el === 'string' ? document.querySelector(el) : el
+    if (alvo) alvo.setAttribute('data-turnstile-imitado', '')
+    o?.callback?.(${JSON.stringify(TOKEN_DO_TURNSTILE)})
+    return 'w1'
+  },
+  reset() {},
+  remove() {},
+}
+const onload = document.currentScript && new URL(document.currentScript.src).searchParams.get('onload')
+if (onload && typeof window[onload] === 'function') window[onload]()
+`
+
 // Os projetos da pessoa: o padrão, em que as telas abrem, e outro para a
 // troca. Os recursos são os mesmos nos dois (a imitação não separa dados por
 // projeto); um projeto fora da lista é 404, como no servidor.
@@ -128,11 +172,16 @@ function respostaDe(metodo: string, u: URL, projetos: readonly z.input<typeof Pr
 }
 
 export async function imitarApi(page: Page) {
+  await page.route('https://challenges.cloudflare.com/turnstile/v0/api.js*', (route: Route) =>
+    route.fulfill({ status: 200, contentType: 'text/javascript', body: TURNSTILE_IMITADO }),
+  )
   // Por página: o projeto criado entra na lista dela, como no servidor.
   const projetos = [...PROJETOS]
   await page.route('**/api/v1/**', (route: Route) => {
     const u = new URL(route.request().url())
     const metodo = route.request().method()
+    const status = semCorpo[`${metodo} ${u.pathname.replace('/api/v1', '')}`]
+    if (status !== undefined) return route.fulfill({ status })
     if (u.pathname === '/api/v1/projects') {
       if (metodo === 'GET') return route.fulfill({ status: 200, json: { items: projetos } })
       if (metodo === 'POST') {
