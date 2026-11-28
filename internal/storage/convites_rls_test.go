@@ -116,7 +116,7 @@ func TestTokenScopeSeesOnlyItsRow(t *testing.T) {
 	err := storage.InInvitationTokenTx(ctx, g, hash, func(*db.Queries) error {
 		var visto []byte
 		var n int
-		if err := g.tx.QueryRow(ctx, `SELECT count(*), min(token_hash) FROM project_invitations`).Scan(&n, &visto); err != nil {
+		if err := g.tx.QueryRow(ctx, `SELECT count(*), (array_agg(token_hash))[1] FROM project_invitations`).Scan(&n, &visto); err != nil {
 			return err
 		}
 		if n != 1 || !bytes.Equal(visto, hash) {
