@@ -480,20 +480,28 @@ func TestCadastrarValidaAntesDeTudo(t *testing.T) {
 	}
 }
 
-// O handler já recusa o aceite vazio, mas o domínio não confia nisso: uma
-// conta sem versão aceita não nasce, nem gasta o Argon2id ou manda e-mail.
-func TestCadastrarSemAceiteRecusa(t *testing.T) {
-	a := novoCadastro(t)
+// O handler já recusa o aceite vazio ou de outra versão, mas o domínio não
+// confia nisso: uma conta sem a versão vigente aceita não nasce, nem gasta o
+// Argon2id ou manda e-mail. Sabotagem prevista: recusar só a versão vazia.
+func TestCadastrarSemAceiteDaVersaoVigenteRecusa(t *testing.T) {
+	for _, caso := range []struct{ nome, versao string }{
+		{"vazia", ""},
+		{"antiga", "2020-01-01"},
+	} {
+		t.Run(caso.nome, func(t *testing.T) {
+			a := novoCadastro(t)
 
-	err := a.cad.Cadastrar(context.Background(), "fulano@exemplo.com", senha, "")
-	if !errors.Is(err, account.ErrTermosNaoAceitos) {
-		t.Fatalf("aceite vazio: %v; queria ErrTermosNaoAceitos", err)
-	}
-	if h, e := a.hasher.chamadas.Load(), len(a.mailer.todos()); h != 0 || e != 0 {
-		t.Fatalf("%d hashes e %d e-mails sem aceite; queria 0 e 0", h, e)
-	}
-	if n := contar(t, `SELECT count(*) FROM users`); n != 0 {
-		t.Fatalf("%d usuários; queria 0", n)
+			err := a.cad.Cadastrar(context.Background(), "fulano@exemplo.com", senha, caso.versao)
+			if !errors.Is(err, account.ErrTermosNaoAceitos) {
+				t.Fatalf("aceite %q: %v; queria ErrTermosNaoAceitos", caso.versao, err)
+			}
+			if h, e := a.hasher.chamadas.Load(), len(a.mailer.todos()); h != 0 || e != 0 {
+				t.Fatalf("%d hashes e %d e-mails sem aceite; queria 0 e 0", h, e)
+			}
+			if n := contar(t, `SELECT count(*) FROM users`); n != 0 {
+				t.Fatalf("%d usuários; queria 0", n)
+			}
+		})
 	}
 }
 
