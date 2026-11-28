@@ -117,8 +117,10 @@ func (s *Store) Rename(ctx context.Context, actorID, projectID uuid.UUID, name s
 
 // mutarMembro é o caminho de toda mutação de membro: escopo do projeto, trava
 // dos membros, leitura do alvo (ErrNotMember sem ele) e fn com o escopo da
-// transação. A FK adiável do titular só confere no commit: se ela recusar,
-// o erro vira ErrTitularProtected (defesa; o domínio já recusa antes).
+// transação, com o papel de quem pede relido sob a trava (ErrNotMember se ele
+// saiu enquanto esperava). A FK adiável do titular só confere no commit: se
+// ela recusar, o erro vira ErrTitularProtected (defesa; o domínio já recusa
+// antes).
 func (s *Store) mutarMembro(ctx context.Context, actorID, projectID, targetID uuid.UUID,
 	fn func(*db.Queries, tenancy.ProjectScope, tenancy.MemberView) error) error {
 	err := storage.InProjectTx(ctx, s.pool, actorID, projectID, func(q *db.Queries, sc tenancy.ProjectScope) error {
@@ -136,6 +138,22 @@ func (s *Store) mutarMembro(ctx context.Context, actorID, projectID, targetID uu
 		if err != nil {
 			return err
 		}
+		// O papel de quem pede vem de novo, depois da trava: o de sc foi lido
+		// antes dela, e um rebaixamento comitado enquanto este pedido esperava
+		// seria ignorado. Em READ COMMITTED, este comando já vê o que foi
+		// gravado. Sem a linha, quem pede saiu ou foi removido nesse meio-tempo.
+		ator, err := q.GetProjectMember(ctx, db.GetProjectMemberParams{ProjectID: projectID, UserID: actorID})
+		if errors.Is(err, pgx.ErrNoRows) {
+			return tenancy.ErrNotMember
+		}
+		if err != nil {
+			return fmt.Errorf("reler o papel de quem pede: %w", err)
+		}
+		papel, err := tenancy.ParseRole(ator.Role)
+		if err != nil {
+			return fmt.Errorf("papel gravado em project_members: %w", err)
+		}
+		sc.Role = papel
 		return fn(q, sc, alvo)
 	})
 	var pgErr *pgconn.PgError

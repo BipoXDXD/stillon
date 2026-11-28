@@ -270,3 +270,66 @@ func TestTitularDemotionBlockedByFKEvenIfDomainSkipped(t *testing.T) {
 		t.Errorf("rebaixar o titular por fora do domínio: %v, queria 23503 no commit", err)
 	}
 }
+
+// O papel de quem pede vale o de depois da trava: o PATCH de um owner que já
+// passou pela conferência de pertença, e espera a trava enquanto o titular o
+// rebaixa, é recusado com o papel novo, e não autorizado com o antigo.
+func TestDemotedActorRefusedAfterWaitingForLock(t *testing.T) {
+	pool := testdb.New(t)
+	ctx := context.Background()
+	e := novaEquipe(t, pool)
+	b := novoUsuario(t, pool) // um segundo owner, não titular
+	testdb.Membro(t, e.pa, b, "owner")
+
+	admin := testdb.Admin(t)
+	tx, err := admin.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('stillon.members:' || $1::uuid::text, 0))`, e.pa); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(ctx, `UPDATE project_members SET role = 'viewer' WHERE project_id = $1 AND user_id = $2`, e.pa, b); err != nil {
+		t.Fatal(err)
+	}
+
+	feito := make(chan error, 1)
+	go func() {
+		_, err := pgstore.New(pool).ChangeRole(ctx, b, e.pa, e.c, tenancy.RoleViewer)
+		feito <- err
+	}()
+	esperarAlguemNaTrava(t, admin)
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	select {
+	case err := <-feito:
+		if !errors.Is(err, tenancy.ErrForbidden) {
+			t.Errorf("o rebaixado mudou papel com o papel antigo: %v, queria ErrForbidden", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("a mutação não terminou depois do commit")
+	}
+	if n := contar(t, `SELECT count(*) FROM project_members WHERE project_id = $1 AND user_id = $2 AND role = 'member'`, e.pa, e.c); n != 1 {
+		t.Errorf("C não é mais member: a mutação do rebaixado passou")
+	}
+}
+
+// esperarAlguemNaTrava espera uma sessão aguardando um advisory lock.
+func esperarAlguemNaTrava(t *testing.T, admin *pgxpool.Pool) {
+	t.Helper()
+	for range 200 {
+		var n int
+		if err := admin.QueryRow(context.Background(),
+			`SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND NOT granted`).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		if n > 0 {
+			return
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	t.Fatal("ninguém chegou a esperar a trava dos membros")
+}

@@ -14,8 +14,9 @@ import (
 // MemberHandlers serve a equipe de um projeto. As rotas existem só por
 // projeto (/api/v1/projects/{projectID}/members), atrás de ProjetoDoCaminho:
 // quem não é membro recebe o 404 de projeto inexistente antes de chegar aqui.
-// O papel de quem pede é conferido de novo na transação do pgstore, sob a
-// trava dos membros, e não pelo escopo do middleware.
+// O papel de quem pede não vem do escopo do middleware: o pgstore o relê na
+// própria transação, depois de tomar a trava dos membros, e é esse papel que
+// autoriza a mutação.
 type MemberHandlers struct {
 	svc *tenancy.Service
 }
