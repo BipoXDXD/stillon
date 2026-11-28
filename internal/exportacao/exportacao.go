@@ -406,9 +406,13 @@ func (s *Servico) lerAlvos(ctx context.Context, q *db.Queries, projectID uuid.UU
 			return nil, nil, fmt.Errorf("listar alvos: %w", err)
 		}
 		for _, t := range linhas {
+			// Headers que não decifram (chave trocada, linha adulterada) saem
+			// vazios, como o destino dos canais, em vez de impedir a
+			// exportação inteira.
 			headers, err := targets.OpenHeaders(s.box, t.ID, t.HeadersEnc)
 			if err != nil {
-				return nil, nil, err
+				slog.Error("alvo com headers ilegíveis na exportação", "target_id", t.ID, "erro", err)
+				headers = nil
 			}
 			nomes := make(map[string]string, len(headers))
 			for nome := range headers {
@@ -494,7 +498,7 @@ func (s *Servico) lerCanais(ctx context.Context, q *db.Queries, projectID uuid.U
 		item := canal{ID: c.ID, Kind: c.Kind, Enabled: c.Enabled}
 		hint, email, err := notify.DestinoExportavel(s.box, c.ID, c.Kind, c.ConfigEnc)
 		if err != nil {
-			slog.Error("canal com destino ilegível na exportação", "channel_id", c.ID)
+			slog.Error("canal com destino ilegível na exportação", "channel_id", c.ID, "erro", err)
 		} else {
 			item.Hint = hint
 			if email != "" {

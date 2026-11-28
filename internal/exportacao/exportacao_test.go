@@ -316,3 +316,53 @@ func TestExportacaoNaoVazaSegredoNemProjetoAlheio(t *testing.T) {
 		}
 	}
 }
+
+// Um alvo cujos headers não decifram (chave trocada, linha adulterada) sai com
+// headers vazios, como os canais, em vez de derrubar a exportação inteira.
+func TestExportacaoDegradaHeaderQueNaoDecifra(t *testing.T) {
+	c := montar(t)
+	ctx := context.Background()
+	quebrado := novoID(t)
+	// Selado para outro alvo: a AAD não bate e o Open recusa.
+	alheio, err := targets.SealHeaders(c.box, novoID(t), map[string]string{"X-Token": "segredo-do-outro"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = storage.InProjectTx(ctx, c.pool, c.dona, c.padrao, func(q *db.Queries, _ tenancy.ProjectScope) error {
+		return q.InsertTarget(ctx, db.InsertTargetParams{
+			ID: quebrado, UserID: c.dona, Name: "Quebrado", URL: "https://quebrado.exemplo.com", Method: "GET",
+			IntervalSec: 60, TimeoutMS: 5000, ExpectedStatus: 200, HeadersEnc: alheio, Enabled: true,
+			NextRunAt: agora, CreatedAt: agora.Add(-time.Hour), ProjectID: c.padrao,
+		})
+	})
+	if err != nil {
+		t.Fatalf("semear o alvo quebrado: %v", err)
+	}
+
+	topo := decodificar(t, exportar(t, c))
+	var projetos []struct {
+		ID      uuid.UUID `json:"id"`
+		Targets []struct {
+			ID      uuid.UUID          `json:"id"`
+			Headers *map[string]string `json:"headers"`
+		} `json:"targets"`
+	}
+	if err := json.Unmarshal(topo["projects"], &projetos); err != nil {
+		t.Fatal(err)
+	}
+	achou := false
+	for _, p := range projetos {
+		for _, a := range p.Targets {
+			if a.ID != quebrado {
+				continue
+			}
+			achou = true
+			if a.Headers == nil || len(*a.Headers) != 0 {
+				t.Errorf("headers do alvo quebrado = %v, esperado {}", a.Headers)
+			}
+		}
+	}
+	if !achou {
+		t.Errorf("o alvo quebrado %s não saiu na exportação", quebrado)
+	}
+}
