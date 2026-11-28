@@ -3,6 +3,7 @@ package prober
 import (
 	"context"
 	"net/http"
+	"slices"
 	"testing"
 	"time"
 
@@ -120,7 +121,7 @@ func estadoDosAlvos(t *testing.T) []alvoAdiado {
 	return l
 }
 
-// O adiado não vira check nem incidente, volta para agora + espera (e não um
+// O adiado não vira check nem incidente, volta em segundos (e não um
 // intervalo inteiro depois) e devolve a vaga do semáforo na hora.
 func TestHostThrottleDefersWithoutCheckOrIncident(t *testing.T) {
 	transporte := &transporteContador{}
@@ -142,8 +143,8 @@ func TestHostThrottleDefersWithoutCheckOrIncident(t *testing.T) {
 			continue
 		}
 		adiados++
-		if want := b.clk.Now().Add(time.Second); !a.proxim.Equal(want) {
-			t.Errorf("alvo adiado %s volta em %v; queria %v", a.id, a.proxim, want)
+		if de, ate := b.clk.Now().Add(time.Second), b.clk.Now().Add(5*time.Second); a.proxim.Before(de) || a.proxim.After(ate) {
+			t.Errorf("alvo adiado %s volta em %v; queria entre %v e %v", a.id, a.proxim, de, ate)
 		}
 	}
 	if adiados != 5 {
@@ -161,6 +162,32 @@ func TestHostThrottleDefersWithoutCheckOrIncident(t *testing.T) {
 	}
 	if n := testutil.ToFloat64(b.m.hostThrottled); n != 5 {
 		t.Errorf("métrica de adiamentos = %v; queria 5", n)
+	}
+}
+
+// Os adiados do mesmo host não voltam todos no mesmo instante: o i-ésimo
+// espera mais i fichas (um segundo cada, a 60 por minuto). Iguais, eles
+// seriam reivindicados e adiados de novo a cada segundo, com um UPDATE por
+// alvo, tomando as vagas dos outros projetos.
+func TestHostThrottleSpreadsDeferredWithinTick(t *testing.T) {
+	b := novaBancada(t, &http.Client{Transport: &transporteContador{}}, MaxInFlight)
+	b.alvosNoHost(t, testdb.ProjetoPadrao(t, b.dono), "https://exemplo.com/saude", RajadaPorHost+5)
+
+	if _, err := b.s.Tick(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	b.s.Stop(esperaMaxima)
+
+	var voltas []time.Duration
+	for _, a := range estadoDosAlvos(t) {
+		if a.checks == 0 {
+			voltas = append(voltas, a.proxim.Sub(b.clk.Now()))
+		}
+	}
+	slices.Sort(voltas)
+	want := []time.Duration{time.Second, 2 * time.Second, 3 * time.Second, 4 * time.Second, 5 * time.Second}
+	if !slices.Equal(voltas, want) {
+		t.Errorf("os adiados voltam em %v; queria %v", voltas, want)
 	}
 }
 

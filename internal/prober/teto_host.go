@@ -74,6 +74,11 @@ func (t *tetoPorHost) Reservar(host string, agora time.Time) (espera time.Durati
 	return time.Duration(math.Ceil(falta * float64(time.Second))), false
 }
 
+// passo é o intervalo entre duas fichas do mesmo host.
+func (t *tetoPorHost) passo() time.Duration {
+	return time.Duration(math.Ceil(float64(time.Second) / t.porSeg))
+}
+
 // hostCanonico é a chave do balde: o nome que o safedial disca
 // (DialedHost: caixa e IDNA), sem o ponto final, e o IP literal na forma
 // curta e sem o mapeamento IPv4 em IPv6. Sem isso, exemplo.com. e

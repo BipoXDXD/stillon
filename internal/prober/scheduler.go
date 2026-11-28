@@ -299,11 +299,17 @@ func (s *Scheduler) Tick(ctx context.Context) (int, error) {
 	// O teto por host vem depois da reivindicação: é ela que diz quais alvos
 	// sairiam agora. O adiado não vira check nem incidente, devolve a vaga na
 	// hora e volta para quando a ficha do host chega
-	// (TestHostThrottleDefersWithoutCheckOrIncident).
+	// (TestHostThrottleDefersWithoutCheckOrIncident). Os adiados do mesmo host
+	// saem escalonados, uma ficha depois do outro: no mesmo instante, todos
+	// voltariam juntos a cada segundo, com um UPDATE por alvo e tomando as
+	// vagas dos outros projetos (TestHostThrottleSpreadsDeferredWithinTick).
 	var adiados []db.PostponeTargetParams
+	naFila := map[string]int{}
 	disparados := 0
 	for _, a := range alvos {
-		if espera, ok := s.reservarHost(a.URL, now); !ok {
+		if host, espera, ok := s.reservarHost(a.URL, now); !ok {
+			espera += time.Duration(naFila[host]) * s.teto.passo()
+			naFila[host]++
 			s.sem.Release(1)
 			s.metrics.hostThrottled.Inc()
 			adiados = append(adiados, db.PostponeTargetParams{ID: a.ID, NextRunAt: now.Add(espera)})
@@ -343,15 +349,21 @@ func (s *Scheduler) Tick(ctx context.Context) (int, error) {
 	return disparados, errors.Join(erros...)
 }
 
-// reservarHost gasta uma ficha do host de destino do alvo. URL que não abre
-// segue sem teto: a sonda a recusa adiante, como antes do teto. Os saltos de
+// reservarHost gasta uma ficha do host de destino do alvo e devolve o host
+// canônico, a chave do balde. URL que não abre ou host que não canonicaliza
+// segue sem teto: a sonda o recusa adiante, como antes do teto. Os saltos de
 // redirect não passam por aqui.
-func (s *Scheduler) reservarHost(alvo string, agora time.Time) (time.Duration, bool) {
+func (s *Scheduler) reservarHost(alvo string, agora time.Time) (host string, espera time.Duration, ok bool) {
 	u, err := url.Parse(alvo)
 	if err != nil {
-		return 0, true
+		return "", 0, true
 	}
-	return s.teto.Reservar(u.Hostname(), agora)
+	host, canonico := hostCanonico(u.Hostname())
+	if !canonico {
+		return "", 0, true
+	}
+	espera, ok = s.teto.Reservar(host, agora)
+	return host, espera, ok
 }
 
 // adiar grava o next_run_at dos alvos que o teto por host segurou.
