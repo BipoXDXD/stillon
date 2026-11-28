@@ -37,6 +37,9 @@ const (
 	Formato = "stillon-export"
 	Versao  = 1
 
+	// AcaoDeAuditoria é o registro que cada exportação deixa em audit_log.
+	AcaoDeAuditoria = "account.exported"
+
 	omitido = "[omitido]"
 	// pagina é o tamanho de cada leitura paginada (alvos, heartbeats,
 	// incidentes).
@@ -312,6 +315,19 @@ func (s *Servico) lerPessoal(ctx context.Context, userID uuid.UUID) (pessoal, er
 			if m.Role == string(tenancy.RoleOwner) {
 				p.donoDe = append(p.donoDe, m.ID)
 			}
+		}
+
+		// A auditoria fica na transação que lê os dados da conta: nenhum byte
+		// sai sem o registro, e um registro não fica sem a leitura. Ela não
+		// entra na própria exportação (a lista acima já foi lida).
+		id, err := uuid.NewV7()
+		if err != nil {
+			return fmt.Errorf("gerar id de auditoria: %w", err)
+		}
+		if err := q.InsertAuditEntry(ctx, db.InsertAuditEntryParams{
+			ID: id, UserID: &userID, Action: AcaoDeAuditoria, At: p.geradoEm,
+		}); err != nil {
+			return fmt.Errorf("auditar %s: %w", AcaoDeAuditoria, err)
 		}
 		return nil
 	})

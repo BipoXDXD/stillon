@@ -23,6 +23,7 @@ import (
 	"github.com/BipoXDXD/stillon/internal/clock"
 	"github.com/BipoXDXD/stillon/internal/config"
 	"github.com/BipoXDXD/stillon/internal/crypto"
+	"github.com/BipoXDXD/stillon/internal/exportacao"
 	"github.com/BipoXDXD/stillon/internal/heartbeat"
 	"github.com/BipoXDXD/stillon/internal/httpapi"
 	"github.com/BipoXDXD/stillon/internal/incident/history"
@@ -186,7 +187,8 @@ func newAPICom(t *testing.T, ajustar func(*config.Config), ajustarDeps func(*htt
 		Invitations: tenancy.NewInvitations(pgstore.NewInvitations(pool),
 			convitemail.New(pool, clk, emailsDeConta, linksDoPainel), clk),
 		Clock: clk, Ready: pool.Ping,
-		LimitesIP: storage.NewOrcamentosPorIP(pool, clk),
+		LimitesIP:  storage.NewOrcamentosPorIP(pool, clk),
+		Exportacao: exportacao.Novo(pool, box, clk),
 	}
 	if ajustarDeps != nil {
 		ajustarDeps(&deps)

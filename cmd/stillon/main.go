@@ -21,6 +21,7 @@ import (
 	"github.com/BipoXDXD/stillon/internal/config"
 	"github.com/BipoXDXD/stillon/internal/contaemail"
 	"github.com/BipoXDXD/stillon/internal/crypto"
+	"github.com/BipoXDXD/stillon/internal/exportacao"
 	"github.com/BipoXDXD/stillon/internal/heartbeat"
 	"github.com/BipoXDXD/stillon/internal/httpapi"
 	"github.com/BipoXDXD/stillon/internal/incident/history"
@@ -251,6 +252,7 @@ func run(ctx context.Context, cfg *config.Config) error {
 				convitemail.New(pool, clk, mailerDeConta(enviador), links), clk),
 			Clock:       clk,
 			LimitesIP:   limitesIP,
+			Exportacao:  exportacao.Novo(pool, box, clk),
 			Ready:       pool.Ping,
 			Cadastro:    account.NewCadastro(pool, clk, mailerDeConta(enviador), links),
 			Recuperacao: account.NewRecuperacao(pool, clk, mailerDeConta(enviador), links),

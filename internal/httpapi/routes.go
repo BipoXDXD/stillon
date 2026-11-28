@@ -41,6 +41,13 @@ const (
 	projetoNovoBurst = 5
 )
 
+// A exportação da conta tem balde próprio por usuário: uma a cada 10
+// minutos, 2 de uma vez.
+const (
+	exportarACada = 10 * time.Minute
+	exportarBurst = 2
+)
+
 // verifyBodyBytes: o POST de /verify é um formulário sem campos.
 const verifyBodyBytes = 1 << 10
 
@@ -94,6 +101,9 @@ type Deps struct {
 	// dividam o orçamento de cada origem; os testes sem banco passam
 	// middleware.NovosOrcamentosEmMemoria. Obrigatório.
 	LimitesIP middleware.Orcamentos
+	// Exportacao escreve GET /api/v1/me/export: o exportacao.Servico em
+	// produção. Obrigatório; os testes sem banco passam um falso.
+	Exportacao Exportador
 	// Ready é o teste de prontidão de /readyz: o ping no banco em produção.
 	Ready func(context.Context) error
 	// Painel são os arquivos do painel React. Nil é o embutido no binário
@@ -142,6 +152,9 @@ func Routes(ctx context.Context, cfg *config.Config, d Deps) http.Handler {
 	if d.Turnstile == nil {
 		panic("httpapi: Deps sem Turnstile; passe o turnstile.Verificador (ou, sem banco, um falso)")
 	}
+	if d.Exportacao == nil {
+		panic("httpapi: Deps sem Exportacao; passe exportacao.Novo(pool, box, clk) (ou, sem banco, um falso)")
+	}
 	secureCookie := config.EhHTTPS(cfg.PublicBaseURL)
 	// O teto de Argon2id simultâneos é do processo, e quem o
 	// paga é a API: o config.Load sempre o preenche; um Config montado à mão
@@ -167,6 +180,7 @@ func Routes(ctx context.Context, cfg *config.Config, d Deps) http.Handler {
 	ph := NewProjectHandlers(d.Projects)
 	mh := NewMemberHandlers(d.Projects)
 	cvh := NewInvitationHandlers(d.Invitations)
+	exh := NewExportacaoHandlers(d.Exportacao, d.Clock)
 	cad := NewCadastroHandlers(d.Cadastro, d.Recuperacao, d.Turnstile, d.CadastroPublico, proxiesDe(cfg), cfg.IPHashKey, d.Clock)
 	authn := middleware.Authn(cfg.JWTSecret, d.Clock)
 	// criacao é a trava "sem e-mail confirmado não cria" (403
@@ -307,6 +321,11 @@ func Routes(ctx context.Context, cfg *config.Config, d Deps) http.Handler {
 	noProjeto := func(fn http.HandlerFunc) http.Handler { return authn(porUsuario(viva(doCaminho(fn)))) }
 
 	mux.Handle("GET /api/v1/me", protegida(ah.Me))
+	// A exportação lê a conta inteira e os projetos em que ela é owner: balde
+	// próprio por usuário (2 de uma vez, depois 1 a cada 10 min), no banco,
+	// antes da consulta de sessão. É um GET da conta, sem a trava de e-mail.
+	porExportacao := baldeUsuario(middleware.BaldeUsuario{Nome: "conta_exportar", ACada: exportarACada, Rajada: exportarBurst})
+	mux.Handle("GET /api/v1/me/export", authn(porUsuario(porExportacao(viva(http.HandlerFunc(exh.Exportar))))))
 	mux.Handle("GET /api/v1/sessions", protegida(ah.ListSessions))
 	mux.Handle("DELETE /api/v1/sessions/{id}", protegida(ah.RevokeSession))
 	// A lista de projetos é da conta, como /me: protegida, sem projeto no

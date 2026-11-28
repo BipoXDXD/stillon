@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -52,6 +53,14 @@ func (convitesFalsos) Accept(context.Context, uuid.UUID, []byte, time.Time) (ten
 // convitesSemBanco monta Deps.Invitations sem banco nem e-mail.
 func convitesSemBanco(clk clock.Clock) *tenancy.Invitations {
 	return tenancy.NewInvitations(convitesFalsos{}, nil, clk)
+}
+
+// exportadorSemBanco monta Deps.Exportacao sem banco: recusa antes do
+// primeiro byte.
+type exportadorSemBanco struct{}
+
+func (exportadorSemBanco) Escrever(context.Context, uuid.UUID, io.Writer) error {
+	return errRepoFalso
 }
 
 type repoFalso struct{}
@@ -137,9 +146,10 @@ func rotasSemBanco(t *testing.T, cfg *config.Config, ping func(context.Context) 
 		Invitations:     convitesSemBanco(clk),
 		EmailConfirmado: conferidorQueConfirma{},
 		Cadastro:        contaPublicaFalsa{}, Recuperacao: contaPublicaFalsa{}, Turnstile: turnstileQueRecusa{},
-		Clock:     clk,
-		Ready:     ping,
-		LimitesIP: middleware.NovosOrcamentosEmMemoria(ctx, clk),
+		Clock:      clk,
+		Ready:      ping,
+		LimitesIP:  middleware.NovosOrcamentosEmMemoria(ctx, clk),
+		Exportacao: exportadorSemBanco{},
 	})
 }
 
@@ -254,8 +264,9 @@ func TestRoutesRecusaDepsSemProjects(t *testing.T) {
 		Projects:        nil,
 		EmailConfirmado: conferidorQueConfirma{},
 		Cadastro:        contaPublicaFalsa{}, Recuperacao: contaPublicaFalsa{}, Turnstile: turnstileQueRecusa{},
-		Clock:     clk,
-		LimitesIP: middleware.NovosOrcamentosEmMemoria(ctx, clk),
+		Clock:      clk,
+		LimitesIP:  middleware.NovosOrcamentosEmMemoria(ctx, clk),
+		Exportacao: exportadorSemBanco{},
 	})
 }
 
@@ -279,6 +290,7 @@ func TestRoutesRecusaDepsSemEmailConfirmado(t *testing.T) {
 		Invitations: convitesSemBanco(clk),
 		Clock:       clk,
 		LimitesIP:   middleware.NovosOrcamentosEmMemoria(ctx, clk),
+		Exportacao:  exportadorSemBanco{},
 	})
 }
 
@@ -294,6 +306,7 @@ func TestRoutesRecusaDepsSemCadastroPublico(t *testing.T) {
 		{"Cadastro", "account.Cadastro", func(d *httpapi.Deps) { d.Cadastro = nil }},
 		{"Recuperacao", "account.Recuperacao", func(d *httpapi.Deps) { d.Recuperacao = nil }},
 		{"Turnstile", "turnstile.Verificador", func(d *httpapi.Deps) { d.Turnstile = nil }},
+		{"Exportacao", "exportacao.Novo", func(d *httpapi.Deps) { d.Exportacao = nil }},
 	}
 	for _, c := range casos {
 		t.Run(c.campo, func(t *testing.T) {
@@ -308,8 +321,9 @@ func TestRoutesRecusaDepsSemCadastroPublico(t *testing.T) {
 				Invitations:     convitesSemBanco(clk),
 				EmailConfirmado: conferidorQueConfirma{},
 				Cadastro:        contaPublicaFalsa{}, Recuperacao: contaPublicaFalsa{}, Turnstile: turnstileQueRecusa{},
-				Clock:     clk,
-				LimitesIP: middleware.NovosOrcamentosEmMemoria(ctx, clk),
+				Clock:      clk,
+				LimitesIP:  middleware.NovosOrcamentosEmMemoria(ctx, clk),
+				Exportacao: exportadorSemBanco{},
 			}
 			c.tirar(&deps)
 			defer func() {
@@ -388,8 +402,9 @@ func TestVerifyAplicaOPrazoDaConfiguracao(t *testing.T) {
 		Invitations:     convitesSemBanco(clk),
 		EmailConfirmado: conferidorQueConfirma{},
 		Cadastro:        contaPublicaFalsa{}, Recuperacao: contaPublicaFalsa{}, Turnstile: turnstileQueRecusa{},
-		Clock:     clk,
-		LimitesIP: middleware.NovosOrcamentosEmMemoria(ctx, clk),
+		Clock:      clk,
+		LimitesIP:  middleware.NovosOrcamentosEmMemoria(ctx, clk),
+		Exportacao: exportadorSemBanco{},
 	})
 	for _, rota := range []struct{ metodo, caminho string }{
 		{http.MethodGet, "/verify/" + strings.Repeat("A", 43)},

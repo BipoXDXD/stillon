@@ -366,3 +366,19 @@ func TestExportacaoDegradaHeaderQueNaoDecifra(t *testing.T) {
 		t.Errorf("o alvo quebrado %s não saiu na exportação", quebrado)
 	}
 }
+
+// Toda exportação fica na auditoria da conta (account.exported), com o
+// instante do relógio injetado.
+func TestExportacaoRegistraNaAuditoria(t *testing.T) {
+	c := montar(t)
+	exportar(t, c)
+	var n int
+	var em time.Time
+	if err := c.pool.QueryRow(context.Background(), `SELECT count(*), max(at) FROM audit_log
+		WHERE user_id = $1 AND action = 'account.exported'`, c.dona).Scan(&n, &em); err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 || !em.Equal(agora) {
+		t.Errorf("account.exported = %d em %v, queria 1 em %v", n, em, agora)
+	}
+}
