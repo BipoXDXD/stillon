@@ -24,9 +24,9 @@ import (
 const (
 	saidaOK            = 0
 	saidaAmbiente      = 1 // banco, papel com rolsuper/rolbypassrls, migration
-	saidaUso           = 2 // flag, e-mail, DATABASE_URL, senha fora da política
+	saidaUso           = 2 // flag, e-mail, DATABASE_URL, senha fora da política, suspend do operador
 	saidaJaExiste      = 3 // create: o e-mail já tem conta; nada mudou
-	saidaNaoCadastrado = 4 // set-password, reset-2fa: e-mail não cadastrado; nada mudou
+	saidaNaoCadastrado = 4 // set-password, reset-2fa, suspend, unsuspend: e-mail não cadastrado; nada mudou
 	// saidaInterrompida é Ctrl-C ou SIGTERM, em qualquer fase: 128 + SIGINT,
 	// o que o shell mostra para um programa interrompido por Ctrl-C. Separado
 	// do 1 para um script distinguir "o operador desistiu" de "o ambiente está
@@ -112,10 +112,12 @@ const usoUser = `uso:
   stillon user create --email <e-mail>        cria um operador (recusa e-mail já cadastrado)
   stillon user set-password --email <e-mail>  redefine a senha e encerra todas as sessões
   stillon user reset-2fa --email <e-mail>     desliga o 2FA e encerra todas as sessões
+  stillon user suspend --email <e-mail>       suspende a conta e encerra todas as sessões
+  stillon user unsuspend --email <e-mail>     reativa a conta suspensa
 
 A senha (create, set-password) vem do stdin: num terminal, é pedida duas
-vezes, sem eco; num pipe, é a única linha da entrada. O reset-2fa não pede
-senha. Só DATABASE_URL é lida do ambiente.`
+vezes, sem eco; num pipe, é a única linha da entrada. Os outros subcomandos
+não pedem senha. Só DATABASE_URL é lida do ambiente.`
 
 // cliUser carrega o que todo subcomando de `stillon user` usa: o contexto, a
 // origem da senha e os dois fluxos de saída.
@@ -139,9 +141,9 @@ func (c cliUser) falhar(codigo int, formato string, a ...any) int {
 	return codigo
 }
 
-// falharNaoCadastrado é a recusa de set-password e reset-2fa para um e-mail sem
-// usuário. O e-mail sai na mensagem para quem rodou contra o banco errado
-// perceber.
+// falharNaoCadastrado é a recusa dos subcomandos que pedem conta existente,
+// para um e-mail sem usuário. O e-mail sai na mensagem para quem rodou contra
+// o banco errado perceber.
 func (c cliUser) falharNaoCadastrado(email string) int {
 	return c.falhar(saidaNaoCadastrado, "nenhum usuário com o e-mail %s; nada foi alterado", email)
 }
@@ -158,7 +160,7 @@ func (c cliUser) falharDoServico(err error) int {
 // runUser é `stillon user ...`. Devolve o código de saída; quem chama sai do
 // processo com ele.
 func runUser(ctx context.Context, args []string, in entradaDaSenha, stdout, stderr io.Writer, getenv func(string) string) int {
-	if len(args) == 0 || (args[0] != "create" && args[0] != "set-password" && args[0] != "reset-2fa") {
+	if len(args) == 0 || !subcomandoConhecido(args[0]) {
 		fmt.Fprintln(stderr, usoUser)
 		return saidaUso
 	}
@@ -181,11 +183,30 @@ func runUser(ctx context.Context, args []string, in entradaDaSenha, stdout, stde
 		return c.runSetPassword(svc, e)
 	case "reset-2fa":
 		return c.runReset2FA(svc, e)
+	case "suspend":
+		return c.runSuspend(svc, e)
+	case "unsuspend":
+		return c.runUnsuspend(svc, e)
 	default:
 		// Inalcançável: o subcomando foi validado no começo. Um subcomando
 		// novo que esqueça este switch falha em vez de cair no reset-2fa.
 		return c.falhar(saidaAmbiente, "subcomando sem despacho: %q", sub)
 	}
+}
+
+// subcomandoConhecido diz se sub tem despacho no switch de runUser.
+func subcomandoConhecido(sub string) bool {
+	switch sub {
+	case "create", "set-password", "reset-2fa", "suspend", "unsuspend":
+		return true
+	}
+	return false
+}
+
+// leSenha diz se o subcomando lê a senha do stdin; só esses citam o stdin na
+// recusa de argumento sobrando.
+func leSenha(sub string) bool {
+	return sub == "create" || sub == "set-password"
 }
 
 // lerArgumentos valida flag, e-mail e DATABASE_URL, nessa ordem. Com codigo
@@ -199,7 +220,7 @@ func (c cliUser) lerArgumentos(sub string, args []string, getenv func(string) st
 		return "", "", saidaUso
 	}
 	if fs.NArg() > 0 {
-		if sub == "reset-2fa" {
+		if !leSenha(sub) {
 			return "", "", c.falhar(saidaUso, "argumento inesperado: %q", fs.Arg(0))
 		}
 		return "", "", c.falhar(saidaUso, "argumento inesperado: %q (a senha vem do stdin)", fs.Arg(0))
@@ -251,6 +272,49 @@ func (c cliUser) runReset2FA(svc *account.Service, e string) int {
 		return saidaOK
 	}
 	fmt.Fprintf(c.stdout, "2FA desativado para %s; %s. Novos acessos dessas sessões estão bloqueados; ações já em andamento podem ser concluídas. Entre com a senha e ative de novo pelo painel.\n", e, sessoesEncerradas(n))
+	return saidaOK
+}
+
+// runSuspend suspende uma conta comum e encerra as sessões dela. O operador é
+// recusado como uso errado (2), sem mudar nada. Conta já suspensa sai com 0,
+// como o reset-2fa com o 2FA desligado. Não lê senha.
+func (c cliUser) runSuspend(svc *account.Service, e string) int {
+	mudou, n, err := svc.Suspend(c.ctx, e)
+	if errors.Is(err, account.ErrUserNotFound) {
+		return c.falharNaoCadastrado(e)
+	}
+	if errors.Is(err, account.ErrOperatorNotSuspendable) {
+		return c.falhar(saidaUso, "%v; nada foi alterado", err)
+	}
+	if err != nil {
+		return c.falhar(saidaAmbiente, "%v", err)
+	}
+	switch {
+	case mudou:
+		fmt.Fprintf(c.stdout, "conta suspensa; %s\n", sessoesEncerradas(n))
+	case n == 0:
+		fmt.Fprintln(c.stdout, "a conta já estava suspensa; nada mudou")
+	default:
+		fmt.Fprintf(c.stdout, "a conta já estava suspensa; %s\n", sessoesEncerradas(n))
+	}
+	return saidaOK
+}
+
+// runUnsuspend reativa a conta. As sessões encerradas pela suspensão não
+// voltam. Conta que não estava suspensa sai com 0. Não lê senha.
+func (c cliUser) runUnsuspend(svc *account.Service, e string) int {
+	mudou, err := svc.Unsuspend(c.ctx, e)
+	if errors.Is(err, account.ErrUserNotFound) {
+		return c.falharNaoCadastrado(e)
+	}
+	if err != nil {
+		return c.falhar(saidaAmbiente, "%v", err)
+	}
+	if !mudou {
+		fmt.Fprintln(c.stdout, "a conta não estava suspensa; nada mudou")
+		return saidaOK
+	}
+	fmt.Fprintln(c.stdout, "conta reativada; as sessões encerradas não voltam: o dono entra de novo")
 	return saidaOK
 }
 

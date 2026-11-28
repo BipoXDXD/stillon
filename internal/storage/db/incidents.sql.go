@@ -170,6 +170,11 @@ SELECT c.id
 // Fan-out (spec §8): canais habilitados E verificados do PROJETO do recurso
 // do incidente. Fallback legado (sai no PR 7, com o NOT NULL): recurso ou
 // canal sem project_id casa por user_id, a regra antiga.
+//
+// Sem filtro de suspensão, de propósito: a marca de abertura/fechamento
+// avisado já foi gravada antes daqui, e uma suspensão que comitasse entre as
+// duas apagaria o aviso para sempre. A notificação do titular suspenso é
+// gravada e espera pending em ClaimDueNotifications até a reativação.
 func (q *Queries) ListDeliverableChannelsForIncident(ctx context.Context, incidentID uuid.UUID) ([]uuid.UUID, error) {
 	rows, err := q.db.Query(ctx, listDeliverableChannelsForIncident, incidentID)
 	if err != nil {

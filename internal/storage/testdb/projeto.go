@@ -146,6 +146,19 @@ func Suspender(t *testing.T, usuario uuid.UUID) {
 	}
 }
 
+// Reativar tira a suspensão da conta, por fora da RLS.
+func Reativar(t *testing.T, usuario uuid.UUID) {
+	t.Helper()
+	tag, err := Admin(t).Exec(context.Background(),
+		`UPDATE users SET suspended_at = NULL WHERE id = $1`, usuario)
+	if err != nil {
+		t.Fatalf("reativar %s: %v", usuario, err)
+	}
+	if tag.RowsAffected() != 1 {
+		t.Fatalf("reativar %s: usuário não existe", usuario)
+	}
+}
+
 // Operador marca a conta como operadora (sem as cotas do plano grátis), por
 // fora da RLS.
 func Operador(t *testing.T, usuario uuid.UUID) {
