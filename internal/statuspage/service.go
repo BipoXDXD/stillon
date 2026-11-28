@@ -65,13 +65,12 @@ func (s *Service) Get(ctx context.Context, scope tenancy.ProjectScope) (Page, er
 // user_id = quem criou. A segunda do mesmo projeto é ErrExists, e também a
 // segunda do mesmo usuário enquanto o UNIQUE de user_id existir (até o
 // contract); o slug de outro é ErrSlugTaken. Os três vêm do UNIQUE do banco,
-// e não de uma consulta antes, então valem também sob concorrência.
+// e não de uma consulta antes, então valem também sob concorrência. O slug
+// reservado (slugReservado) também é ErrSlugTaken, conferido depois do
+// Require, para que quem não pode criar no projeto não descubra a lista.
 func (s *Service) Create(ctx context.Context, scope tenancy.ProjectScope, in Input) (Page, error) {
 	if verr := validate(&in); verr != nil {
 		return Page{}, verr
-	}
-	if slugReservado(in.Slug) {
-		return Page{}, ErrSlugTaken
 	}
 	id, err := uuid.NewV7()
 	if err != nil {
@@ -81,6 +80,11 @@ func (s *Service) Create(ctx context.Context, scope tenancy.ProjectScope, in Inp
 	err = storage.InProjectTx(ctx, s.pool, scope.UserID, scope.ProjectID, func(q *db.Queries, atual tenancy.ProjectScope) error {
 		if err := atual.Require(tenancy.PermManageStatusPage); err != nil {
 			return err
+		}
+		// Só depois do Require: quem não pode criar aqui recebe a mesma
+		// recusa para qualquer slug, sem saber qual é reservado.
+		if slugReservado(in.Slug) {
+			return ErrSlugTaken
 		}
 		if err := q.InsertStatusPage(ctx, db.InsertStatusPageParams{
 			ID: id, UserID: atual.UserID, ProjectID: atual.ProjectID,

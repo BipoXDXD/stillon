@@ -144,3 +144,43 @@ func codigoErro(t *testing.T, corpo string) string {
 	codigo, _ := erroDe(t, corpo)
 	return codigo
 }
+
+// Quem não pode gerir a status page do projeto recebe a mesma recusa para slug
+// reservado e para slug livre: o 409 só pode aparecer depois da permissão,
+// senão revelaria a lista. Vale para o de fora (404, barrado antes do
+// service) e para o member (403 do Require), no POST e no PATCH.
+func TestNoPermissionGetsSameRefusalForReservedSlug(t *testing.T) {
+	a := newAPI(t)
+	dono := tokenDe(t, a, a.userID)
+	projeto := testdb.ProjetoPadrao(t, a.userID)
+	rota := "/api/v1/projects/" + projeto.String() + "/status-pages"
+	var pagina paginaJSON
+	resp := chamar(t, a, http.MethodPost, rota, dono, map[string]any{"slug": "minha-loja", "title": "T"})
+	lerCorpo(t, resp, &pagina)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("criar a página do dono deu %d", resp.StatusCode)
+	}
+	idDoMember := outroUsuario(t, a)
+	testdb.Membro(t, projeto, idDoMember, "member")
+	quem := []struct {
+		nome   string
+		token  string
+		status int
+	}{
+		{"de fora", tokenDe(t, a, outroUsuario(t, a)), http.StatusNotFound},
+		{"member", tokenDe(t, a, idDoMember), http.StatusForbidden},
+	}
+	for _, q := range quem {
+		for _, op := range []struct{ metodo, caminho string }{
+			{http.MethodPost, rota},
+			{http.MethodPatch, rota + "/" + pagina.ID},
+		} {
+			stLivre, corpoLivre := lerCru(t, a, op.metodo, op.caminho, q.token, map[string]any{"slug": "slug-livre", "title": "T"})
+			stRes, corpoRes := lerCru(t, a, op.metodo, op.caminho, q.token, map[string]any{"slug": "admin", "title": "T"})
+			if stLivre != q.status || stRes != stLivre || codigoErro(t, corpoRes) != codigoErro(t, corpoLivre) {
+				t.Errorf("%s %s do %s: slug livre deu %d %s, reservado deu %d %s; queria a mesma recusa %d",
+					op.metodo, op.caminho, q.nome, stLivre, corpoLivre, stRes, corpoRes, q.status)
+			}
+		}
+	}
+}
