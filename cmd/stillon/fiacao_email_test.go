@@ -84,7 +84,7 @@ func TestVerificadorDeCanalPassaPeloTeto(t *testing.T) {
 		t.Fatalf("verificador = %#v, queria o decorador do contaemail", v)
 	}
 
-	if err := v.SendVerification(context.Background(), crypto.Secret("dono@exemplo.test"), "https://x/verify/1"); !errors.Is(err, notify.ErrVerificationSuppressed) {
+	if err := v.SendVerification(context.Background(), uuid.New(), crypto.Secret("dono@exemplo.test"), "https://x/verify/1"); !errors.Is(err, notify.ErrVerificationSuppressed) {
 		t.Fatalf("SendVerification com o balde vazio = %v, queria ErrVerificationSuppressed", err)
 	}
 	if n := len(rf.lista()); n != 0 {
@@ -92,7 +92,7 @@ func TestVerificadorDeCanalPassaPeloTeto(t *testing.T) {
 	}
 
 	orc.mudar(true)
-	if err := v.SendVerification(context.Background(), crypto.Secret("dono@exemplo.test"), "https://x/verify/2"); err != nil {
+	if err := v.SendVerification(context.Background(), uuid.New(), crypto.Secret("dono@exemplo.test"), "https://x/verify/2"); err != nil {
 		t.Fatalf("SendVerification = %v", err)
 	}
 	if teto.total() != 1 {

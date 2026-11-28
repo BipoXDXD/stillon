@@ -37,7 +37,7 @@ func (q *Queries) FamilyIsLive(ctx context.Context, arg FamilyIsLiveParams) (boo
 }
 
 const listLiveFamilies = `-- name: ListLiveFamilies :many
-SELECT family_id, created_at, coalesce(user_agent, '')::text AS user_agent
+SELECT family_id, created_at, coalesce(user_agent, '')::text AS user_agent, expires_at
   FROM sessions
  WHERE user_id = $1 AND used_at IS NULL AND revoked_at IS NULL
    AND expires_at > $2::timestamptz
@@ -53,6 +53,7 @@ type ListLiveFamiliesRow struct {
 	FamilyID  uuid.UUID
 	CreatedAt time.Time
 	UserAgent string
+	ExpiresAt time.Time
 }
 
 // GET /sessions: a linha corrente de cada família viva do usuário. O
@@ -68,7 +69,12 @@ func (q *Queries) ListLiveFamilies(ctx context.Context, arg ListLiveFamiliesPara
 	var items []ListLiveFamiliesRow
 	for rows.Next() {
 		var i ListLiveFamiliesRow
-		if err := rows.Scan(&i.FamilyID, &i.CreatedAt, &i.UserAgent); err != nil {
+		if err := rows.Scan(
+			&i.FamilyID,
+			&i.CreatedAt,
+			&i.UserAgent,
+			&i.ExpiresAt,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

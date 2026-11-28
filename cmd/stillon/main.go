@@ -21,6 +21,7 @@ import (
 	"github.com/BipoXDXD/stillon/internal/config"
 	"github.com/BipoXDXD/stillon/internal/contaemail"
 	"github.com/BipoXDXD/stillon/internal/crypto"
+	"github.com/BipoXDXD/stillon/internal/exportacao"
 	"github.com/BipoXDXD/stillon/internal/heartbeat"
 	"github.com/BipoXDXD/stillon/internal/httpapi"
 	"github.com/BipoXDXD/stillon/internal/incident/history"
@@ -228,7 +229,9 @@ func run(ctx context.Context, cfg *config.Config) error {
 		// Os e-mails de conta (confirmação, redefinição, verificação de
 		// canal) passam pelo balde do destinatário e pelo teto diário; os
 		// avisos (notificadores) e o do 2FA bloqueado, nunca.
-		enviador := enviadorDeConta(cfg, storage.NewTetoDeEmailsDeConta(pool, clk, contaemail.TetoDiario), limitesIP)
+		// O teto da conta que causou o e-mail vale junto com o global.
+		teto := storage.NewTetoDeEmailsDeConta(pool, clk, contaemail.TetoDiario, contaemail.TetoDiarioPorConta)
+		enviador := enviadorDeConta(cfg, teto, limitesIP)
 		links := account.Links{Base: cfg.PublicBaseURL}
 		deps := httpapi.Deps{
 			Store:    store,
@@ -251,6 +254,7 @@ func run(ctx context.Context, cfg *config.Config) error {
 				convitemail.New(pool, clk, mailerDeConta(enviador), links), clk),
 			Clock:       clk,
 			LimitesIP:   limitesIP,
+			Exportacao:  exportacao.Novo(pool, box, clk),
 			Ready:       pool.Ping,
 			Cadastro:    account.NewCadastro(pool, clk, mailerDeConta(enviador), links),
 			Recuperacao: account.NewRecuperacao(pool, clk, mailerDeConta(enviador), links),

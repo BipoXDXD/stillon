@@ -68,8 +68,9 @@ type DiscordTester interface {
 
 // VerificationMailer manda o link de verificação. *Resend satisfaz.
 // Um mailer sujeito a cotas sinaliza a supressão com ErrVerificationSuppressed.
+// conta é quem pediu a verificação (o teto diário por conta).
 type VerificationMailer interface {
-	SendVerification(ctx context.Context, dest crypto.Secret, link string) error
+	SendVerification(ctx context.Context, conta uuid.UUID, dest crypto.Secret, link string) error
 }
 
 // Channel é o que sai do domínio. Não tem campo para o destino: só o hint.
@@ -189,7 +190,7 @@ func (s *ChannelService) Create(ctx context.Context, scope tenancy.ProjectScope,
 		if err != nil {
 			return Channel{}, err
 		}
-		if err := s.email.SendVerification(envio, crypto.Secret(dest), s.link(token)); err == nil {
+		if err := s.email.SendVerification(envio, scope.UserID, crypto.Secret(dest), s.link(token)); err == nil {
 			expira := now.Add(VerifyTTL)
 			p.VerifyTokenHash, p.VerifyExpiresAt = hash, &expira
 		} else if !errors.Is(err, ErrVerificationSuppressed) {
@@ -434,7 +435,7 @@ func (s *ChannelService) ResendVerification(ctx context.Context, scope tenancy.P
 	}
 	envio, cancel := context.WithTimeout(ctx, sendTimeout)
 	defer cancel()
-	err = s.email.SendVerification(envio, dest, s.link(token))
+	err = s.email.SendVerification(envio, scope.UserID, dest, s.link(token))
 	if errors.Is(err, ErrVerificationSuppressed) {
 		return nil
 	}

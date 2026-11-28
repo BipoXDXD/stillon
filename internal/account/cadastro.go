@@ -295,6 +295,9 @@ func (c *Cadastro) ReenviarConfirmacao(ctx context.Context, userID uuid.UUID) er
 		return err
 	}
 	assunto, corpo := emailDeConfirmacao(c.links.ConfirmarEmail(token))
-	enviarEmailDeConta(ctx, c.mailer, destino, assunto, corpo, entregaDoTokenDeConta(c.pool, c.clk, userID, tokenHash, propositoConfirmacao))
+	entrega := entregaDoTokenDeConta(c.pool, c.clk, userID, tokenHash, propositoConfirmacao)
+	// O reenvio tem sessão: a conta entra no teto diário por conta.
+	entrega.Conta = userID
+	enviarEmailDeConta(ctx, c.mailer, destino, assunto, corpo, entrega)
 	return nil
 }

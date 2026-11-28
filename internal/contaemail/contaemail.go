@@ -1,6 +1,7 @@
 // Package contaemail envia os e-mails de conta (confirmação, redefinição de
-// senha, verificação de canal) com duas proteções de cota: o balde por
-// destinatário e o teto diário global. A ordem é sempre balde, teto e
+// senha, verificação de canal, convite) com três proteções de cota: o balde
+// por destinatário, o teto diário da conta que causou o envio e o teto diário
+// global. A ordem é sempre balde, (conta e global, numa transação) e
 // transporte, para que um destinatário martelado não gaste o teto de todos.
 //
 // Os avisos de incidente (notify) nunca passam por aqui: o
@@ -15,6 +16,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/BipoXDXD/stillon/internal/account"
 	"github.com/BipoXDXD/stillon/internal/auth"
 	"github.com/BipoXDXD/stillon/internal/crypto"
@@ -23,6 +26,11 @@ import (
 
 // TetoDiario é o máximo de e-mails de conta por dia UTC, somadas as réplicas.
 const TetoDiario = 50
+
+// TetoDiarioPorConta é o máximo de e-mails de conta por dia UTC causados por
+// uma mesma conta (reenvio, verificação de canal, convite). Envio sem conta
+// conhecida (uuid.Nil: cadastro, "esqueci a senha") só conta no global.
+const TetoDiarioPorConta = 10
 
 // PrazoDreno é o orçamento do encerramento de Rodar (o envio em curso mais
 // o dreno), contado do cancelamento: quem desliga o processo o desconta do
@@ -43,9 +51,11 @@ type Transporte interface {
 	SendAccount(ctx context.Context, to crypto.Secret, subject, body string) error
 }
 
-// Teto reserva uma vaga do teto diário; false quando esgotado.
+// Teto reserva uma vaga do teto diário da conta (se conta != uuid.Nil) e do
+// global, numa transação. recusa: "" liberado, "conta" ou "teto".
+// *storage.TetoDeEmailsDeConta satisfaz.
 type Teto interface {
-	Reservar(ctx context.Context) (bool, error)
+	Reservar(ctx context.Context, conta uuid.UUID) (recusa string, err error)
 }
 
 // Orcamentos é o balde compartilhado entre réplicas (ip_rate_limits).
@@ -198,7 +208,7 @@ func (e *Enviador) enviar(ctx context.Context, m mensagem) account.ResultadoDoEn
 			return account.EnvioDescartado
 		}
 	}
-	liberado, err := e.liberar(ctx, m.para)
+	liberado, err := e.liberar(ctx, m.para, m.entrega.Conta)
 	if err != nil || !liberado || ctx.Err() != nil {
 		return account.EnvioDescartado
 	}
@@ -234,8 +244,9 @@ func (e *Enviador) concluir(ctx context.Context, concluir account.ConclusaoDoEnv
 }
 
 // liberar gasta o balde do destinatário e, só se houver ficha, uma vaga do
-// teto. Suprimido volta false e nil, com o motivo no log e sem o endereço.
-func (e *Enviador) liberar(ctx context.Context, para string) (bool, error) {
+// teto da conta e do global. Suprimido volta false e nil, com o motivo
+// (destino, conta ou teto) no log e sem o endereço.
+func (e *Enviador) liberar(ctx context.Context, para string, conta uuid.UUID) (bool, error) {
 	chave := crypto.HashIP(e.chave, baldeDestino+":"+chaveDoDestino(para))
 	_, ok, err := e.orcamentos.Gastar(ctx, baldeDestino, chave, aCadaDestino, rajadaDestino)
 	if err != nil {
@@ -246,13 +257,13 @@ func (e *Enviador) liberar(ctx context.Context, para string) (bool, error) {
 		e.log.Warn("e-mail de conta suprimido", "motivo", "destino")
 		return false, nil
 	}
-	ok, err = e.teto.Reservar(ctx)
+	recusa, err := e.teto.Reservar(ctx, conta)
 	if err != nil {
 		e.log.Error("teto de e-mails de conta falhou")
 		return false, err
 	}
-	if !ok {
-		e.log.Warn("e-mail de conta suprimido", "motivo", "teto")
+	if recusa != "" {
+		e.log.Warn("e-mail de conta suprimido", "motivo", recusa)
 		return false, nil
 	}
 	return true, nil
@@ -270,21 +281,21 @@ type verificacaoComTeto struct {
 }
 
 // NovaVerificacaoComTeto põe a verificação de canal por e-mail atrás do
-// balde e do teto, de forma síncrona. Retorna ErrVerificationSuppressed
+// balde e dos tetos (o da conta de quem pediu e o global), de forma síncrona. Retorna ErrVerificationSuppressed
 // quando a cota impede o envio, ou a falha do balde, teto ou transporte.
 func NovaVerificacaoComTeto(e *Enviador, m notify.VerificationMailer) notify.VerificationMailer {
 	return &verificacaoComTeto{e: e, m: m}
 }
 
-func (v *verificacaoComTeto) SendVerification(ctx context.Context, dest crypto.Secret, link string) error {
-	liberado, err := v.e.liberar(ctx, string(dest.Reveal()))
+func (v *verificacaoComTeto) SendVerification(ctx context.Context, conta uuid.UUID, dest crypto.Secret, link string) error {
+	liberado, err := v.e.liberar(ctx, string(dest.Reveal()), conta)
 	if err != nil {
 		return err
 	}
 	if !liberado {
 		return notify.ErrVerificationSuppressed
 	}
-	return v.m.SendVerification(ctx, dest, link)
+	return v.m.SendVerification(ctx, conta, dest, link)
 }
 
 // SemEnvio é o enviador com o e-mail desligado: registra e descarta.

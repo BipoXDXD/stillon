@@ -126,8 +126,9 @@ func novaBancada(t *testing.T, ajustar func(*config.Config)) *bancada {
 		Invitations:     convitesSemBanco(clk),
 		EmailConfirmado: conferidorQueConfirma{},
 		Cadastro:        contaPublicaFalsa{}, Recuperacao: contaPublicaFalsa{}, Turnstile: turnstileQueRecusa{},
-		Clock:     clk,
-		LimitesIP: middleware.NovosOrcamentosEmMemoria(ctx, clk),
+		Clock:      clk,
+		LimitesIP:  middleware.NovosOrcamentosEmMemoria(ctx, clk),
+		Exportacao: exportadorSemBanco{},
 	}
 	return &bancada{rotas: httpapi.Routes(ctx, cfg, deps), clk: clk}
 }

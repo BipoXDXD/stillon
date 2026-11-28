@@ -25,6 +25,7 @@ import (
 	"github.com/BipoXDXD/stillon/internal/clock"
 	"github.com/BipoXDXD/stillon/internal/config"
 	"github.com/BipoXDXD/stillon/internal/crypto"
+	"github.com/BipoXDXD/stillon/internal/exportacao"
 	"github.com/BipoXDXD/stillon/internal/heartbeat"
 	"github.com/BipoXDXD/stillon/internal/httpapi"
 	"github.com/BipoXDXD/stillon/internal/incident/history"
@@ -96,7 +97,8 @@ func apiSemBanco(t *testing.T) (*httptest.Server, *clock.Fake) {
 		// Ligado, para que signup e forgot não parem no 404 antes do limite.
 		CadastroPublico: httpapi.ConfigCadastro{Habilitado: true, SiteKey: "site-key-publica"},
 		Clock:           clk, Ready: pool.Ping,
-		LimitesIP: storage.NewOrcamentosPorIP(pool, clk),
+		LimitesIP:  storage.NewOrcamentosPorIP(pool, clk),
+		Exportacao: exportacao.Novo(pool, box, clk),
 	}))
 	t.Cleanup(srv.Close)
 	return srv, clk

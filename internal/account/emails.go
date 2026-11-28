@@ -6,6 +6,8 @@ import (
 	"log/slog"
 	"strings"
 	"unicode"
+
+	"github.com/google/uuid"
 )
 
 // ResultadoDoEnvio é a resposta do transporte ou o descarte antes da entrega.
@@ -24,9 +26,14 @@ type ConclusaoDoEnvio func(context.Context, ResultadoDoEnvio) error
 // EntregaDeEmail descreve o ciclo de um link. O trabalhador chama Preparar
 // antes das cotas e da rede. false significa que o link já perdeu a validade.
 // Mensagens sem link usam o valor zero.
+//
+// Conta é quem causou o envio (o teto diário por conta): o usuário do
+// reenvio, quem convida. uuid.Nil quando não há conta conhecida (cadastro,
+// "esqueci a senha"): só o teto global vale.
 type EntregaDeEmail struct {
 	Preparar func(context.Context) (bool, error)
 	Concluir ConclusaoDoEnvio
+	Conta    uuid.UUID
 }
 
 // AccountMailer enfileira e volta sem aguardar a rede. A conclusão pertence

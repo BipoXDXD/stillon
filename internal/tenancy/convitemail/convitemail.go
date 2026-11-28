@@ -39,6 +39,7 @@ func (m *Mailer) SendInvitation(ctx context.Context, e tenancy.InvitationEmail) 
 	hash := e.TokenHash
 	return m.envio.SendAccountEmail(ctx, e.To, assunto, corpo, account.EntregaDeEmail{
 		Preparar: func(ctx context.Context) (bool, error) { return m.pendente(ctx, hash) },
+		Conta:    e.InviterID,
 	})
 }
 

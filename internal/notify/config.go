@@ -31,6 +31,21 @@ func openConfig(box *crypto.Box, id uuid.UUID, sealed []byte) (crypto.Secret, er
 
 func configAAD(id uuid.UUID) []byte { return crypto.AAD("notif_channels", "config_enc", id) }
 
+// DestinoExportavel é o que a exportação da conta leva do destino de um canal:
+// o hint e, só do canal de e-mail, o endereço, que é dado da própria pessoa.
+// Do webhook vai só o hint: a URL carrega o token, que é a credencial do canal.
+func DestinoExportavel(box *crypto.Box, id uuid.UUID, kind string, sealed []byte) (dica, email string, err error) {
+	dest, err := openConfig(box, id, sealed)
+	if err != nil {
+		return "", "", err
+	}
+	k := Kind(kind)
+	if k == KindEmail {
+		email = string(dest.Reveal())
+	}
+	return hint(k, dest), email, nil
+}
+
 const maxEmail = 254
 
 // NormalizeEmail aceita só um endereço nu ("a@b.com"), sem nome de exibição

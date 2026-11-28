@@ -33,14 +33,15 @@ var tabelasDoProjeto = []string{
 // uma com o motivo. As partições de checks ficam fora pelo nome da mãe (ver
 // TestProjectScopeSeesNothingOfOtherProjectOfSameUser).
 var tabelasForaDoProjeto = map[string]string{
-	"sessions":              "a sessão é da pessoa, vale em todos os projetos dela",
-	"session_family_proofs": "prova de família de sessão: da pessoa, como sessions",
-	"totp_recovery_codes":   "segundo fator da conta, não de projeto",
-	"ip_rate_limits":        "limite por IP, anterior a qualquer usuário",
-	"account_tokens":        "link de confirmação de e-mail e de redefinição de senha: da conta, não de projeto",
-	"account_email_daily":   "teto diário de e-mails de conta, sem dono, dividido entre réplicas",
-	"projects":              "é o próprio projeto; a pertença sai de project_members",
-	"project_members":       "vínculo pessoa–projeto; a pessoa vê os próprios e, no escopo do projeto, os colegas",
+	"sessions":                    "a sessão é da pessoa, vale em todos os projetos dela",
+	"session_family_proofs":       "prova de família de sessão: da pessoa, como sessions",
+	"totp_recovery_codes":         "segundo fator da conta, não de projeto",
+	"ip_rate_limits":              "limite por IP, anterior a qualquer usuário",
+	"account_tokens":              "link de confirmação de e-mail e de redefinição de senha: da conta, não de projeto",
+	"account_email_daily":         "teto diário de e-mails de conta, sem dono, dividido entre réplicas",
+	"account_email_daily_by_user": "teto diário de e-mails por conta: da conta, não de projeto",
+	"projects":                    "é o próprio projeto; a pertença sai de project_members",
+	"project_members":             "vínculo pessoa–projeto; a pessoa vê os próprios e, no escopo do projeto, os colegas",
 }
 
 // emEscopoDeProjeto roda fn com app.user_id e app.project_id ligados por SQL
