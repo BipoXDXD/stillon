@@ -23,7 +23,8 @@ func (q *Queries) DeleteRecoveryCodes(ctx context.Context, userID uuid.UUID) err
 }
 
 const getAccount = `-- name: GetAccount :one
-SELECT id, email, (totp_confirmed_at IS NOT NULL)::bool AS totp_enabled, created_at, email_verified_at
+SELECT id, email, (totp_confirmed_at IS NOT NULL)::bool AS totp_enabled, created_at, email_verified_at,
+       terms_version, terms_accepted_at
   FROM users WHERE id = $1
 `
 
@@ -33,11 +34,15 @@ type GetAccountRow struct {
 	TotpEnabled     bool
 	CreatedAt       time.Time
 	EmailVerifiedAt *time.Time
+	TermsVersion    *string
+	TermsAcceptedAt *time.Time
 }
 
 // GET /me. totp_enabled é o segundo fator CONFIRMADO: um cadastro iniciado e
 // abandonado não conta (o mesmo critério de auth.TOTP.IsEnabled).
 // email_verified_at é nulo na conta do cadastro público ainda não confirmada.
+// terms_version e terms_accepted_at (00051) servem à exportação da conta; são
+// nulos na conta criada pelo CLI.
 func (q *Queries) GetAccount(ctx context.Context, id uuid.UUID) (GetAccountRow, error) {
 	row := q.db.QueryRow(ctx, getAccount, id)
 	var i GetAccountRow
@@ -47,6 +52,8 @@ func (q *Queries) GetAccount(ctx context.Context, id uuid.UUID) (GetAccountRow, 
 		&i.TotpEnabled,
 		&i.CreatedAt,
 		&i.EmailVerifiedAt,
+		&i.TermsVersion,
+		&i.TermsAcceptedAt,
 	)
 	return i, err
 }
@@ -163,6 +170,47 @@ func (q *Queries) InsertUser(ctx context.Context, arg InsertUserParams) error {
 		arg.CreatedAt,
 	)
 	return err
+}
+
+const listAuditOfUser = `-- name: ListAuditOfUser :many
+SELECT action, entity, entity_id, at
+  FROM audit_log
+ WHERE user_id = $1
+ ORDER BY at, id
+`
+
+type ListAuditOfUserRow struct {
+	Action   string
+	Entity   *string
+	EntityID *uuid.UUID
+	At       time.Time
+}
+
+// A exportação da conta: o registro de auditoria da pessoa, sem ip_hash.
+// audit_log não tem RLS; o filtro por user_id é a barreira.
+func (q *Queries) ListAuditOfUser(ctx context.Context, userID *uuid.UUID) ([]ListAuditOfUserRow, error) {
+	rows, err := q.db.Query(ctx, listAuditOfUser, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListAuditOfUserRow
+	for rows.Next() {
+		var i ListAuditOfUserRow
+		if err := rows.Scan(
+			&i.Action,
+			&i.Entity,
+			&i.EntityID,
+			&i.At,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const markEmailVerified = `-- name: MarkEmailVerified :exec

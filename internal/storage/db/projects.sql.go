@@ -262,6 +262,7 @@ func (q *Queries) InsertProjectOwner(ctx context.Context, arg InsertProjectOwner
 
 const listMyProjects = `-- name: ListMyProjects :many
 SELECT p.id, p.name, p.is_default, m.role, p.created_at, t.is_operator AS titular_is_operator,
+       (p.titular_id = m.user_id)::boolean AS is_titular,
        (p.pending_titular_id IS NOT DISTINCT FROM m.user_id)::boolean AS pending_titular
   FROM project_members m
   JOIN projects p ON p.id = m.project_id
@@ -277,6 +278,7 @@ type ListMyProjectsRow struct {
 	Role              string
 	CreatedAt         time.Time
 	TitularIsOperator bool
+	IsTitular         bool
 	PendingTitular    bool
 }
 
@@ -286,8 +288,9 @@ type ListMyProjectsRow struct {
 // restringe aos vínculos dele, e o filtro por user_id deixa isso explícito.
 // titular_is_operator dá os limites do titular de cada projeto
 // (tenancy.LimitesDe): valem os do dono do projeto, não os de quem pede.
-// pending_titular diz se a titularidade foi proposta a user_id (PR 4.3): só
-// quem recebe vê a proposta na lista, para aceitar ou recusar.
+// is_titular serve à exportação da conta (memberships). pending_titular diz se
+// a titularidade foi proposta a user_id (PR 4.3): só quem recebe vê a proposta
+// na lista, para aceitar ou recusar.
 func (q *Queries) ListMyProjects(ctx context.Context, userID uuid.UUID) ([]ListMyProjectsRow, error) {
 	rows, err := q.db.Query(ctx, listMyProjects, userID)
 	if err != nil {
@@ -304,6 +307,7 @@ func (q *Queries) ListMyProjects(ctx context.Context, userID uuid.UUID) ([]ListM
 			&i.Role,
 			&i.CreatedAt,
 			&i.TitularIsOperator,
+			&i.IsTitular,
 			&i.PendingTitular,
 		); err != nil {
 			return nil, err

@@ -76,7 +76,9 @@ const keyLen = 32
 const shutdownGrace = 15 * time.Second
 
 // requestTimeout termina o trabalho no banco antes do WriteTimeout de 30 s
-// do servidor, deixando margem para responder com o envelope de erro.
+// do servidor, deixando margem para responder com o envelope de erro. A
+// exportação da conta (GET /api/v1/me/export) é a exceção: tem prazo próprio
+// (httpapi.prazoExportacao) e renova o prazo de escrita a cada escrita.
 const requestTimeout = 15 * time.Second
 
 type Config struct {

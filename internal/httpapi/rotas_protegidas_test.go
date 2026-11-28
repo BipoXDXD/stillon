@@ -25,6 +25,7 @@ func TestProtectedRoutesRequireAuthentication(t *testing.T) {
 		{http.MethodDelete, "/api/v1/sessions/" + uuid.NewString()},
 		{http.MethodGet, "/api/v1/targets/summary"},
 		{http.MethodPost, "/api/v1/projects"},
+		{http.MethodGet, "/api/v1/me/export"},
 	} {
 		resp := chamar(t, a, r.metodo, r.caminho, "", nil)
 		codigo := decodeEnvelope(t, resp).Error.Code

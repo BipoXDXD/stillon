@@ -18,10 +18,19 @@ import (
 // ServeMux preenche r.Pattern na própria requisição que recebe, então um
 // Recover por fora da cadeia vê o padrão do mux mais interno que tocou nela
 // (ou vazio, se uma cópia via WithContext ficou no meio).
+//
+// A exceção é http.ErrAbortHandler, que segue para o servidor.
 func Recover(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
 			if rec := recover(); rec != nil {
+				// http.ErrAbortHandler é o pedido explícito de derrubar a
+				// conexão (a exportação que falha depois do primeiro byte):
+				// sobe até o servidor, que a fecha sem log. Um envelope 500
+				// aqui sairia colado no fim de uma resposta 200 já começada.
+				if rec == http.ErrAbortHandler {
+					panic(rec)
+				}
 				slog.Error("panic no handler",
 					"trace_id", observability.TraceID(r.Context()),
 					"metodo", r.Method,
