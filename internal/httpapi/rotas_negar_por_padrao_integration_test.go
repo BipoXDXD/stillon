@@ -181,7 +181,10 @@ func rotasRegistradas(t *testing.T) []string {
 	if len(rotas) < 30 {
 		t.Fatalf("achei só %d rotas nos fontes; o parser deixou de enxergar os registros", len(rotas))
 	}
-	return rotas
+	// A exportação aparece duas vezes: no mux da API e na raiz, que a desvia
+	// para a cadeia com o prazo dela. É uma rota só.
+	slices.Sort(rotas)
+	return slices.Compact(rotas)
 }
 
 // padraoDeRegistro diz se n é uma chamada .Handle ou .HandleFunc e devolve o

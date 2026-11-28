@@ -27,6 +27,10 @@ import (
 	"github.com/BipoXDXD/stillon/internal/tenancy"
 )
 
+// ipDoPedido é o ip_hash que o handler calcula e a exportação grava em
+// account.exported.
+var ipDoPedido = crypto.HashIP(bytes.Repeat([]byte{5}, 32), "198.51.100.23")
+
 // agora é o relógio do cenário: generated_at tem de sair dele, nunca do
 // relógio da máquina.
 var agora = time.Date(2026, 11, 28, 12, 34, 56, 789000000, time.UTC)
@@ -210,7 +214,7 @@ func exportar(t *testing.T, c cenario) []byte {
 
 func exportarEm(t *testing.T, c cenario, w io.Writer) {
 	t.Helper()
-	if err := exportacao.Novo(c.pool, c.box, clock.NewFake(agora)).Escrever(context.Background(), c.dona, w); err != nil {
+	if err := exportacao.Novo(c.pool, c.box, clock.NewFake(agora)).Escrever(context.Background(), c.dona, ipDoPedido, w); err != nil {
 		t.Fatalf("exportar: %v", err)
 	}
 }
@@ -387,6 +391,15 @@ func TestExportacaoRegistraNaAuditoria(t *testing.T) {
 	}
 	if n != 1 || !em.Equal(agora) {
 		t.Errorf("account.exported = %d em %v, queria 1 em %v", n, em, agora)
+	}
+	// O ip_hash da origem fica no registro, como nas outras auditorias da conta.
+	var ip []byte
+	if err := c.pool.QueryRow(context.Background(), `SELECT ip_hash FROM audit_log
+		WHERE user_id = $1 AND action = 'account.exported'`, c.dona).Scan(&ip); err != nil {
+		t.Fatal(err)
+	}
+	if ip == nil || !bytes.Equal(ip, ipDoPedido) {
+		t.Errorf("ip_hash de account.exported = %x, queria %x", ip, ipDoPedido)
 	}
 }
 

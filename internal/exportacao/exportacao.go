@@ -211,7 +211,8 @@ type pessoal struct {
 	geradoEm  time.Time
 }
 
-// Escrever lê e escreve a exportação de userID em w.
+// Escrever lê e escreve a exportação de userID em w. ipHash é o da origem
+// do pedido e vai só para o registro account.exported na auditoria.
 //
 // Os dados da pessoa são lidos numa transação de usuário antes do primeiro
 // byte; cada projeto em que ela é owner é lido depois, no seu próprio
@@ -226,8 +227,8 @@ type pessoal struct {
 // Um erro depois do primeiro byte volta para quem chamou com o JSON
 // incompleto em w: o handler aborta a resposta (panic(http.ErrAbortHandler))
 // para o download falhar em vez de chegar truncado.
-func (s *Servico) Escrever(ctx context.Context, userID uuid.UUID, w io.Writer) error {
-	p, err := s.lerPessoal(ctx, userID)
+func (s *Servico) Escrever(ctx context.Context, userID uuid.UUID, ipHash []byte, w io.Writer) error {
+	p, err := s.lerPessoal(ctx, userID, ipHash)
 	if err != nil {
 		return err
 	}
@@ -271,7 +272,7 @@ func (s *Servico) Escrever(ctx context.Context, userID uuid.UUID, w io.Writer) e
 	return e.err
 }
 
-func (s *Servico) lerPessoal(ctx context.Context, userID uuid.UUID) (pessoal, error) {
+func (s *Servico) lerPessoal(ctx context.Context, userID uuid.UUID, ipHash []byte) (pessoal, error) {
 	p := pessoal{geradoEm: s.clk.Now().UTC()}
 	// users e audit_log não têm RLS (o filtro por id é a barreira); sessions
 	// (00029) e project_members abrem pelo app.user_id do escopo do usuário.
@@ -336,7 +337,7 @@ func (s *Servico) lerPessoal(ctx context.Context, userID uuid.UUID) (pessoal, er
 			return fmt.Errorf("gerar id de auditoria: %w", err)
 		}
 		if err := q.InsertAuditEntry(ctx, db.InsertAuditEntryParams{
-			ID: id, UserID: &userID, Action: AcaoDeAuditoria, At: p.geradoEm,
+			ID: id, UserID: &userID, Action: AcaoDeAuditoria, IpHash: ipHash, At: p.geradoEm,
 		}); err != nil {
 			return fmt.Errorf("auditar %s: %w", AcaoDeAuditoria, err)
 		}

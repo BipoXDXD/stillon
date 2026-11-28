@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -15,6 +16,7 @@ import (
 	"github.com/BipoXDXD/stillon/internal/apierr"
 	"github.com/BipoXDXD/stillon/internal/clock"
 	"github.com/BipoXDXD/stillon/internal/exportacao"
+	"github.com/BipoXDXD/stillon/internal/httpapi/middleware"
 )
 
 // exportadorFalso escreve saida e devolve err: com saida vazia, o erro chega
@@ -24,7 +26,7 @@ type exportadorFalso struct {
 	err   error
 }
 
-func (e exportadorFalso) Escrever(_ context.Context, _ uuid.UUID, w io.Writer) error {
+func (e exportadorFalso) Escrever(_ context.Context, _ uuid.UUID, _ []byte, w io.Writer) error {
 	if e.saida != "" {
 		if _, err := io.WriteString(w, e.saida); err != nil {
 			return err
@@ -37,7 +39,7 @@ var diaDaExportacao = time.Date(2026, 11, 28, 23, 59, 0, 0, time.UTC)
 
 func exportarCom(t *testing.T, e Exportador) *httptest.ResponseRecorder {
 	t.Helper()
-	h := NewExportacaoHandlers(e, clock.NewFake(diaDaExportacao))
+	h := NewExportacaoHandlers(e, clock.NewFake(diaDaExportacao), middleware.Proxies{}, bytes.Repeat([]byte{3}, 32))
 	return comUsuario(t, h.Exportar, httptest.NewRequest(http.MethodGet, "/api/v1/me/export", nil))
 }
 
@@ -94,5 +96,62 @@ func TestExportarErroDepoisDoPrimeiroByteAborta(t *testing.T) {
 	}()
 	if motivo != http.ErrAbortHandler {
 		t.Fatalf("panic = %v, queria http.ErrAbortHandler", motivo)
+	}
+}
+
+// escritorComPrazo é um ResponseWriter que aceita SetWriteDeadline (pelo
+// http.ResponseController) e anota o prazo vigente em cada escrita.
+type escritorComPrazo struct {
+	*httptest.ResponseRecorder
+	prazo        time.Time
+	errDePrazo   error
+	prazosVistos []time.Time
+}
+
+func (e *escritorComPrazo) SetWriteDeadline(t time.Time) error {
+	if e.errDePrazo != nil {
+		return e.errDePrazo
+	}
+	e.prazo = t
+	return nil
+}
+
+func (e *escritorComPrazo) Write(p []byte) (int, error) {
+	e.prazosVistos = append(e.prazosVistos, e.prazo)
+	e.prazo = time.Time{} // a próxima escrita tem de renovar
+	return e.ResponseRecorder.Write(p)
+}
+
+// Cada escrita do anexo renova o prazo de escrita da conexão para ~60 s à
+// frente: o download longo não esbarra no WriteTimeout fixo do servidor, e o
+// cliente que parou de ler cai em 60 s.
+func TestAnexoRenovaOPrazoDeEscritaACadaEscrita(t *testing.T) {
+	w := &escritorComPrazo{ResponseRecorder: httptest.NewRecorder()}
+	a := &anexoPreguicoso{w: w, rc: http.NewResponseController(w), nome: "x.json"}
+	for _, parte := range []string{`{"a":`, `1`, `}`} {
+		antes := time.Now()
+		if _, err := io.WriteString(a, parte); err != nil {
+			t.Fatal(err)
+		}
+		visto := w.prazosVistos[len(w.prazosVistos)-1]
+		if visto.Before(antes.Add(59*time.Second)) || visto.After(time.Now().Add(61*time.Second)) {
+			t.Fatalf("escrita %q com prazo %v, queria ~60 s depois de %v", parte, visto, antes)
+		}
+	}
+	if len(w.prazosVistos) != 3 {
+		t.Errorf("escritas = %d, queria 3", len(w.prazosVistos))
+	}
+}
+
+// Um erro ao renovar o prazo (conexão já fechada) é falha de escrita: nada
+// sai, e o erro volta para o exportador.
+func TestAnexoFalhaQuandoOPrazoNaoRenova(t *testing.T) {
+	w := &escritorComPrazo{ResponseRecorder: httptest.NewRecorder(), errDePrazo: errors.New("conexão fechada")}
+	a := &anexoPreguicoso{w: w, rc: http.NewResponseController(w), nome: "x.json"}
+	if _, err := io.WriteString(a, `{}`); err == nil {
+		t.Fatal("escrita sem prazo renovado passou, queria erro")
+	}
+	if len(w.prazosVistos) != 0 || w.Body.Len() != 0 {
+		t.Errorf("saíram %d escritas (%q), queria nenhuma", len(w.prazosVistos), w.Body)
 	}
 }

@@ -1,16 +1,19 @@
 package httpapi_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
 	"github.com/BipoXDXD/stillon/internal/apierr"
+	"github.com/BipoXDXD/stillon/internal/crypto"
 	"github.com/BipoXDXD/stillon/internal/httpapi"
 )
 
@@ -85,7 +88,7 @@ func TestExportarTemLimitePorUsuario(t *testing.T) {
 // exportadorQueCaiNoMeio escreve o começo do JSON e falha.
 type exportadorQueCaiNoMeio struct{}
 
-func (exportadorQueCaiNoMeio) Escrever(_ context.Context, _ uuid.UUID, w io.Writer) error {
+func (exportadorQueCaiNoMeio) Escrever(_ context.Context, _ uuid.UUID, _ []byte, w io.Writer) error {
 	if _, err := io.WriteString(w, `{"format":"stillon-export","account":`); err != nil {
 		return err
 	}
@@ -112,5 +115,83 @@ func TestExportarFalhaNoMeioDerrubaODownload(t *testing.T) {
 	corpo, err := io.ReadAll(resp.Body)
 	if err == nil {
 		t.Fatalf("o download terminou sem erro (status %d): %s", resp.StatusCode, corpo)
+	}
+}
+
+// A auditoria account.exported leva o ip_hash da origem, calculado como no
+// cadastro e na conta (HMAC do IP do cliente com a IP_HASH_KEY).
+func TestExportarAuditaOIPHashDaOrigem(t *testing.T) {
+	a := newAPI(t)
+	status, corpo := lerCru(t, a, http.MethodGet, rotaDeExportacao, tokenDe(t, a, a.userID), nil)
+	if status != http.StatusOK {
+		t.Fatalf("exportação: %d %s", status, corpo)
+	}
+	var ip []byte
+	if err := a.pool.QueryRow(context.Background(), `SELECT ip_hash FROM audit_log
+		WHERE user_id = $1 AND action = 'account.exported'`, a.userID).Scan(&ip); err != nil {
+		t.Fatal(err)
+	}
+	esperado := crypto.HashIP(testIPHashKey, "127.0.0.1")
+	if ip == nil || !bytes.Equal(ip, esperado) {
+		t.Errorf("ip_hash = %x, queria %x", ip, esperado)
+	}
+}
+
+// HEAD não roda a exportação: 405 com Allow: GET, sem gastar o balde por
+// usuário (as duas fichas da rajada continuam lá) e sem auditoria.
+func TestExportarHeadNaoGastaBaldeNemAudita(t *testing.T) {
+	a := newAPI(t)
+	token := tokenDe(t, a, a.userID)
+	for i := range 3 {
+		resp := chamar(t, a, http.MethodHead, rotaDeExportacao, token, nil)
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusMethodNotAllowed || resp.Header.Get("Allow") != http.MethodGet {
+			t.Fatalf("HEAD %d: %d Allow=%q, queria 405 com Allow: GET", i+1, resp.StatusCode, resp.Header.Get("Allow"))
+		}
+	}
+	var n int
+	if err := a.pool.QueryRow(context.Background(),
+		`SELECT count(*) FROM audit_log WHERE user_id = $1 AND action = 'account.exported'`, a.userID).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Errorf("auditoria account.exported depois dos HEAD = %d, queria 0", n)
+	}
+	for i := range 2 {
+		status, corpo := lerCru(t, a, http.MethodGet, rotaDeExportacao, token, nil)
+		if status != http.StatusOK {
+			t.Fatalf("GET %d depois dos HEAD: %d %s, queria 200 (o HEAD gastou o balde)", i+1, status, corpo)
+		}
+	}
+}
+
+// exportadorQueMedePrazo anota quanto prazo o contexto da exportação tinha.
+type exportadorQueMedePrazo struct{ restante *time.Duration }
+
+func (e exportadorQueMedePrazo) Escrever(ctx context.Context, _ uuid.UUID, _ []byte, w io.Writer) error {
+	if d, ok := ctx.Deadline(); ok {
+		*e.restante = time.Until(d)
+	}
+	_, err := io.WriteString(w, `{"format":"stillon-export"}`)
+	return err
+}
+
+// A exportação tem prazo próprio, maior que o RequestTimeout da API: o
+// exportador que levasse mais que o prazo global ainda teria contexto. O
+// prazo é injetado (Deps.PrazoExportacao) para o teste não esperar minutos.
+func TestExportarTemPrazoProprio(t *testing.T) {
+	restante := time.Duration(-1)
+	const prazo = 3 * prazoDeTesteSobCarga
+	a := newAPICom(t, nil, func(d *httpapi.Deps) {
+		d.Exportacao = exportadorQueMedePrazo{restante: &restante}
+		d.PrazoExportacao = prazo
+	})
+	status, corpo := lerCru(t, a, http.MethodGet, rotaDeExportacao, tokenDe(t, a, a.userID), nil)
+	if status != http.StatusOK {
+		t.Fatalf("exportação: %d %s", status, corpo)
+	}
+	if restante <= a.cfg.RequestTimeout || restante > prazo {
+		t.Errorf("prazo restante na exportação = %v, queria acima do RequestTimeout (%v) e até %v",
+			restante, a.cfg.RequestTimeout, prazo)
 	}
 }

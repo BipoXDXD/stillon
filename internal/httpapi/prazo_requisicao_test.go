@@ -59,7 +59,7 @@ func convitesSemBanco(clk clock.Clock) *tenancy.Invitations {
 // primeiro byte.
 type exportadorSemBanco struct{}
 
-func (exportadorSemBanco) Escrever(context.Context, uuid.UUID, io.Writer) error {
+func (exportadorSemBanco) Escrever(context.Context, uuid.UUID, []byte, io.Writer) error {
 	return errRepoFalso
 }
 
@@ -136,10 +136,17 @@ func (turnstileQueRecusa) Verificar(context.Context, string, string, string) err
 // injetado, e o ping vê o contexto que a cadeia de middlewares lhe deu.
 func rotasSemBanco(t *testing.T, cfg *config.Config, ping func(context.Context) error) http.Handler {
 	t.Helper()
+	return rotasSemBancoCom(t, cfg, ping, nil)
+}
+
+// rotasSemBancoCom é rotasSemBanco com um ajuste nas dependências antes de
+// montar as rotas.
+func rotasSemBancoCom(t *testing.T, cfg *config.Config, ping func(context.Context) error, ajustar func(*httpapi.Deps)) http.Handler {
+	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	clk := clock.NewFake(time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC))
-	return httpapi.Routes(ctx, cfg, httpapi.Deps{
+	d := httpapi.Deps{
 		Channels:        notify.NewChannelService(nil, nil, clk, nil, nil, cfg.PublicBaseURL),
 		StatusPages:     statuspage.NewService(nil, clk),
 		Projects:        tenancy.NewService(repoFalso{}, clk),
@@ -150,7 +157,11 @@ func rotasSemBanco(t *testing.T, cfg *config.Config, ping func(context.Context) 
 		Ready:      ping,
 		LimitesIP:  middleware.NovosOrcamentosEmMemoria(ctx, clk),
 		Exportacao: exportadorSemBanco{},
-	})
+	}
+	if ajustar != nil {
+		ajustar(&d)
+	}
+	return httpapi.Routes(ctx, cfg, d)
 }
 
 func configSemBanco(prazo time.Duration) *config.Config {
