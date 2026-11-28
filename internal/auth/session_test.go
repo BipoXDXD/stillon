@@ -456,6 +456,9 @@ func (txFalsa) UserPasswordHash(context.Context, uuid.UUID) (string, error) {
 func (txFalsa) UserTOTPSecret(context.Context, uuid.UUID) ([]byte, bool, error) {
 	return nil, false, nil
 }
+func (txFalsa) UserSuspended(context.Context, uuid.UUID) (bool, error) {
+	return false, nil
+}
 func (txFalsa) InsertSession(context.Context, auth.SessionRow) error { return nil }
 func (txFalsa) MarkSessionUsed(context.Context, uuid.UUID, time.Time) error {
 	return nil

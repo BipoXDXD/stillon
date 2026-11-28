@@ -145,6 +145,46 @@ func InAccountTokenTx(ctx context.Context, b Beginner, tokenHash []byte, fn func
 	return inTx(ctx, b, `SELECT set_config('app.account_token_hash', $1, true)`, hex.EncodeToString(tokenHash), fn)
 }
 
+// InInvitationTokenTx roda fn no escopo do link de convite, sem sessão: em
+// project_invitations a RLS enxerga só a linha do próprio hash, e nada de
+// outra tabela de projeto. Serve para espiar o convite (o e-mail antes do
+// envio, o aceite antes de consumir). Com InInvitationAcceptTx, é o único
+// lugar do código que liga app.invitation_token_hash.
+func InInvitationTokenTx(ctx context.Context, b Beginner, tokenHash []byte, fn func(*db.Queries) error) error {
+	if len(tokenHash) != sha256.Size {
+		return ErrNoToken
+	}
+	return inTx(ctx, b, `SELECT set_config('app.invitation_token_hash', $1, true)`, hex.EncodeToString(tokenHash), fn)
+}
+
+// InInvitationAcceptTx roda fn no escopo do aceite do convite: app.user_id
+// (quem aceita, com sessão) e app.invitation_token_hash, ligados no mesmo
+// comando. As políticas por_token_update e project_members_por_convite_insert
+// (00049) só deixam consumir o convite do hash à conta com o e-mail dele, e só
+// deixam essa conta entrar no projeto e com o papel do convite que aceitou.
+func InInvitationAcceptTx(ctx context.Context, b Beginner, userID uuid.UUID, tokenHash []byte, fn func(*db.Queries) error) error {
+	if userID == uuid.Nil {
+		return ErrNoUser
+	}
+	if len(tokenHash) != sha256.Size {
+		return ErrNoToken
+	}
+	tx, err := b.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("abrir transação: %w", err)
+	}
+	defer tx.Rollback(ctx) // no-op depois de Commit
+
+	if _, err := tx.Exec(ctx, `SELECT set_config('app.user_id', $1, true), set_config('app.invitation_token_hash', $2, true)`,
+		userID.String(), hex.EncodeToString(tokenHash)); err != nil {
+		return fmt.Errorf("definir escopo da RLS: %w", err)
+	}
+	if err := fn(db.New(tx)); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
 // InAccountEmailTx roda fn no escopo do teto diário de e-mails de conta: a
 // RLS abre só account_email_daily, a contagem sem dono que todas as réplicas
 // dividem. É o único lugar do código que liga esse escopo.

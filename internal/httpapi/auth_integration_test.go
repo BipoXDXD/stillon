@@ -32,6 +32,7 @@ import (
 	"github.com/BipoXDXD/stillon/internal/storage/testdb"
 	"github.com/BipoXDXD/stillon/internal/targets"
 	"github.com/BipoXDXD/stillon/internal/tenancy"
+	"github.com/BipoXDXD/stillon/internal/tenancy/convitemail"
 	"github.com/BipoXDXD/stillon/internal/tenancy/pgstore"
 	"github.com/BipoXDXD/stillon/internal/turnstile"
 	"github.com/BipoXDXD/stillon/internal/turnstile/turnstiletest"
@@ -182,7 +183,9 @@ func newAPICom(t *testing.T, ajustar func(*config.Config), ajustarDeps func(*htt
 		Pings:           heartbeat.NewPingService(pool, clk),
 		Heartbeats:      heartbeat.NewService(pool, clk),
 		Projects:        tenancy.NewService(pgstore.New(pool), clk),
-		Clock:           clk, Ready: pool.Ping,
+		Invitations: tenancy.NewInvitations(pgstore.NewInvitations(pool),
+			convitemail.New(pool, clk, emailsDeConta, linksDoPainel), clk),
+		Clock: clk, Ready: pool.Ping,
 		LimitesIP: storage.NewOrcamentosPorIP(pool, clk),
 	}
 	if ajustarDeps != nil {

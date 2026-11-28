@@ -2,6 +2,9 @@ package testdb
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
 	"fmt"
 	"testing"
 
@@ -143,6 +146,19 @@ func Suspender(t *testing.T, usuario uuid.UUID) {
 	}
 }
 
+// Reativar tira a suspensão da conta, por fora da RLS.
+func Reativar(t *testing.T, usuario uuid.UUID) {
+	t.Helper()
+	tag, err := Admin(t).Exec(context.Background(),
+		`UPDATE users SET suspended_at = NULL WHERE id = $1`, usuario)
+	if err != nil {
+		t.Fatalf("reativar %s: %v", usuario, err)
+	}
+	if tag.RowsAffected() != 1 {
+		t.Fatalf("reativar %s: usuário não existe", usuario)
+	}
+}
+
 // Operador marca a conta como operadora (sem as cotas do plano grátis), por
 // fora da RLS.
 func Operador(t *testing.T, usuario uuid.UUID) {
@@ -171,4 +187,24 @@ func ProjetoDoAlvo(t *testing.T, alvo uuid.UUID) uuid.UUID {
 		t.Fatalf("o alvo %s não tem projeto: crie o Projeto padrão do dono antes do alvo", alvo)
 	}
 	return *projeto
+}
+
+// Convite grava, por fora da RLS, um convite pendente de projeto para email
+// com o papel dado, válido por 7 dias a partir de agora, e devolve o token do
+// link (o banco guarda só o SHA-256, como crypto.HashToken).
+func Convite(t *testing.T, projeto uuid.UUID, email, papel string) (token string) {
+	t.Helper()
+	cru := make([]byte, 32)
+	if _, err := rand.Read(cru); err != nil {
+		t.Fatal(err)
+	}
+	token = base64.RawURLEncoding.EncodeToString(cru)
+	hash := sha256.Sum256([]byte(token))
+	if _, err := Admin(t).Exec(context.Background(), `
+		INSERT INTO project_invitations (id, project_id, email, role, token_hash, created_at, expires_at)
+		VALUES ($1, $2, $3, $4, $5, now(), now() + interval '7 days')`,
+		uuid.Must(uuid.NewV7()), projeto, email, papel, hash[:]); err != nil {
+		t.Fatalf("convidar %s para o projeto %s como %s: %v", email, projeto, papel, err)
+	}
+	return token
 }

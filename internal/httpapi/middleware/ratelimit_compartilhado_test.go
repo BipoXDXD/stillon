@@ -12,6 +12,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+
+	"github.com/BipoXDXD/stillon/internal/auth"
 	"github.com/BipoXDXD/stillon/internal/clock"
 	"github.com/BipoXDXD/stillon/internal/crypto"
 	"github.com/BipoXDXD/stillon/internal/httpapi/middleware"
@@ -174,4 +177,127 @@ func TestInMemoryBudgetsShareOnlyWithinOneInstance(t *testing.T) {
 
 func relogioParado() *clock.Fake {
 	return clock.NewFake(time.Date(2026, 11, 13, 12, 0, 0, 0, time.UTC))
+}
+
+var (
+	chaveJWTDeTeste = []byte("chave-jwt-sintetica-publica-somente-para-teste")
+	baldeReenvio    = middleware.BaldeUsuario{Nome: "conta_reenvio", ACada: 10 * time.Minute, Rajada: 3}
+	usuarioAna      = uuid.MustParse("01890000-0000-7000-8000-00000000000a")
+	usuarioBia      = uuid.MustParse("01890000-0000-7000-8000-00000000000b")
+	familiaDeTeste  = uuid.MustParse("01890000-0000-7000-8000-0000000000ff")
+	ipCompartilhado = "203.0.113.9:1234"
+)
+
+// cadeiaDeUsuario é authn, o balde por usuário em o e um handler que conta as
+// chamadas: uma "réplica" da rota.
+func cadeiaDeUsuario(t *testing.T, o middleware.Orcamentos, chamadas *int) http.Handler {
+	t.Helper()
+	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		*chamadas++
+		w.WriteHeader(http.StatusNoContent)
+	})
+	return middleware.Authn(chaveJWTDeTeste, relogioParado())(
+		middleware.RateLimitUserCompartilhado(o, baldeReenvio, chaveIPDeTeste)(next))
+}
+
+func pedirComo(t *testing.T, h http.Handler, usuario uuid.UUID) *httptest.ResponseRecorder {
+	t.Helper()
+	token, err := auth.NewAccessToken(chaveJWTDeTeste, usuario, familiaDeTeste, relogioParado().Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/email/resend", nil)
+	req.RemoteAddr = ipCompartilhado
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	return rec
+}
+
+// Duas réplicas com o mesmo orçamento: os pedidos do mesmo usuário alternam
+// entre elas, e o 4º (além da rajada 3, somada) recebe 429. Com o balde na
+// memória de cada cadeia, cada réplica daria a rajada inteira.
+func TestSharedUserBucketSpansInstances(t *testing.T) {
+	o := middleware.NovosOrcamentosEmMemoria(t.Context(), relogioParado())
+	var chamadas int
+	replicas := []http.Handler{cadeiaDeUsuario(t, o, &chamadas), cadeiaDeUsuario(t, o, &chamadas)}
+
+	for i := range baldeReenvio.Rajada {
+		if rec := pedirComo(t, replicas[i%2], usuarioAna); rec.Code != http.StatusNoContent {
+			t.Fatalf("pedido %d da rajada na réplica %d: %d, queria 204", i+1, i%2, rec.Code)
+		}
+	}
+	rec := pedirComo(t, replicas[baldeReenvio.Rajada%2], usuarioAna)
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("4º pedido na outra réplica: %d, queria 429", rec.Code)
+	}
+	if got := rec.Header().Get("Retry-After"); got != "600" {
+		t.Errorf("Retry-After = %q, queria 600", got)
+	}
+	if chamadas != baldeReenvio.Rajada {
+		t.Errorf("handler chamado %d vezes, queria %d", chamadas, baldeReenvio.Rajada)
+	}
+}
+
+// Dois usuários atrás do mesmo IP não dividem fichas: a chave é o usuário.
+func TestSharedUserBucketKeysByUserNotIP(t *testing.T) {
+	o := middleware.NovosOrcamentosEmMemoria(t.Context(), relogioParado())
+	var chamadas int
+	h := cadeiaDeUsuario(t, o, &chamadas)
+
+	for range baldeReenvio.Rajada {
+		pedirComo(t, h, usuarioAna)
+	}
+	if rec := pedirComo(t, h, usuarioAna); rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("Ana além da rajada: %d, queria 429", rec.Code)
+	}
+	if rec := pedirComo(t, h, usuarioBia); rec.Code != http.StatusNoContent {
+		t.Errorf("Bia, do mesmo IP, depois da Ana esgotar: %d, queria 204", rec.Code)
+	}
+}
+
+// O orçamento recebe o nome e a regra do balde, e como chave o HMAC de
+// "usuario:<uuid>" com a chave de IP: o UUID não vai em claro para o banco.
+func TestSharedUserBucketKeyIsKeyedHashOfUser(t *testing.T) {
+	o := &orcamentoGravado{permitido: true}
+	var chamadas int
+
+	pedirComo(t, cadeiaDeUsuario(t, o, &chamadas), usuarioAna)
+
+	if o.balde != "conta_reenvio" || o.aCada != 10*time.Minute || o.rajada != 3 {
+		t.Errorf("regra recebida = (%q, %v, %d), queria (conta_reenvio, 10m, 3)", o.balde, o.aCada, o.rajada)
+	}
+	if want := crypto.HashIP(chaveIPDeTeste, "usuario:"+usuarioAna.String()); len(o.chaves) != 1 || !bytes.Equal(o.chaves[0], want) {
+		t.Errorf("chaves = %x, queria [%x]", o.chaves, want)
+	}
+}
+
+// Sem resposta do orçamento, 500 internal e o handler não roda; sem usuário
+// no contexto (montado sem authn), 401 e nada é gasto.
+func TestSharedUserBucketFailsClosed(t *testing.T) {
+	t.Run("orçamento com erro", func(t *testing.T) {
+		o := &orcamentoGravado{err: errors.New("banco fora")}
+		var chamadas int
+		rec := pedirComo(t, cadeiaDeUsuario(t, o, &chamadas), usuarioAna)
+		if chamadas != 0 {
+			t.Error("o handler rodou sem resposta do orçamento")
+		}
+		if rec.Code != http.StatusInternalServerError || !strings.Contains(rec.Body.String(), `"internal_error"`) {
+			t.Errorf("sem orçamento: %d %s, queria 500 internal_error", rec.Code, rec.Body.String())
+		}
+	})
+	t.Run("sem usuário no contexto", func(t *testing.T) {
+		o := &orcamentoGravado{permitido: true}
+		chamado := false
+		h := middleware.RateLimitUserCompartilhado(o, baldeReenvio, chaveIPDeTeste)(
+			http.HandlerFunc(func(http.ResponseWriter, *http.Request) { chamado = true }))
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/v1/auth/email/resend", nil))
+		if chamado || rec.Code != http.StatusUnauthorized {
+			t.Errorf("sem usuário: %d, handler chamado = %v; queria 401 sem handler", rec.Code, chamado)
+		}
+		if len(o.chaves) != 0 {
+			t.Errorf("gastou %d fichas sem usuário", len(o.chaves))
+		}
+	})
 }

@@ -90,6 +90,10 @@ export const ERROS_DO_SERVIDOR = {
   turnstile_failed: 400,
   token_invalid: 400,
   titular_protected: 409,
+  // Os códigos dos convites (PR 4.2).
+  member_limit_reached: 409,
+  already_member: 409,
+  invitation_other_account: 403,
 } as const
 
 type ErrosDoServidor = typeof ERROS_DO_SERVIDOR

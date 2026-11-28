@@ -215,6 +215,14 @@ func TestSuspendedTitularHidesProjectFromMemberEvenInUserScope(t *testing.T) {
 	}
 }
 
+// politicasQueCitamAppUserID são as políticas de tabela de projeto que citam
+// app.user_id sem conceder por quem criou a linha, cada uma com o motivo.
+var politicasQueCitamAppUserID = map[string]string{
+	"project_invitations_do_projeto_insert": "restringe: invited_by tem de ser quem age; quem concede é app.project_id",
+	"project_invitations_por_token_update": "restringe: só a conta com o e-mail do convite aceita, e accepted_by é ela; " +
+		"quem concede é o hash do link",
+}
+
 // Nenhuma política das tabelas de projeto (nem das partições de checks)
 // concede por app.user_id: uma que sobrasse seria acesso por quem criou a
 // linha, sem a conferência de pertença de InProjectTx.
@@ -246,7 +254,7 @@ func TestNoProjectTablePolicyNamesAppUserID(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	tabelas, particoes, porProjeto := map[string]bool{}, 0, 0
+	tabelas, particoes, porProjeto, excecoesVistas := map[string]bool{}, 0, 0, map[string]bool{}
 	for _, p := range politicas {
 		tabelas[p.tabela] = true
 		if strings.HasPrefix(p.tabela, "checks_") {
@@ -256,6 +264,10 @@ func TestNoProjectTablePolicyNamesAppUserID(t *testing.T) {
 			porProjeto++
 		}
 		if strings.Contains(p.using+p.check, "app.user_id") {
+			if _, ok := politicasQueCitamAppUserID[p.nome]; ok {
+				excecoesVistas[p.nome] = true
+				continue
+			}
 			t.Errorf("%s.%s cita app.user_id:\nUSING %s\nWITH CHECK %s", p.tabela, p.nome, p.using, p.check)
 		}
 	}
@@ -264,6 +276,12 @@ func TestNoProjectTablePolicyNamesAppUserID(t *testing.T) {
 	for _, nome := range tabelasDoProjeto {
 		if !tabelas[nome] {
 			t.Errorf("a consulta não achou política em %s", nome)
+		}
+	}
+	// A exceção que não cita mais app.user_id (ou sumiu) sai da lista.
+	for nome := range politicasQueCitamAppUserID {
+		if !excecoesVistas[nome] {
+			t.Errorf("a exceção %s não está no catálogo citando app.user_id: tire-a de politicasQueCitamAppUserID", nome)
 		}
 	}
 	if particoes == 0 {

@@ -163,6 +163,19 @@ type Project struct {
 	TitularRole string
 }
 
+type ProjectInvitation struct {
+	ID         uuid.UUID
+	ProjectID  uuid.UUID
+	Email      string
+	Role       string
+	TokenHash  []byte
+	InvitedBy  *uuid.UUID
+	CreatedAt  time.Time
+	ExpiresAt  time.Time
+	AcceptedAt *time.Time
+	AcceptedBy *uuid.UUID
+}
+
 type ProjectMember struct {
 	ProjectID uuid.UUID
 	UserID    uuid.UUID

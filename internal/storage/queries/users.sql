@@ -120,3 +120,20 @@ DELETE FROM totp_recovery_codes WHERE user_id = $1;
 -- O operador tem teto de projetos maior (tenancy.LimitesDe).
 -- name: UserIsOperator :one
 SELECT is_operator FROM users WHERE id = sqlc.arg(id);
+
+-- A suspensão (stillon user suspend). Zero linhas quando nada muda: a conta
+-- já suspensa (o primeiro instante fica) ou o operador, que não se suspende.
+-- name: SuspendUser :execrows
+UPDATE users SET suspended_at = sqlc.arg(now)::timestamptz
+ WHERE id = sqlc.arg(id) AND NOT is_operator AND suspended_at IS NULL;
+
+-- A reativação (stillon user unsuspend). Zero linhas quando a conta não
+-- estava suspensa. As sessões encerradas pela suspensão não voltam.
+-- name: UnsuspendUser :execrows
+UPDATE users SET suspended_at = NULL
+ WHERE id = sqlc.arg(id) AND suspended_at IS NOT NULL;
+
+-- A suspensão relida sob a trava do usuário, na emissão e na rotação de
+-- sessão (auth.Manager).
+-- name: UserSuspension :one
+SELECT suspended_at FROM users WHERE id = sqlc.arg(id);

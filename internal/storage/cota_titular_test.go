@@ -191,9 +191,12 @@ func TestQuotaFunctionDoesNotCountOtherTitulars(t *testing.T) {
 	}
 }
 
-// A função não conta um projeto que o escopo não enxerga: nem o de outro
-// titular, nem nenhum no escopo do sondador (sem app.user_id).
-func TestQuotaFunctionRefusesProjectOutsideScope(t *testing.T) {
+// A função não conta um projeto que o escopo não enxerga: o de outro titular
+// é recusado. O escopo do sondador enxerga projects desde a suspensão
+// derivada (projects_prober_select) e conta: ele já lê todos os alvos por
+// targets_prober_select e não cria recursos, então a contagem não lhe mostra
+// nada novo nem abre caminho para furar a cota.
+func TestQuotaFunctionRefusesOtherTitularButCountsForProber(t *testing.T) {
 	pool := testdb.New(t)
 	ctx := context.Background()
 	u := novoUsuario(t, pool)
@@ -202,17 +205,16 @@ func TestQuotaFunctionRefusesProjectOutsideScope(t *testing.T) {
 	v := novoUsuario(t, pool)
 	pv := testdb.ProjetoPadrao(t, v)
 
+	var n int64
 	contar := func(tx pgx.Tx) error {
-		var n int64
 		return tx.QueryRow(ctx, `SELECT cota_alvos_do_titular($1)`, a).Scan(&n)
 	}
 	if err := noEscopoDoProjeto(t, pool, v, pv, contar); codigoPG(err) != "42501" {
 		t.Errorf("no escopo de V, a cota do projeto de U deu %v; queria 42501", err)
 	}
 	g := &guardaTx{Beginner: pool}
-	err := storage.InProberTx(ctx, g, func(*db.Queries) error { return contar(g.tx) })
-	if codigoPG(err) != "42501" {
-		t.Errorf("no escopo do sondador, a cota do projeto de U deu %v; queria 42501", err)
+	if err := storage.InProberTx(ctx, g, func(*db.Queries) error { return contar(g.tx) }); err != nil || n != 1 {
+		t.Errorf("no escopo do sondador, a cota do projeto de U deu %d, %v; queria 1 alvo", n, err)
 	}
 }
 

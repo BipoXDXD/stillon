@@ -1,0 +1,22 @@
+[
+  {
+    "caso": "member",
+    "resposta": {
+      "id": "01900000-0000-7000-8000-000000000301",
+      "email": "convidada@exemplo.com",
+      "role": "member",
+      "created_at": "2026-11-27T09:30:15.123Z",
+      "expires_at": "2026-12-04T09:30:15.123Z"
+    }
+  },
+  {
+    "caso": "owner",
+    "resposta": {
+      "id": "01900000-0000-7000-8000-000000000302",
+      "email": "socio@exemplo.com",
+      "role": "owner",
+      "created_at": "2026-11-01T12:00:00Z",
+      "expires_at": "2026-11-08T12:00:00Z"
+    }
+  }
+]

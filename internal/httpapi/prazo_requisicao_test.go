@@ -29,6 +29,31 @@ import (
 
 // repoFalso é o repositório de projetos dos testes sem banco. Nenhum deles
 // chega a uma rota de recurso; se chegar, a falha aparece como 500.
+// convitesFalsos é o repositório de convites dos testes sem banco: todo
+// projeto é inexistente.
+type convitesFalsos struct{}
+
+func (convitesFalsos) Create(context.Context, uuid.UUID, uuid.UUID, tenancy.NewInvitation) (tenancy.Invitation, tenancy.InvitationEmail, error) {
+	return tenancy.Invitation{}, tenancy.InvitationEmail{}, tenancy.ErrProjectNotFound
+}
+
+func (convitesFalsos) ListPending(context.Context, uuid.UUID, uuid.UUID, time.Time) ([]tenancy.Invitation, error) {
+	return nil, tenancy.ErrProjectNotFound
+}
+
+func (convitesFalsos) Revoke(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) error {
+	return tenancy.ErrProjectNotFound
+}
+
+func (convitesFalsos) Accept(context.Context, uuid.UUID, []byte, time.Time) (tenancy.ProjectSummary, error) {
+	return tenancy.ProjectSummary{}, tenancy.ErrInvitationInvalid
+}
+
+// convitesSemBanco monta Deps.Invitations sem banco nem e-mail.
+func convitesSemBanco(clk clock.Clock) *tenancy.Invitations {
+	return tenancy.NewInvitations(convitesFalsos{}, nil, clk)
+}
+
 type repoFalso struct{}
 
 var errRepoFalso = errors.New("repoFalso: teste sem banco")
@@ -109,6 +134,7 @@ func rotasSemBanco(t *testing.T, cfg *config.Config, ping func(context.Context) 
 		Channels:        notify.NewChannelService(nil, nil, clk, nil, nil, cfg.PublicBaseURL),
 		StatusPages:     statuspage.NewService(nil, clk),
 		Projects:        tenancy.NewService(repoFalso{}, clk),
+		Invitations:     convitesSemBanco(clk),
 		EmailConfirmado: conferidorQueConfirma{},
 		Cadastro:        contaPublicaFalsa{}, Recuperacao: contaPublicaFalsa{}, Turnstile: turnstileQueRecusa{},
 		Clock:     clk,
@@ -250,6 +276,7 @@ func TestRoutesRecusaDepsSemEmailConfirmado(t *testing.T) {
 		Channels:    notify.NewChannelService(nil, nil, clk, nil, nil, cfg.PublicBaseURL),
 		StatusPages: statuspage.NewService(nil, clk),
 		Projects:    tenancy.NewService(repoFalso{}, clk),
+		Invitations: convitesSemBanco(clk),
 		Clock:       clk,
 		LimitesIP:   middleware.NovosOrcamentosEmMemoria(ctx, clk),
 	})
@@ -263,6 +290,7 @@ func TestRoutesRecusaDepsSemCadastroPublico(t *testing.T) {
 		campo, dica string
 		tirar       func(*httpapi.Deps)
 	}{
+		{"Invitations", "tenancy.NewInvitations", func(d *httpapi.Deps) { d.Invitations = nil }},
 		{"Cadastro", "account.Cadastro", func(d *httpapi.Deps) { d.Cadastro = nil }},
 		{"Recuperacao", "account.Recuperacao", func(d *httpapi.Deps) { d.Recuperacao = nil }},
 		{"Turnstile", "turnstile.Verificador", func(d *httpapi.Deps) { d.Turnstile = nil }},
@@ -277,6 +305,7 @@ func TestRoutesRecusaDepsSemCadastroPublico(t *testing.T) {
 				Channels:        notify.NewChannelService(nil, nil, clk, nil, nil, cfg.PublicBaseURL),
 				StatusPages:     statuspage.NewService(nil, clk),
 				Projects:        tenancy.NewService(repoFalso{}, clk),
+				Invitations:     convitesSemBanco(clk),
 				EmailConfirmado: conferidorQueConfirma{},
 				Cadastro:        contaPublicaFalsa{}, Recuperacao: contaPublicaFalsa{}, Turnstile: turnstileQueRecusa{},
 				Clock:     clk,
@@ -356,6 +385,7 @@ func TestVerifyAplicaOPrazoDaConfiguracao(t *testing.T) {
 		Channels:        notify.NewChannelService(pool, box, clk, &discordFalso{}, &carteiroFalso{}, cfg.PublicBaseURL),
 		StatusPages:     statuspage.NewService(nil, clk),
 		Projects:        tenancy.NewService(repoFalso{}, clk),
+		Invitations:     convitesSemBanco(clk),
 		EmailConfirmado: conferidorQueConfirma{},
 		Cadastro:        contaPublicaFalsa{}, Recuperacao: contaPublicaFalsa{}, Turnstile: turnstileQueRecusa{},
 		Clock:     clk,

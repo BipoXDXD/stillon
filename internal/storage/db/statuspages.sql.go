@@ -32,7 +32,8 @@ func (q *Queries) DeleteStatusPageItems(ctx context.Context, arg DeleteStatusPag
 
 const getPublicPage = `-- name: GetPublicPage :one
 
-SELECT id, title FROM status_pages WHERE slug = $1 AND published
+SELECT id, title FROM status_pages
+ WHERE slug = $1 AND published AND NOT projeto_suspenso(project_id)
 `
 
 type GetPublicPageRow struct {

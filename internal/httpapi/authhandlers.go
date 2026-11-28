@@ -116,6 +116,14 @@ func (h *AuthHandlers) Login(w http.ResponseWriter, r *http.Request) {
 		apierr.WriteError(w, r, apierr.CodeInvalidCredentials)
 		return
 	}
+	// Conta suspensa com a senha certa é a senha errada, por inteiro: o mesmo
+	// 401 (sem 403 que conte que a senha bateu), o mesmo Argon2id já pago, a
+	// reserva da tentativa fica contada (nem Reset nem Refund) e nenhum
+	// desafio de 2FA sai. Sem o rehash, que a senha errada também não faz.
+	if user.SuspendedAt != nil {
+		apierr.WriteError(w, r, apierr.CodeInvalidCredentials)
+		return
+	}
 
 	// verificado é o hash que conferiu com a senha: é ele que a sessão (ou o
 	// desafio do segundo fator) leva como prova, e Issue recusa se ele já não
@@ -252,7 +260,10 @@ func (h *AuthHandlers) Logout(w http.ResponseWriter, r *http.Request) {
 //
 // Com o 2FA (prova não nil), a sessão também só nasce se o segredo que aceitou
 // o código ainda for o ativo; se uma troca de autenticador ou
-// um disable comitou no meio, o mesmo 401 invalid_credentials.
+// um disable comitou no meio, o mesmo 401 invalid_credentials. A conta
+// suspensa no meio (auth.ErrSuspended, inclusive a do desafio de 2FA emitido
+// antes da suspensão) recebe o mesmo 401, mas a tentativa volta (ver
+// tentativas abaixo), ao contrário da suspensão já vista no login, que conta.
 // Um fator ativado entre a consulta do login sem prova e a emissão também
 // exige repetir o login, sem entregar credenciais só com a senha.
 //
@@ -261,7 +272,8 @@ func (h *AuthHandlers) Logout(w http.ResponseWriter, r *http.Request) {
 //
 // tentativas é a reserva do contador que a prova deste login fez. Ele só zera
 // quando a sessão nasce, porque só então o login terminou. Recusada a emissão
-// (a senha ou o fator mudaram no meio) ou falhando o banco, a reserva volta
+// (a senha ou o fator mudaram no meio, ou a conta foi suspensa) ou falhando o
+// banco, a reserva volta
 // (Refund), como na senha certa com 2FA: zerar ali daria a quem tem a senha um
 // jeito de destravar o contador sem completar o login.
 func (h *AuthHandlers) issue(w http.ResponseWriter, r *http.Request, userID uuid.UUID, stamp string, prova *auth.SecondFactorProof, dispositivo auth.DeviceStamp, tentativas auth.Attempts) {
@@ -273,7 +285,7 @@ func (h *AuthHandlers) issue(w http.ResponseWriter, r *http.Request, userID uuid
 	} else {
 		token, s, err = h.sessions.Issue(r.Context(), userID, stamp, h.meta(r))
 	}
-	if errors.Is(err, auth.ErrStalePassword) || errors.Is(err, auth.ErrStaleSecondFactor) {
+	if errors.Is(err, auth.ErrStalePassword) || errors.Is(err, auth.ErrStaleSecondFactor) || errors.Is(err, auth.ErrSuspended) {
 		devolverTentativa(r, tentativas)
 		apierr.WriteError(w, r, apierr.CodeInvalidCredentials)
 		return

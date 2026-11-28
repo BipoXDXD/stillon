@@ -48,6 +48,12 @@ var (
 	// login sem prova. Quem chama responde como o
 	// código errado: invalid_credentials.
 	ErrStaleSecondFactor = errors.New("o segundo fator mudou depois de verificado")
+	// ErrSuspended: a conta foi suspensa entre a senha conferida e a sessão.
+	// Quem chama responde com o 401 invalid_credentials da senha errada, mas,
+	// como nos Stale*, devolve a reserva da tentativa (Refund): a senha
+	// conferiu. Só a suspensão vista antes, no próprio login, conta a
+	// tentativa como senha errada.
+	ErrSuspended = errors.New("conta suspensa")
 )
 
 type Session struct {
@@ -181,6 +187,15 @@ func (m *Manager) issue(ctx context.Context, userID uuid.UUID, stamp string, pro
 		if subtle.ConstantTimeCompare([]byte(PasswordStamp(hash)), []byte(stamp)) != 1 {
 			return ErrStalePassword
 		}
+		// A suspensão relida sob a trava: o login que conferiu a senha antes
+		// de um Suspend comitar não abre sessão depois dele.
+		suspenso, err := tx.UserSuspended(ctx, userID)
+		if err != nil {
+			return err
+		}
+		if suspenso {
+			return ErrSuspended
+		}
 		ativo, confirmado, err := tx.UserTOTPSecret(ctx, userID)
 		if err != nil {
 			return err
@@ -245,6 +260,18 @@ func (m *Manager) Rotate(ctx context.Context, token string, meta Meta) (string, 
 			return nil
 		}
 		if cur.RevokedAt != nil || now.After(cur.ExpiresAt) || !now.Before(fimDaFamilia(cur.FamilyID)) {
+			return ErrInvalidSession
+		}
+		// Conta suspensa não renova, mesmo com a família viva (a suspensão
+		// revoga as famílias, mas a recusa não depende disso).
+		suspenso, err := tx.UserSuspended(ctx, cur.UserID)
+		if errors.Is(err, ErrNotFound) {
+			return ErrInvalidSession
+		}
+		if err != nil {
+			return err
+		}
+		if suspenso {
 			return ErrInvalidSession
 		}
 

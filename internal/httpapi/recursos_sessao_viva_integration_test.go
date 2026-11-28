@@ -37,7 +37,8 @@ func recursosPersistidos(t *testing.T, a *api) string {
 		(SELECT coalesce(jsonb_agg(to_jsonb(t) ORDER BY to_jsonb(t)::text), '[]') FROM status_pages t),
 		(SELECT coalesce(jsonb_agg(to_jsonb(t) ORDER BY to_jsonb(t)::text), '[]') FROM status_page_items t),
 		(SELECT coalesce(jsonb_agg(to_jsonb(t) ORDER BY to_jsonb(t)::text), '[]') FROM heartbeats t),
-		(SELECT coalesce(jsonb_agg(to_jsonb(t) ORDER BY to_jsonb(t)::text), '[]') FROM heartbeat_events t)
+		(SELECT coalesce(jsonb_agg(to_jsonb(t) ORDER BY to_jsonb(t)::text), '[]') FROM heartbeat_events t),
+		(SELECT coalesce(jsonb_agg(to_jsonb(t) ORDER BY to_jsonb(t)::text), '[]') FROM project_invitations t)
 	)::text`).Scan(&estado)
 	if err != nil {
 		t.Fatal(err)
@@ -114,6 +115,10 @@ func TestEveryResourceRouteRejectsRevokedFamily(t *testing.T) {
 		{"GET /api/v1/projects/{projectID}/members", noProjeto + "/members", nil},
 		{"PATCH /api/v1/projects/{projectID}/members/{userID}", noProjeto + "/members/" + a.userID.String(), map[string]string{"role": "viewer"}},
 		{"DELETE /api/v1/projects/{projectID}/members/{userID}", noProjeto + "/members/" + a.userID.String(), nil},
+		{"GET /api/v1/projects/{projectID}/invitations", noProjeto + "/invitations", nil},
+		{"POST /api/v1/projects/{projectID}/invitations", noProjeto + "/invitations", map[string]string{"email": "revogado@exemplo.com", "role": "viewer"}},
+		{"DELETE /api/v1/projects/{projectID}/invitations/{invitationID}", noProjeto + "/invitations/" + uuid.NewString(), nil},
+		{"POST /api/v1/invitations/accept", "/api/v1/invitations/accept", map[string]string{"token": strings.Repeat("A", 43)}},
 		{"GET /api/v1/targets", "/api/v1/targets", nil},
 		{"POST /api/v1/targets", "/api/v1/targets", alvoValido},
 		{"GET /api/v1/targets/summary", "/api/v1/targets/summary", nil},

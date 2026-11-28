@@ -4552,6 +4552,15 @@ Coolify. Um passo por vez; só siga depois do **Confira**.
 Para trocar o secret do Turnstile: em **Turnstile → widget → Rotate secret key** na Cloudflare,
 cole o novo no Bitwarden e no Coolify e publique de novo.
 
+### Suspender uma conta
+
+- `vc exec app /stillon user suspend --email <e-mail>` suspende a conta e encerra todas as
+  sessões dela; o operador não se suspende (código 2), e e-mail sem conta é código 4.
+- `vc exec app /stillon user unsuspend --email <e-mail>` reativa a conta; as sessões encerradas
+  não voltam, e o dono entra de novo (código 4 é e-mail sem conta).
+- Depois do `suspend`, a página pública de um titular suspenso pode continuar no ar por até
+  cerca de 30 s, por causa do cache.
+
 ### Minutos de Actions
 
 Enquanto o repositório era privado, o CI gastava a cota gratuita (2.000 min/mês na conta
