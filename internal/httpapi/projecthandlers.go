@@ -75,9 +75,44 @@ func (h *ProjectHandlers) Create(w http.ResponseWriter, r *http.Request) {
 	apierr.WriteJSON(w, http.StatusCreated, toProjectResponse(p))
 }
 
+// Rename é PATCH /api/v1/projects/{projectID} com {"name": ...}: renomear é
+// de owner, e a resposta é o item de GET /api/v1/projects. A rota fica atrás
+// de ProjetoDoCaminho, para o não membro receber o 404 de projeto inexistente.
+func (h *ProjectHandlers) Rename(w http.ResponseWriter, r *http.Request) {
+	sc, ok := escopo(w, r)
+	if !ok {
+		return
+	}
+	var req projectRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	p, err := h.svc.Rename(r.Context(), sc.UserID, sc.ProjectID, req.Name)
+	switch {
+	case err == nil:
+		apierr.WriteJSON(w, http.StatusOK, toProjectResponse(p))
+	case errors.Is(err, tenancy.ErrForbidden):
+		apierr.WriteError(w, r, apierr.CodeForbidden)
+	case errors.Is(err, tenancy.ErrProjectNotFound):
+		apierr.WriteError(w, r, apierr.CodeNotFound)
+	default:
+		h.recusarNome(w, r, "renomear projeto", err)
+	}
+}
+
 // recusarCriacao traduz o erro de tenancy.Service.Create: nome inválido é 400
 // com o campo, o teto do titular é 409, e o resto é erro interno.
 func (h *ProjectHandlers) recusarCriacao(w http.ResponseWriter, r *http.Request, err error) {
+	if errors.Is(err, tenancy.ErrProjectLimit) {
+		apierr.WriteError(w, r, apierr.CodeProjectLimit)
+		return
+	}
+	h.recusarNome(w, r, "criar projeto", err)
+}
+
+// recusarNome traduz o nome inválido em 400 com o campo; o resto é erro
+// interno de op.
+func (h *ProjectHandlers) recusarNome(w http.ResponseWriter, r *http.Request, op string, err error) {
 	motivo := ""
 	switch {
 	case errors.Is(err, tenancy.ErrProjectNameRequired):
@@ -86,11 +121,8 @@ func (h *ProjectHandlers) recusarCriacao(w http.ResponseWriter, r *http.Request,
 		motivo = "too_long"
 	case errors.Is(err, tenancy.ErrProjectNameInvalid):
 		motivo = "invalid"
-	case errors.Is(err, tenancy.ErrProjectLimit):
-		apierr.WriteError(w, r, apierr.CodeProjectLimit)
-		return
 	default:
-		erroInterno(w, r, "criar projeto", err)
+		erroInterno(w, r, op, err)
 		return
 	}
 	apierr.WriteValidation(w, r, []apierr.FieldError{{Field: "name", Reason: motivo}})

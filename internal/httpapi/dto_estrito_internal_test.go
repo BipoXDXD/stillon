@@ -34,7 +34,7 @@ const webhookValidoDoTeste = "https://discord.com/api/webhooks/12345678901234567
 func corposEstritos() map[string]corpoEstrito {
 	alvos, batidas, canais := &TargetHandlers{}, &HeartbeatHandlers{}, &ChannelHandlers{}
 	paginas, conta, sessao := &StatusPageHandlers{}, &AccountHandlers{}, &AuthHandlers{}
-	projetos := &ProjectHandlers{}
+	projetos, membros := &ProjectHandlers{}, &MemberHandlers{}
 	// Ligado, para que o signup e o forgot passem do 404 e cheguem ao
 	// decoder; sem serviço nem Turnstile, chegar a eles é panic.
 	cadastro := &CadastroHandlers{config: ConfigCadastro{Habilitado: true}}
@@ -56,6 +56,8 @@ func corposEstritos() map[string]corpoEstrito {
 		"StatusPageHandlers.Update": {handler: noProjetoPadrao(paginas.Update), valido: `{"title":"T"}`,
 			aninhados: []string{`{"items":[` + item + `]}`}},
 		"ProjectHandlers.Create":         {handler: projetos.Create, valido: `{"name":"Projeto"}`},
+		"ProjectHandlers.Rename":         {handler: noProjetoPadrao(projetos.Rename), valido: `{"name":"Projeto"}`},
+		"MemberHandlers.ChangeRole":      {handler: noProjetoPadrao(membros.ChangeRole), valido: `{"role":"viewer"}`},
 		"AccountHandlers.ChangePassword": {handler: conta.ChangePassword, valido: `{"current_password":"a","new_password":"b"}`},
 		"AuthHandlers.Login":             {handler: sessao.Login, valido: `{"email":"a@exemplo.com","password":"x"}`},
 		"AuthHandlers.TOTPEnroll":        {handler: sessao.TOTPEnroll, valido: `{"password":"x"}`},
@@ -148,6 +150,9 @@ func TestCampoDesconhecidoNuncaChegaAoServico(t *testing.T) {
 				if err := json.Unmarshal([]byte(caso.valido), &campos); err != nil {
 					t.Fatal(err)
 				}
+				if _, doCorpo := campos[extra]; doCorpo {
+					continue // é campo do corpo (o role de MemberHandlers.ChangeRole), não extra
+				}
 				campos[extra] = "valor-do-cliente"
 				corpo, err := json.Marshal(campos)
 				if err != nil {
@@ -193,6 +198,7 @@ func chamarSemServico(t *testing.T, h http.HandlerFunc, corpo string) (rec *http
 	}
 	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(corpo))
 	req.SetPathValue("id", uuid.NewString())
+	req.SetPathValue("userID", uuid.NewString())
 	req.Header.Set("Authorization", "Bearer "+acesso)
 	rec = httptest.NewRecorder()
 	defer func() { chegou = recover() != nil }()
