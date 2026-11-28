@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -52,6 +53,14 @@ func (convitesFalsos) Accept(context.Context, uuid.UUID, []byte, time.Time) (ten
 // convitesSemBanco monta Deps.Invitations sem banco nem e-mail.
 func convitesSemBanco(clk clock.Clock) *tenancy.Invitations {
 	return tenancy.NewInvitations(convitesFalsos{}, nil, clk)
+}
+
+// exportadorSemBanco monta Deps.Exportacao sem banco: recusa antes do
+// primeiro byte.
+type exportadorSemBanco struct{}
+
+func (exportadorSemBanco) Escrever(context.Context, uuid.UUID, []byte, io.Writer) error {
+	return errRepoFalso
 }
 
 type repoFalso struct{}
@@ -139,20 +148,32 @@ func (turnstileQueRecusa) Verificar(context.Context, string, string, string) err
 // injetado, e o ping vê o contexto que a cadeia de middlewares lhe deu.
 func rotasSemBanco(t *testing.T, cfg *config.Config, ping func(context.Context) error) http.Handler {
 	t.Helper()
+	return rotasSemBancoCom(t, cfg, ping, nil)
+}
+
+// rotasSemBancoCom é rotasSemBanco com um ajuste nas dependências antes de
+// montar as rotas.
+func rotasSemBancoCom(t *testing.T, cfg *config.Config, ping func(context.Context) error, ajustar func(*httpapi.Deps)) http.Handler {
+	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	clk := clock.NewFake(time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC))
-	return httpapi.Routes(ctx, cfg, httpapi.Deps{
+	d := httpapi.Deps{
 		Channels:        notify.NewChannelService(nil, nil, clk, nil, nil, cfg.PublicBaseURL),
 		StatusPages:     statuspage.NewService(nil, clk),
 		Projects:        tenancy.NewService(repoFalso{}, clk),
 		Invitations:     convitesSemBanco(clk),
 		EmailConfirmado: conferidorQueConfirma{},
 		Cadastro:        contaPublicaFalsa{}, Recuperacao: contaPublicaFalsa{}, Turnstile: turnstileQueRecusa{},
-		Clock:     clk,
-		Ready:     ping,
-		LimitesIP: middleware.NovosOrcamentosEmMemoria(ctx, clk),
-	})
+		Clock:      clk,
+		Ready:      ping,
+		LimitesIP:  middleware.NovosOrcamentosEmMemoria(ctx, clk),
+		Exportacao: exportadorSemBanco{},
+	}
+	if ajustar != nil {
+		ajustar(&d)
+	}
+	return httpapi.Routes(ctx, cfg, d)
 }
 
 func configSemBanco(prazo time.Duration) *config.Config {
@@ -266,8 +287,9 @@ func TestRoutesRecusaDepsSemProjects(t *testing.T) {
 		Projects:        nil,
 		EmailConfirmado: conferidorQueConfirma{},
 		Cadastro:        contaPublicaFalsa{}, Recuperacao: contaPublicaFalsa{}, Turnstile: turnstileQueRecusa{},
-		Clock:     clk,
-		LimitesIP: middleware.NovosOrcamentosEmMemoria(ctx, clk),
+		Clock:      clk,
+		LimitesIP:  middleware.NovosOrcamentosEmMemoria(ctx, clk),
+		Exportacao: exportadorSemBanco{},
 	})
 }
 
@@ -291,6 +313,7 @@ func TestRoutesRecusaDepsSemEmailConfirmado(t *testing.T) {
 		Invitations: convitesSemBanco(clk),
 		Clock:       clk,
 		LimitesIP:   middleware.NovosOrcamentosEmMemoria(ctx, clk),
+		Exportacao:  exportadorSemBanco{},
 	})
 }
 
@@ -306,6 +329,7 @@ func TestRoutesRecusaDepsSemCadastroPublico(t *testing.T) {
 		{"Cadastro", "account.Cadastro", func(d *httpapi.Deps) { d.Cadastro = nil }},
 		{"Recuperacao", "account.Recuperacao", func(d *httpapi.Deps) { d.Recuperacao = nil }},
 		{"Turnstile", "turnstile.Verificador", func(d *httpapi.Deps) { d.Turnstile = nil }},
+		{"Exportacao", "exportacao.Novo", func(d *httpapi.Deps) { d.Exportacao = nil }},
 	}
 	for _, c := range casos {
 		t.Run(c.campo, func(t *testing.T) {
@@ -320,8 +344,9 @@ func TestRoutesRecusaDepsSemCadastroPublico(t *testing.T) {
 				Invitations:     convitesSemBanco(clk),
 				EmailConfirmado: conferidorQueConfirma{},
 				Cadastro:        contaPublicaFalsa{}, Recuperacao: contaPublicaFalsa{}, Turnstile: turnstileQueRecusa{},
-				Clock:     clk,
-				LimitesIP: middleware.NovosOrcamentosEmMemoria(ctx, clk),
+				Clock:      clk,
+				LimitesIP:  middleware.NovosOrcamentosEmMemoria(ctx, clk),
+				Exportacao: exportadorSemBanco{},
 			}
 			c.tirar(&deps)
 			defer func() {
@@ -400,8 +425,9 @@ func TestVerifyAplicaOPrazoDaConfiguracao(t *testing.T) {
 		Invitations:     convitesSemBanco(clk),
 		EmailConfirmado: conferidorQueConfirma{},
 		Cadastro:        contaPublicaFalsa{}, Recuperacao: contaPublicaFalsa{}, Turnstile: turnstileQueRecusa{},
-		Clock:     clk,
-		LimitesIP: middleware.NovosOrcamentosEmMemoria(ctx, clk),
+		Clock:      clk,
+		LimitesIP:  middleware.NovosOrcamentosEmMemoria(ctx, clk),
+		Exportacao: exportadorSemBanco{},
 	})
 	for _, rota := range []struct{ metodo, caminho string }{
 		{http.MethodGet, "/verify/" + strings.Repeat("A", 43)},

@@ -9,8 +9,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/BipoXDXD/stillon/internal/crypto"
 	"github.com/BipoXDXD/stillon/internal/notify"
+	"github.com/BipoXDXD/stillon/internal/storage"
 )
 
 // emailRecebido é o corpo que o Resend recebe (o resendPayload do notify).
@@ -81,11 +84,14 @@ type tetoFalso struct {
 	libera   bool
 }
 
-func (t *tetoFalso) Reservar(context.Context) (bool, error) {
+func (t *tetoFalso) Reservar(context.Context, uuid.UUID) (string, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.reservas++
-	return t.libera, nil
+	if t.libera {
+		return "", nil
+	}
+	return storage.RecusaTeto, nil
 }
 
 func (t *tetoFalso) total() int {

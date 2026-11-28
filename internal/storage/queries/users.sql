@@ -62,9 +62,20 @@ VALUES ($1, $2, $3, $4, $5, $6, $7);
 -- GET /me. totp_enabled é o segundo fator CONFIRMADO: um cadastro iniciado e
 -- abandonado não conta (o mesmo critério de auth.TOTP.IsEnabled).
 -- email_verified_at é nulo na conta do cadastro público ainda não confirmada.
+-- terms_version e terms_accepted_at (00051) servem à exportação da conta; são
+-- nulos na conta criada pelo CLI.
 -- name: GetAccount :one
-SELECT id, email, (totp_confirmed_at IS NOT NULL)::bool AS totp_enabled, created_at, email_verified_at
+SELECT id, email, (totp_confirmed_at IS NOT NULL)::bool AS totp_enabled, created_at, email_verified_at,
+       terms_version, terms_accepted_at
   FROM users WHERE id = $1;
+
+-- A exportação da conta: o registro de auditoria da pessoa, sem ip_hash.
+-- audit_log não tem RLS; o filtro por user_id é a barreira.
+-- name: ListAuditOfUser :many
+SELECT action, entity, entity_id, at
+  FROM audit_log
+ WHERE user_id = sqlc.arg(user_id)
+ ORDER BY at, id;
 
 -- A troca de senha pela API é um compare-and-swap: só grava se o hash ainda
 -- é o que foi verificado. Duas trocas simultâneas com a mesma senha atual não

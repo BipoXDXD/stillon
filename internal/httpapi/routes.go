@@ -41,6 +41,19 @@ const (
 	projetoNovoBurst = 5
 )
 
+// A exportação da conta tem balde próprio por usuário: uma a cada 10
+// minutos, 2 de uma vez.
+const (
+	exportarACada = 10 * time.Minute
+	exportarBurst = 2
+)
+
+// prazoExportacao é o teto absoluto do contexto da exportação (banco e
+// escrita), no lugar do RequestTimeout da API: uma conta grande leva mais que
+// 15 s para sair. Cada escrita tem ainda o seu prazo deslizante
+// (prazoDeEscrita), que derruba o cliente que parou de ler.
+const prazoExportacao = 10 * time.Minute
+
 // verifyBodyBytes: o POST de /verify é um formulário sem campos.
 const verifyBodyBytes = 1 << 10
 
@@ -94,6 +107,12 @@ type Deps struct {
 	// dividam o orçamento de cada origem; os testes sem banco passam
 	// middleware.NovosOrcamentosEmMemoria. Obrigatório.
 	LimitesIP middleware.Orcamentos
+	// Exportacao escreve GET /api/v1/me/export: o exportacao.Servico em
+	// produção. Obrigatório; os testes sem banco passam um falso.
+	Exportacao Exportador
+	// PrazoExportacao troca o prazo da rota de exportação; o zero é
+	// prazoExportacao (10 min). Existe para os testes não esperarem minutos.
+	PrazoExportacao time.Duration
 	// Ready é o teste de prontidão de /readyz: o ping no banco em produção.
 	Ready func(context.Context) error
 	// Painel são os arquivos do painel React. Nil é o embutido no binário
@@ -142,6 +161,9 @@ func Routes(ctx context.Context, cfg *config.Config, d Deps) http.Handler {
 	if d.Turnstile == nil {
 		panic("httpapi: Deps sem Turnstile; passe o turnstile.Verificador (ou, sem banco, um falso)")
 	}
+	if d.Exportacao == nil {
+		panic("httpapi: Deps sem Exportacao; passe exportacao.Novo(pool, box, clk) (ou, sem banco, um falso)")
+	}
 	secureCookie := config.EhHTTPS(cfg.PublicBaseURL)
 	// O teto de Argon2id simultâneos é do processo, e quem o
 	// paga é a API: o config.Load sempre o preenche; um Config montado à mão
@@ -167,6 +189,7 @@ func Routes(ctx context.Context, cfg *config.Config, d Deps) http.Handler {
 	ph := NewProjectHandlers(d.Projects)
 	mh := NewMemberHandlers(d.Projects)
 	cvh := NewInvitationHandlers(d.Invitations)
+	exh := NewExportacaoHandlers(d.Exportacao, d.Clock, proxiesDe(cfg), cfg.IPHashKey)
 	cad := NewCadastroHandlers(d.Cadastro, d.Recuperacao, d.Turnstile, d.CadastroPublico, proxiesDe(cfg), cfg.IPHashKey, d.Clock)
 	authn := middleware.Authn(cfg.JWTSecret, d.Clock)
 	// criacao é a trava "sem e-mail confirmado não cria" (403
@@ -307,6 +330,13 @@ func Routes(ctx context.Context, cfg *config.Config, d Deps) http.Handler {
 	noProjeto := func(fn http.HandlerFunc) http.Handler { return authn(porUsuario(viva(doCaminho(fn)))) }
 
 	mux.Handle("GET /api/v1/me", protegida(ah.Me))
+	// A exportação lê a conta inteira e os projetos em que ela é owner: balde
+	// próprio por usuário (2 de uma vez, depois 1 a cada 10 min), no banco,
+	// antes da consulta de sessão. É um GET da conta, sem a trava de e-mail.
+	porExportacao := baldeUsuario(middleware.BaldeUsuario{Nome: "conta_exportar", ACada: exportarACada, Rajada: exportarBurst})
+	// O padrão GET casa também o HEAD: semHead o recusa antes do balde e da
+	// auditoria.
+	mux.Handle("GET /api/v1/me/export", semHead(authn(porUsuario(porExportacao(viva(http.HandlerFunc(exh.Exportar)))))))
 	mux.Handle("GET /api/v1/sessions", protegida(ah.ListSessions))
 	mux.Handle("DELETE /api/v1/sessions/{id}", protegida(ah.RevokeSession))
 	// A lista de projetos é da conta, como /me: protegida, sem projeto no
@@ -432,15 +462,47 @@ func Routes(ctx context.Context, cfg *config.Config, d Deps) http.Handler {
 	})
 	mux.HandleFunc("GET /readyz", readyz(d.Ready))
 
-	// A ordem importa, e se escreve de dentro para fora: a ÚLTIMA linha é o
-	// middleware mais externo.
-	//
-	// RequestID tem de ser o mais externo de todos. apierr.WriteError lê o
-	// trace do contexto, e o contexto só o tem depois que RequestID rodou —
-	// um erro produzido por qualquer middleware acima dele sairia com
-	// trace_id vazio, impossível de correlacionar com o log. Deadline fica
-	// antes de Recover para que até um erro recuperado observe o prazo;
-	// Recover captura panic de todo o restante da cadeia.
+	// Uma instância só do limitador por IP para as duas cadeias da API: a
+	// exportação gasta o mesmo balde que o resto.
+	limitadorIP := middleware.RateLimit(ctx, d.Clock, 120, 30, proxiesDe(cfg))
+	handler := cadeiaAPI(mux, cfg.RequestTimeout, cfg.CORSOrigin, limitadorIP)
+	prazoDaExportacao := prazoExportacao
+	if d.PrazoExportacao > 0 {
+		prazoDaExportacao = d.PrazoExportacao
+	}
+
+	// A raiz separa as cadeias pelo prefixo, e o ServeMux escolhe sempre o
+	// padrão mais específico: o painel, montado em "/", nunca vê /api/, /p/
+	// nem /verify/. Antes do painel, "/" era a API; agora a API tem de ser
+	// nomeada, inclusive os dois health checks, que ficam fora de /api/.
+	// A exportação é a mesma cadeia com o prazo dela: o padrão com método e
+	// caminho completo vence "/api/" (e casa também o HEAD, que o semHead recusa).
+	raiz := http.NewServeMux()
+	raiz.Handle("GET /api/v1/me/export", cadeiaAPI(mux, prazoDaExportacao, cfg.CORSOrigin, limitadorIP))
+	raiz.Handle("/api/", handler)
+	raiz.Handle("/healthz", handler)
+	raiz.Handle("/readyz", handler)
+	raiz.Handle("/verify/", verificacao(ctx, cfg, d.Clock, d.Channels))
+	raiz.Handle("/p/", paginaPublica(ctx, cfg, d.Clock, (&PublicPageHandlers{svc: d.StatusPages}).Page))
+	raiz.Handle("/ping/", pingPublico(ctx, cfg, d.Clock, d.Pings))
+	raiz.Handle("/", painel(d.Painel))
+	return raiz
+}
+
+// cadeiaAPI é a cadeia de middlewares da API em volta do mux, com o prazo de
+// contexto dado. limitadorIP é recebido pronto para que todas as cadeias
+// dividam a mesma instância (o mesmo balde por IP).
+//
+// A ordem importa, e se escreve de dentro para fora: a ÚLTIMA linha é o
+// middleware mais externo.
+//
+// RequestID tem de ser o mais externo de todos. apierr.WriteError lê o
+// trace do contexto, e o contexto só o tem depois que RequestID rodou —
+// um erro produzido por qualquer middleware acima dele sairia com
+// trace_id vazio, impossível de correlacionar com o log. Deadline fica
+// antes de Recover para que até um erro recuperado observe o prazo;
+// Recover captura panic de todo o restante da cadeia.
+func cadeiaAPI(mux *http.ServeMux, prazo time.Duration, corsOrigin string, limitadorIP func(http.Handler) http.Handler) http.Handler {
 	var handler http.Handler = comEnvelope(mux)
 	handler = middleware.RequireCustomHeader(handler)
 	handler = middleware.BodyLimit(maxBodyBytes)(handler)
@@ -450,26 +512,13 @@ func Routes(ctx context.Context, cfg *config.Config, d Deps) http.Handler {
 	// CORS continuam por fora do limitador, em middleware.CORS, para que o
 	// 429 também os leve.
 	handler = middleware.Preflight()(handler)
-	handler = middleware.RateLimit(ctx, d.Clock, 120, 30, proxiesDe(cfg))(handler)
-	handler = middleware.CORS(cfg.CORSOrigin)(handler)
+	handler = limitadorIP(handler)
+	handler = middleware.CORS(corsOrigin)(handler)
 	handler = middleware.SecurityHeaders(handler)
 	handler = middleware.Recover(handler)
-	handler = middleware.Deadline(cfg.RequestTimeout)(handler)
+	handler = middleware.Deadline(prazo)(handler)
 	handler = middleware.RequestID(handler)
-
-	// A raiz separa as cadeias pelo prefixo, e o ServeMux escolhe sempre o
-	// padrão mais específico: o painel, montado em "/", nunca vê /api/, /p/
-	// nem /verify/. Antes do painel, "/" era a API; agora a API tem de ser
-	// nomeada, inclusive os dois health checks, que ficam fora de /api/.
-	raiz := http.NewServeMux()
-	raiz.Handle("/api/", handler)
-	raiz.Handle("/healthz", handler)
-	raiz.Handle("/readyz", handler)
-	raiz.Handle("/verify/", verificacao(ctx, cfg, d.Clock, d.Channels))
-	raiz.Handle("/p/", paginaPublica(ctx, cfg, d.Clock, (&PublicPageHandlers{svc: d.StatusPages}).Page))
-	raiz.Handle("/ping/", pingPublico(ctx, cfg, d.Clock, d.Pings))
-	raiz.Handle("/", painel(d.Painel))
-	return raiz
+	return handler
 }
 
 // painel é a cadeia do painel React. Só serve GET e HEAD de arquivos que já

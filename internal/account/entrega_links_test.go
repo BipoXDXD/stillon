@@ -8,11 +8,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/BipoXDXD/stillon/internal/account"
 	"github.com/BipoXDXD/stillon/internal/contaemail"
 	"github.com/BipoXDXD/stillon/internal/crypto"
 	"github.com/BipoXDXD/stillon/internal/legal"
 	"github.com/BipoXDXD/stillon/internal/notify"
+	"github.com/BipoXDXD/stillon/internal/storage"
 	"github.com/BipoXDXD/stillon/internal/storage/testdb"
 )
 
@@ -30,8 +33,11 @@ func (l *limiteDeEntrega) Gastar(context.Context, string, []byte, time.Duration,
 	return 0, l.admitir(), nil
 }
 
-func (l *limiteDeEntrega) Reservar(context.Context) (bool, error) {
-	return l.admitir(), nil
+func (l *limiteDeEntrega) Reservar(context.Context, uuid.UUID) (string, error) {
+	if l.admitir() {
+		return "", nil
+	}
+	return storage.RecusaTeto, nil
 }
 
 type transporteDeLinks struct {

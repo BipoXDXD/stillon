@@ -56,9 +56,11 @@ type InvitationEmail struct {
 	To           string
 	ProjectName  string
 	InviterEmail string
-	Role         Role
-	Token        string
-	TokenHash    []byte
+	// InviterID é quem convida: o e-mail conta no teto diário dessa conta.
+	InviterID uuid.UUID
+	Role      Role
+	Token     string
+	TokenHash []byte
 }
 
 // InvitationRepository é a porta de persistência dos convites. Create,
