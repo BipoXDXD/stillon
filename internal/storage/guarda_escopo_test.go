@@ -34,6 +34,9 @@ var chamadoresDeScopeToUser = []string{
 	"internal/account/cadastro.go",
 	// reset: o dono só é conhecido depois de consumir o token.
 	"internal/account/recuperacao.go",
+	// suspend/unsuspend (CLI): users e sessions são da pessoa, não de projeto;
+	// o escopo do usuário abre a RLS de sessions (00029) para a revogação.
+	"internal/account/suspensao.go",
 	"internal/auth/store.go",
 	"internal/auth/totp.go",
 	"internal/storage/scope.go",
